@@ -20,6 +20,7 @@ on:
           - sc-top10-build   # full Stock Connect top10 build (run multiple times)
           - sdw-build        # full SDW participant holdings backfill (run multiple times)
           - sfc-reparse      # re-parse all cached SFC Excel files (fixes hkd=0 bug)
+          - turnover-build   # backfill turnover library from 2026-02-02 (adds high/low/close)
 
 # Cancel any in-progress run of the same workflow when a new one is triggered.
 # This prevents multiple github-pages artifacts accumulating across runs,
@@ -233,6 +234,34 @@ jobs:
           for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
           git diff --staged --quiet || \
             (git commit -m "SFC reparse: $(date +'%Y-%m-%d')" && git push)
+
+
+  # ── Turnover backfill (manual — fetches missing/bad dates, adds high/low/close) ─
+  turnover-build:
+    name: Turnover library backfill (2026-02-02 to today)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'turnover-build'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Backfill turnover library (missing dates + bad data + add high/low/close)
+        run: python build_turnover.py
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in turnover_20*.json name_map.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          git diff --staged --quiet || \
+            (git commit -m "Turnover build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
   # ── DI weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
   di-weekly:
