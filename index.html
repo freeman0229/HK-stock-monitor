@@ -2946,9 +2946,9 @@ function renderCaiTable() {
   TIP.id = 'sb-chart-tip';
   Object.assign(TIP.style, {
     position:'fixed', display:'none', pointerEvents:'none',
-    background:'var(--color-background-primary)', border:'1px solid var(--color-border-tertiary)',
+    background:'var(--card)', border:'1px solid var(--border)',
     borderRadius:'6px', padding:'6px 10px', fontSize:'12px',
-    color:'var(--color-text-primary)', boxShadow:'0 2px 8px rgba(0,0,0,0.15)',
+    color:'var(--text)', boxShadow:'0 2px 8px rgba(0,0,0,0.15)',
     zIndex:'9999', lineHeight:'1.6', whiteSpace:'nowrap',
   });
   document.body.appendChild(TIP);
@@ -2973,7 +2973,7 @@ function renderCaiTable() {
     const netCol = net > 0 ? '#c0252d' : net < 0 ? '#1a7a3c' : '#888';
     const srStr  = s.short_ratio > 0 ? s.short_ratio.toFixed(1) + '%' : '—';
     const srCol  = s.short_ratio > shortHi(s) ? '#c0252d'
-                 : s.short_ratio > shortLo(s) ? '#b87010' : 'var(--color-text-secondary)';
+                 : s.short_ratio > shortLo(s) ? '#b87010' : 'var(--muted)';
     const consec = s.sb_consec || 0;
     const consecStr = consec === 0 ? '' :
       consec > 0

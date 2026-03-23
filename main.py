@@ -51,11 +51,6 @@ def last_trading_day(d: datetime = None) -> datetime:
     return d
 
 # ── Mainland China stock exchange holidays (southbound settlement) ────────────
-# CCASS southbound settles T+2 on days BOTH HK and mainland exchanges are open.
-# Mainland holidays differ from HK — CNY, Golden Week etc. extend settlement.
-# Hardcoded for accuracy; holidays.China() used as fallback for future years.
-# Note: China also has make-up Saturdays (補班) — not modelled here as they
-# are settlement days but the effect on T+2 is minimal for daily analysis.
 _CN_HOLIDAY_DATES = {
     # 2023
     "2023-01-02","2023-01-23","2023-01-24","2023-01-25","2023-01-26","2023-01-27",
@@ -89,7 +84,6 @@ def business_days_back(d: datetime, n: int) -> datetime:
     """
     Return the date n joint HK+CN settlement days before d.
     Southbound CCASS settles T+2 on days both exchanges are open.
-    Correctly handles CNY, Golden Week, and other extended holidays.
     """
     count = 0
     while count < n:
@@ -101,10 +95,7 @@ def business_days_back(d: datetime, n: int) -> datetime:
     return d
 
 def ccass_trade_date(settlement_date: datetime) -> datetime:
-    """
-    Given a CCASS settlement date, return the actual trade date (T-2).
-    Uses joint HK+CN calendar for accuracy across long holidays.
-    """
+    """Given a CCASS settlement date, return the actual trade date (T-2)."""
     return business_days_back(settlement_date, 2)
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -153,7 +144,6 @@ def _is_valid_chinese(s: str) -> bool:
 
 def _update_name_map(entries: dict):
     store = load_store(NAME_MAP_FILE)
-    # stock_ref verified names always win — don't overwrite them with Big5 decode
     for code, data in entries.items():
         if code not in store or not store[code].get("verified"):
             store[code] = data
@@ -173,13 +163,16 @@ def _seed_name_map_from_ref():
         log.info("Seeded name_map with %d verified entries from stock_ref", len(STOCKS))
 
 # ── Source 1: Daily quotation ─────────────────────────────────────────────────
-EMPTY_QUOTE = pd.DataFrame(columns=["stock_code", "name", "name_chi", "turnover", "shares"])
+EMPTY_QUOTE = pd.DataFrame(columns=["stock_code", "name", "name_chi",
+                                     "turnover", "shares", "high", "low", "close"])
 
 def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
     """
-    Parses HKEX c.htm (Big5, served as ISO-8859-1).
-    Pattern A: CODE NAME CHI HKD TURNOVER SHARES HIGH LOW
-    Pattern B: CODE NAME CHI HKD PRV BID CLOSE HIGH LOW CLOSE SHARES TURNOVER
+    Parses HKEX d{YYMMDD}c.htm (Big5, served as ISO-8859-1).
+
+    Pattern B — 12 columns:
+      CODE  NAME_ENG  CHI_NAME  CURR  PRV  BID  ASK  HIGH  LOW  CLOSE  SHARES  TURNOVER
+      g1    g2        g3              skip×3       g4   g5   g6   g7     g8
     """
     date     = date or datetime.now()
     date_str = date.strftime("%y%m%d")
@@ -202,15 +195,24 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
         body = pre.get_text() if pre else text
 
         # Pattern B: CODE NAME CHI CURR PRV BID ASK HIGH LOW CLOSE SHARES TURNOVER
-        # Verified format of d{YYMMDD}c.htm — 6 price columns, then shares, then turnover.
-        # group(1)=code  group(2)=eng  group(3)=chi  group(4)=shares  group(5)=turnover
         PAT = re.compile(
-            r"^[\*\s]{0,5}(\d{1,5})\s+(\S[^\u3000\n]{1,22}?)\s{2,}"
-            r"(.{1,30}?)\s*(?:HKD|USD|CNY|EUR|GBP)\s+"
-            r"[\d,.NA-]+\s+[\d,.NA-]+\s+[\d,.NA-]+\s+[\d,.NA-]+\s+[\d,.NA-]+\s+[\d,.NA-]+\s+"
-            r"([\d,]{5,})\s+"          # group(4) = shares
-            r"([\d,]{8,})\s*$"         # group(5) = HKD turnover
+            r'^[\*\s]{0,5}(\d{1,5})\s+'              # g1: code
+            r'(\S[^\u3000\n]{1,22}?)\s{2,}'          # g2: English name
+            r'(.{1,30}?)\s*'                          # g3: Chinese name
+            r'(?:HKD|USD|CNY|EUR|GBP)\s+'            # currency (skip)
+            r'[\d,.NA-]+\s+'                          # PRV   (skip)
+            r'[\d,.NA-]+\s+'                          # BID   (skip)
+            r'[\d,.NA-]+\s+'                          # ASK   (skip)
+            r'([\d,.NA-]+)\s+'                        # g4: HIGH
+            r'([\d,.NA-]+)\s+'                        # g5: LOW
+            r'([\d,.NA-]+)\s+'                        # g6: CLOSE
+            r'([\d,]{5,})\s+'                         # g7: shares (volume)
+            r'([\d,]{8,})\s*$'                        # g8: HKD turnover
         )
+
+        def _price(s: str) -> float:
+            s = s.replace(",", "").strip()
+            return float(s) if s not in ("NA", "--", "", "N/A") else 0.0
 
         best     = {}
         name_map = {}
@@ -225,17 +227,29 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
             code     = str(code_int).zfill(5)
             name_eng = m.group(2).strip()
             name_chi = re.sub(r'[\u3000\uff20\uff64\s]+$', '', m.group(3)).strip()
-            volume   = float(m.group(4).replace(',', ''))
-            turnover = float(m.group(5).replace(',', ''))
+            high     = _price(m.group(4))
+            low      = _price(m.group(5))
+            close    = _price(m.group(6))
+            volume   = float(m.group(7).replace(',', ''))
+            turnover = float(m.group(8).replace(',', ''))
+
             if not _is_valid_chinese(name_chi):
                 name_chi = name_eng
             if turnover <= 0:
                 continue
+            # Keep highest-turnover record if code appears twice
             if code not in best or turnover > best[code]["turnover"]:
                 zh = get_zh_name(code) or (name_chi if _is_valid_chinese(name_chi) else name_eng)
-                best[code] = {"stock_code": code, "name": name_eng,
-                              "name_chi": zh, "turnover": turnover,
-                              "shares": volume, "close": 0.0}
+                best[code] = {
+                    "stock_code": code,
+                    "name":       name_eng,
+                    "name_chi":   zh,
+                    "turnover":   turnover,
+                    "shares":     volume,
+                    "high":       high,
+                    "low":        low,
+                    "close":      close,
+                }
                 if not get_zh_name(code):
                     name_map[code] = {"en": name_eng, "zh": zh}
 
@@ -256,7 +270,8 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
         if e.response.status_code == 404:
             prev = last_trading_day(date - timedelta(days=1))
             if prev != date:
-                log.warning("Daily quotation 404 for %s, trying %s", date_str, prev.strftime("%y%m%d"))
+                log.warning("Daily quotation 404 for %s, trying %s",
+                            date_str, prev.strftime("%y%m%d"))
                 return get_daily_quotation(prev)
         log.warning("Daily quotation not available for %s: %s", date_str, e)
         return EMPTY_QUOTE
@@ -265,22 +280,16 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
         return EMPTY_QUOTE
 
 # ── Source 2: Short selling ───────────────────────────────────────────────────
-# Chinese version — 4 cols: 股票代號 名稱 沽空成交量 沽空成交額
 SHORT_SELL_URL = "https://www.hkex.com.hk/chi/stat/smstat/ssturnover/ncms/ashtmain_c.htm"
 EMPTY_SHORT    = pd.DataFrame(columns=["stock_code", "name", "short_volume", "short_turnover"])
 
-# Pattern: CODE  CHI_NAME  VOLUME  TURNOVER
-# The Chinese file is Big5-encoded; names contain CJK characters
-_SS_PAT = re.compile(
-    r"^\s{0,8}(\d{1,6})\s{1,4}(.+?)\s{2,}([\d,]+)\s+([\d,]+)\s*$"
-)
+_SS_PAT  = re.compile(r'^\s{0,8}(\d{1,6})\s{1,4}(.+?)\s{2,}([\d,]+)\s+([\d,]+)\s*$')
 _SS_SKIP = {"股票代號", "沽空成交量", "合計", "TOTAL", "CODE", "NAME OF STOCK"}
 
 def get_short_sell_today() -> pd.DataFrame:
     try:
         resp = requests.get(SHORT_SELL_URL, headers=HEADERS, timeout=30)
         resp.raise_for_status()
-        # Chinese file is Big5 encoded
         try:
             text = resp.content.decode("big5", errors="replace")
         except Exception:
@@ -298,10 +307,8 @@ def get_short_sell_today() -> pd.DataFrame:
             st = to_num(m.group(4))
             if sv <= 0 and st <= 0:
                 continue
-            rows.append({"stock_code":     code,
-                         "name":           name,
-                         "short_volume":   sv,
-                         "short_turnover": st})
+            rows.append({"stock_code": code, "name": name,
+                         "short_volume": sv, "short_turnover": st})
         df = pd.DataFrame(rows) if rows else EMPTY_SHORT
         log.info("Short sell today: %d records", len(df))
         return df
@@ -312,7 +319,6 @@ def get_short_sell_today() -> pd.DataFrame:
 def save_short_sell(date: datetime, df: pd.DataFrame):
     if df.empty:
         return
-    # Store all 4 columns: sv, st, and name
     records = {r.stock_code: {
         "sv":   int(r.short_volume),
         "st":   float(r.short_turnover),
@@ -327,7 +333,7 @@ def get_short_avg_ratio(stock_codes: list, days: int, daily_tv: dict,
     for c in stock_codes:
         v = get_short_ratio_history(c, days, before, daily_tv)
         rows.append({"stock_code": c,
-                     "short_ratio_avg5": round(sum(v) / len(v), 2) if v else 0.0})
+                     "short_avg5": round(sum(v) / len(v), 2) if v else 0.0})
     return pd.DataFrame(rows)
 
 # ── Source 3: CCASS southbound ────────────────────────────────────────────────
@@ -394,18 +400,14 @@ def get_ccass_delta_and_avg(stock_codes: list, today_map: dict,
                             today_ds: str, days: int = 25,
                             today_pct_map: dict = None) -> pd.DataFrame:
     """
-    Compute CCASS metrics for each stock using pct_listed (% of issued shares)
-    as the primary signal — comparable across all stocks regardless of share count.
-
-    today_pct_map: {code: pct_listed} for today, from df_ccass.
+    Compute CCASS metrics using pct_listed as the primary signal.
 
     Fields returned:
-      pct_listed    — today's % held in CCASS (from HKEX)
-      pct_delta     — today pct minus yesterday pct (percentage points)
-      ccass_consec  — consecutive days pct moved in same direction as today
-                      (positive = accumulating streak, negative = distributing)
-      ccass_streak_pct — cumulative pct change over the current streak
-      ccass_delta   — raw share count change (kept for internal use)
+      pct_listed        — today's % held in CCASS
+      pct_delta         — today pct minus yesterday pct (percentage points)
+      ccass_consec      — consecutive days pct moved in same direction
+      ccass_streak_pct  — cumulative pct change over the current streak
+      ccass_delta       — raw share count change
     """
     if today_pct_map is None:
         today_pct_map = {}
@@ -414,36 +416,29 @@ def get_ccass_delta_and_avg(stock_codes: list, today_map: dict,
         today_sh  = today_map.get(code, 0)
         pct_today = today_pct_map.get(code, 0.0)
 
-        # ── pct history: newest-first, up to 25 days back ─────────────────────
-        pct_hist = get_pct_history(code, days, today_ds)   # [yesterday, day-2, ...]
-
+        pct_hist  = get_pct_history(code, days, today_ds)
         pct_prev  = pct_hist[0] if pct_hist else 0.0
         pct_delta = round(pct_today - pct_prev, 4) if pct_prev > 0 else 0.0
 
-        # pct_deltas between consecutive historical days (newest-first)
         pct_deltas = [
             round(pct_hist[i] - pct_hist[i + 1], 4)
             for i in range(len(pct_hist) - 1)
             if pct_hist[i] > 0 and pct_hist[i + 1] > 0
         ]
 
-        # consecutive days pct moved in same direction as today
-        # flat days (delta == 0) are skipped — they don't break the streak
-        # also accumulate the total pct move over the streak
-        direction = 1 if pct_delta > 0 else (-1 if pct_delta < 0 else 0)
-        consec = 0
-        streak_pct = pct_delta   # start with today's move
+        direction  = 1 if pct_delta > 0 else (-1 if pct_delta < 0 else 0)
+        consec     = 0
+        streak_pct = pct_delta
         if direction != 0:
-            for d in pct_deltas:          # walk back from yesterday
+            for d in pct_deltas:
                 if d == 0:
-                    continue              # flat day — skip, keep streak alive
+                    continue
                 if d * direction > 0:
-                    consec += direction   # same direction, extend streak
-                    streak_pct += d       # accumulate historical deltas
+                    consec     += direction
+                    streak_pct += d
                 else:
-                    break                 # opposite direction, streak ends
+                    break
 
-        # raw share delta (still used by classify_insight thresholds)
         sh_hist = get_sh_history(code, 2, today_ds)
         prev_sh = sh_hist[0] if sh_hist else 0
         delta   = today_sh - prev_sh
@@ -467,6 +462,8 @@ def save_daily_turnover(date: datetime, df: pd.DataFrame):
     tv_save_day(date, {r.stock_code: {
         "tv":    int(r.turnover),
         "vol":   int(r.shares),
+        "high":  float(r.high)  if hasattr(r, "high")  and r.high  else 0.0,
+        "low":   float(r.low)   if hasattr(r, "low")   and r.low   else 0.0,
         "close": float(r.close) if hasattr(r, "close") and r.close else 0.0,
     } for r in df.itertuples()})
 
@@ -490,15 +487,14 @@ def _turnover_avg(code: str, before: str, n: int) -> float:
 
 # ── Stock classification ──────────────────────────────────────────────────────
 def classify_stock(code: str, name: str) -> str:
-    """Returns type from stock_ref, falls back to keyword matching."""
     t = get_type(code)
     if t:
         return t
     n = name.upper()
-    ETF_CODES    = {"02800","02828","03033","03032","03188","02846","03140","03037","03011","02823"}
-    STABLE_KW    = ("BANK","ENERGY","POWER","GAS","PETRO","SINOPEC","CNOOC","MTR","UTILITY")
-    BLUECHIP_KW  = ("TENCENT","MEITUAN","ALIBABA","BABA","XIAOMI","HSBC","AIA","PING AN",
-                    "HKEX","CK ","HENDERSON","SHK","SWIRE","GALAXY","SANDS","MELCO")
+    ETF_CODES   = {"02800","02828","03033","03032","03188","02846","03140","03037","03011","02823"}
+    STABLE_KW   = ("BANK","ENERGY","POWER","GAS","PETRO","SINOPEC","CNOOC","MTR","UTILITY")
+    BLUECHIP_KW = ("TENCENT","MEITUAN","ALIBABA","BABA","XIAOMI","HSBC","AIA","PING AN",
+                   "HKEX","CK ","HENDERSON","SHK","SWIRE","GALAXY","SANDS","MELCO")
     if code in ETF_CODES:                               return "etf"
     if any(k in n for k in STABLE_KW):                 return "stable"
     if any(k in n for k in BLUECHIP_KW):               return "bluechip"
@@ -506,8 +502,6 @@ def classify_stock(code: str, name: str) -> str:
 
 THRESHOLDS = {
     #              lo    hi  spike  cover_drop
-    # cover_drop: today must be below (avg × cover_drop) to fire 空頭平倉
-    # 0.60 = ratio only needs to drop 40% from avg (e.g. 20% → 12%)
     "etf":      (40.0, 70.0, 15.0, 0.60),
     "stable":   ( 5.0, 10.0, 15.0, 0.60),
     "bluechip": (10.0, 20.0, 10.0, 0.60),
@@ -521,76 +515,26 @@ def classify_insight(code, stock_type, short_ratio, short_avg5, short_ratio_t2,
                      days_to_cover=0.0, vol_ratio=0.0,
                      tv_ratio30=0.0, pct_dev30=0.0,
                      sb_net=0) -> str | None:
-    """
-    Returns one primary signal string, or None.
-    Signals 4 (北水流出) and 5 (異常高沽空) are independent — both checked,
-    combined with | if both fire since they track different phenomena.
-    """
     lo, hi, spike_warn, cover_drop = THRESHOLDS.get(stock_type, THRESHOLDS["general"])
-    r_today = turnover / tv_avg5 if tv_avg5 > 0 else 1.0   # used in 空頭平倉
+    r_today = turnover / tv_avg5 if tv_avg5 > 0 else 1.0
 
-    # ── 挾倉風險 — short squeeze danger (highest priority) ────────────────────
     if days_to_cover > 5 and vol_ratio > 2:                      return "🔥 挾倉風險"
-
-    # ── 異常亢奮 — abnormal excitement ────────────────────────────────────────
     if (vol_ratio  >  2.5
             and tv_ratio30 >  2.0
             and pct_dev30  >= 0.5):                               return "🐉 異常亢奮"
-
-    # ── 北水增持 — quiet northbound accumulation ──────────────────────────────
     if (1.8 <= vol_ratio  <= 2.5
             and 1.5 <= tv_ratio30 <= 2.0
             and 0.2 <= pct_dev30  <= 0.5):                        return "🏦 北水增持"
 
-    # ── 北水流出 + 異常高沽空 — independent signals, can both fire ───────────
-    flow_out  = sb_net < 0 and pct_delta < 0
+    flow_out   = sb_net < 0 and pct_delta < 0
     high_short = short_ratio > hi + spike_warn
     if flow_out and high_short:   return "🚨 北水流出｜異常高沽空"
     if flow_out:                  return "🚨 北水流出"
     if high_short:                return "🚨 異常高沽空"
 
-    # ── 空頭平倉 ──────────────────────────────────────────────────────────────
     if (short_avg5 > lo and short_ratio < short_avg5 * cover_drop
             and r_today > 1.30):                                  return "📉 空頭平倉"
     return None
-
-# ── Bootstrap ─────────────────────────────────────────────────────────────────
-def bootstrap_history(days: int = 10):
-    from turnover_library import all_stored_dates as tv_all_stored
-    existing_tv    = tv_all_stored()
-    existing_ccass = ccass_all_stored_dates()
-
-    target, dates_to_fetch, checked = last_trading_day(datetime.now() - timedelta(days=1)), [], 0
-    while len(dates_to_fetch) < days and checked < 30:
-        dates_to_fetch.append(target)
-        target  = last_trading_day(target - timedelta(days=1))
-        checked += 1
-
-    needed = [d for d in dates_to_fetch
-              if d.strftime("%Y-%m-%d") not in existing_tv
-              or d.strftime("%Y-%m-%d") not in existing_ccass]
-    if not needed:
-        return
-    log.info("Bootstrap: %d dates to fetch", len(needed))
-
-    for d in needed:
-        key = d.strftime("%Y%m%d")
-        if d.strftime("%Y-%m-%d") not in existing_tv:
-            df_q = get_daily_quotation(d)
-            if not df_q.empty:
-                save_daily_turnover(d, df_q)
-                log.info("Bootstrap quotation: %s (%d)", key, len(df_q))
-            time.sleep(1)
-        if d.strftime("%Y-%m-%d") not in existing_ccass:
-            df_c = get_ccass_southbound(d)
-            if not df_c.empty:
-                ccass_save_day(d, {r.stock_code: {
-                    "sh":   r.shareholding,
-                    "pct":  r.pct_listed,
-                    "name": r.name,
-                } for r in df_c.itertuples()})
-                log.info("Bootstrap CCASS: %s (%d)", key, len(df_c))
-            time.sleep(1)
 
 # ── Main analysis ─────────────────────────────────────────────────────────────
 def run_analysis():
@@ -600,13 +544,11 @@ def run_analysis():
     today_ds = trading_day.strftime("%Y-%m-%d")
 
     _seed_name_map_from_ref()
-    bootstrap_history(days=25)
 
     # 1. Daily quotation
     df_quote = get_daily_quotation(trading_day)
     if df_quote.empty:
-        # HKEX file not yet published — rebuild from local turnover cache so the
-        # analysis can still run with yesterday's rankings instead of hard-aborting.
+        # HKEX file not yet published — rebuild from turnover cache
         log.warning("Daily quotation unavailable for %s — attempting cache fallback", today_ds)
         _fallback_tv = tv_load_recent(1, today_ds)
         if _fallback_tv:
@@ -623,6 +565,8 @@ def run_analysis():
                         "name_chi":   _nm_entry.get("zh", _code),
                         "turnover":   _vals["tv"],
                         "shares":     _vals.get("vol", 0),
+                        "high":       _vals.get("high",  0.0),
+                        "low":        _vals.get("low",   0.0),
                         "close":      _vals.get("close", 0.0),
                     })
             if _fb_rows:
@@ -641,7 +585,6 @@ def run_analysis():
     save_daily_turnover(trading_day, df_quote)
     stock_codes  = df_quote["stock_code"].tolist()
     turnover_map = dict(zip(df_quote["stock_code"], df_quote["turnover"]))
-    # Traded shares (成交股數) from daily quotation — used as short ratio denominator
     vol_map      = dict(zip(df_quote["stock_code"], df_quote["shares"]))
 
     # 2. Short selling
@@ -652,27 +595,30 @@ def run_analysis():
     for row in df_short.itertuples():
         traded_vol = vol_map.get(row.stock_code, 0)
         if traded_vol > 0:
-            # short_ratio = 沽空股數 / 成交股數 * 100  (shares ÷ shares)
             short_map[row.stock_code] = round(row.short_volume / traded_vol * 100, 2)
         short_vol_map[row.stock_code] = int(row.short_volume)
 
-    # 3. Short avg
-    _tv_recent    = tv_load_recent(15, today_ds)
+    # 3. Short average (35-day window to cover 10-day avg lookback with gaps)
+    _tv_recent    = tv_load_recent(35, today_ds)
     _sa_df        = get_short_avg_ratio(stock_codes, 10, _tv_recent, today_ds)
-    short_avg_map = dict(zip(_sa_df["stock_code"], _sa_df["short_ratio_avg5"]))  # avg over 10 days despite "avg5" name in library
+    short_avg_map = dict(zip(_sa_df["stock_code"], _sa_df["short_avg5"]))
 
-    # T-2: the actual trade date that today's CCASS settlement reflects
-    # Uses joint HK+CN calendar so long holidays are correctly handled
-    t2_date           = ccass_trade_date(trading_day)
-    t2_key            = t2_date.strftime("%Y%m%d")
+    # T-2: actual trade date that today's CCASS settlement reflects
+    t2_date = ccass_trade_date(trading_day)
+    t2_key  = t2_date.strftime("%Y%m%d")
     log.info("T-2 trade date (CCASS settlement): %s", t2_key)
 
-    # 4. CCASS
-    df_ccass = get_ccass_southbound(trading_day)
+    # 4. CCASS — fetch today; fall back to previous trading day if empty.
+    #    Track which date was actually fetched to avoid writing stale data
+    #    under today's key (Bug 3 fix).
+    df_ccass   = get_ccass_southbound(trading_day)
+    ccass_save_date = trading_day
     if df_ccass.empty:
         prev_td  = last_trading_day(trading_day - timedelta(days=1))
-        log.info("CCASS empty for %s, trying %s", trading_day.strftime("%Y-%m-%d"), prev_td.strftime("%Y-%m-%d"))
+        log.info("CCASS empty for %s, trying %s",
+                 trading_day.strftime("%Y-%m-%d"), prev_td.strftime("%Y-%m-%d"))
         df_ccass = get_ccass_southbound(prev_td)
+        ccass_save_date = prev_td   # save under the date we actually fetched
 
     ccass_sh_map  = {}
     ccass_pct_map = {}
@@ -680,25 +626,25 @@ def run_analysis():
         ccass_sh_map  = dict(zip(df_ccass["stock_code"], df_ccass["shareholding"]))
         ccass_pct_map = dict(zip(df_ccass["stock_code"], df_ccass["pct_listed"]))
 
-    df_cs         = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, today_ds,
-                                            today_pct_map=ccass_pct_map)
-    # Save today's CCASS into the year-split library
+    df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, today_ds,
+                                    today_pct_map=ccass_pct_map)
+
+    # Save CCASS under the date that was actually fetched
     if not df_ccass.empty:
-        ccass_save_day(trading_day, {r.stock_code: {
+        ccass_save_day(ccass_save_date, {r.stock_code: {
             "sh":   r.shareholding,
             "pct":  r.pct_listed,
             "name": r.name,
         } for r in df_ccass.itertuples()})
-    ccass_delta_map     = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
-    ccass_consec_map    = dict(zip(df_cs["stock_code"], df_cs["ccass_consec"]))
-    ccass_streak_pct_map= dict(zip(df_cs["stock_code"], df_cs["ccass_streak_pct"]))
-    pct_listed_map      = dict(zip(df_cs["stock_code"], df_cs["pct_listed"]))
-    pct_delta_map       = dict(zip(df_cs["stock_code"], df_cs["pct_delta"]))
 
-    # 4b. SFC cumulative short position → sfc_pct per stock
-    # sfc_pct = SFC reportable short shares / SDW 總數 (total CCASS-settled shares) * 100
-    # Uses the most recent SFC Friday report on or before today.
-    sfc_map = {}   # code -> {"sfc_sh": N, "sfc_hkd": N, "sfc_pct": float}
+    ccass_delta_map      = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
+    ccass_consec_map     = dict(zip(df_cs["stock_code"], df_cs["ccass_consec"]))
+    ccass_streak_pct_map = dict(zip(df_cs["stock_code"], df_cs["ccass_streak_pct"]))
+    pct_listed_map       = dict(zip(df_cs["stock_code"], df_cs["pct_listed"]))
+    pct_delta_map        = dict(zip(df_cs["stock_code"], df_cs["pct_delta"]))
+
+    # 4b. SFC cumulative short position
+    sfc_map = {}
     if _SFC_AVAILABLE and _SDW_AVAILABLE:
         try:
             from datetime import date as _date2
@@ -709,19 +655,18 @@ def run_analysis():
                     pos = sfc_get_position(code, _latest_sfc_ds)
                     if not pos or pos.get("sh", 0) <= 0:
                         continue
-                    sfc_sh    = pos["sh"]
-                    sfc_hkd   = pos.get("hkd", 0.0)
-                    total_sh  = sdw_get_total_sh(code, today_ds)
-                    sfc_pct   = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
+                    sfc_sh   = pos["sh"]
+                    sfc_hkd  = pos.get("hkd", 0.0)
+                    total_sh = sdw_get_total_sh(code, today_ds)
+                    sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
                     sfc_map[code] = {"sfc_sh": sfc_sh, "sfc_hkd": sfc_hkd, "sfc_pct": sfc_pct}
                 log.info("SFC short positions: %d stocks from %s", len(sfc_map), _latest_sfc_ds)
         except Exception as e:
             log.warning("SFC map build failed: %s", e)
 
-    # 5. Southbound top10 (from sc_top10_library)
-    # Try library first; if today not stored yet, do a live fetch directly from HKEX.
-    # HKEX publishes SC data same-day (usually by 18:00–20:00 HKT).
-    from sc_top10_library import fetch_day as sc_fetch_day, save_year as sc_save_year, load_year as sc_load_year, lib_path as sc_lib_path
+    # 5. Southbound top10
+    from sc_top10_library import (fetch_day as sc_fetch_day, save_year as sc_save_year,
+                                   load_year as sc_load_year, lib_path as sc_lib_path)
     from datetime import date as _date
 
     def _build_sb_map(top10_list: list) -> dict:
@@ -735,24 +680,19 @@ def run_analysis():
             }
         return m
 
-    sb_map = {}   # code -> {buy, sell, net, rank, total} in HKD
+    sb_map       = {}
     sb_date_used = today_ds
-    # Minimum stocks to consider sc_top10 data valid.
-    # HKEX typically publishes 10 net-buy + 10 net-sell; accept >= 5 to guard
-    # against partial/early fetches being stored and used.
-    _MIN_SB = 5
+    _MIN_SB      = 5
 
-    # 1. Try library (already stored from previous run or --reparse)
     sb_map = _build_sb_map(get_top10(today_ds))
     if sb_map and len(sb_map) < _MIN_SB:
-        log.warning("Southbound top10: library has only %d stocks for %s — discarding, will re-fetch",
-                    len(sb_map), today_ds)
+        log.warning("Southbound top10: only %d stocks for %s — discarding", len(sb_map), today_ds)
         sb_map = {}
 
-    # 2. If not in library, try live fetch from HKEX and store immediately
     if not sb_map:
         log.info("Southbound top10: not in library for %s — attempting live fetch", today_ds)
-        live_rec   = sc_fetch_day(trading_day.date() if hasattr(trading_day, 'date') else _date.fromisoformat(today_ds))
+        live_rec   = sc_fetch_day(trading_day.date() if hasattr(trading_day, "date") else
+                                  _date.fromisoformat(today_ds))
         live_count = len(live_rec.get("top10", [])) if live_rec else 0
         if live_rec and live_count >= _MIN_SB:
             year = trading_day.year
@@ -760,12 +700,10 @@ def run_analysis():
             lib["by_date"][today_ds] = live_rec
             sc_save_year(year, lib)
             sb_map = _build_sb_map(live_rec.get("top10", []))
-            log.info("Southbound top10: live fetch succeeded — %d stocks for %s", len(sb_map), today_ds)
+            log.info("Southbound top10: live fetch — %d stocks for %s", len(sb_map), today_ds)
         else:
-            log.info("Southbound top10: live fetch returned %d stocks for %s (< %d, not saved)",
-                     live_count, today_ds, _MIN_SB)
+            log.info("Southbound top10: live fetch returned %d stocks (< %d)", live_count, _MIN_SB)
 
-    # 3. Fall back to most recent available day if still empty
     if not sb_map:
         prev_td = last_trading_day(trading_day - timedelta(days=1))
         prev_ds = prev_td.strftime("%Y-%m-%d")
@@ -778,40 +716,31 @@ def run_analysis():
 
     log.info("Southbound top10: %d stocks for %s", len(sb_map), sb_date_used)
 
-    # 5a. Compute sb_consec and sb_net_prev for each stock in sb_map
+    # 5a. sb_consec and sb_net_prev
     def _sb_consec_and_prev(code: str) -> tuple[int, int]:
-        """Returns (consecutive_net_buy_days_including_today, prev_day_net_flow)."""
-        history = get_top10_history(code, 30, today_ds)
+        history  = get_top10_history(code, 30, today_ds)
         prev_net = (history[0]["buy"] - history[0]["sell"]) if history else 0
-
         today_net = sb_map[code]["sb_net"]
         if today_net < 0:
             consec = -1
             for entry in history:
                 net = entry["buy"] - entry["sell"]
-                if net < 0:
-                    consec -= 1
-                elif net == 0:
-                    continue
-                else:
-                    break
+                if net < 0:   consec -= 1
+                elif net == 0: continue
+                else:          break
             return consec, prev_net
         if today_net == 0:
             return 0, prev_net
-
         consec = 1
         for entry in history:
             net = entry["buy"] - entry["sell"]
-            if net > 0:
-                consec += 1
-            elif net == 0:
-                continue
-            else:
-                break
+            if net > 0:   consec += 1
+            elif net == 0: continue
+            else:          break
         return consec, prev_net
 
-    sb_consec_map  = {}
-    sb_prev_map    = {}
+    sb_consec_map = {}
+    sb_prev_map   = {}
     for code in sb_map:
         consec, prev = _sb_consec_and_prev(code)
         sb_consec_map[code] = consec
@@ -820,7 +749,7 @@ def run_analysis():
     # 6. Previous ranks
     prev_ranks = get_prev_ranks(exclude_date=trading_day)
 
-    # 7. Build results — loop over quotation stocks
+    # 7. Build results
     results = []
     for i, row in enumerate(df_quote.itertuples(), 1):
         code         = row.stock_code
@@ -833,7 +762,6 @@ def run_analysis():
         pct_delta        = pct_delta_map.get(code, 0.0)
         tv_avg5          = _turnover_avg(code, today_ds, 5)
 
-        # ── 挾倉風險: short volume vs avg 30-day share volume ──────────────────
         short_vol_today = short_vol_map.get(code, 0)
         vol_hist30      = get_vol_history(code, 30, today_ds)
         avg_vol30       = sum(vol_hist30) / len(vol_hist30) if vol_hist30 else 0
@@ -841,7 +769,6 @@ def run_analysis():
         days_to_cover   = round(short_vol_today / avg_vol30, 2) if avg_vol30 > 0 else 0.0
         vol_ratio       = round(today_vol / avg_vol30, 2)       if avg_vol30 > 0 else 0.0
 
-        # ── 30-day averages for 機構增持 ────────────────────────────────────────
         tv_hist30  = get_tv_history(code, 30, today_ds)
         tv_avg30   = sum(tv_hist30) / len(tv_hist30) if tv_hist30 else 0.0
         tv_ratio30 = round(float(row.turnover) / tv_avg30, 2) if tv_avg30 > 0 else 0.0
@@ -849,19 +776,21 @@ def run_analysis():
         pct_avg30_lvl = round(sum(pct_hist30) / len(pct_hist30), 4) if pct_hist30 else 0.0
         pct_dev30  = round(pct_listed - pct_avg30_lvl, 4) if pct_avg30_lvl > 0 else 0.0
 
-        tv_t2_raw      = get_tv(code, t2_key)
-        _t2_short      = get_short_history(code, 1, t2_date.strftime("%Y-%m-%d") + "z")
-        short_sv_t2    = _t2_short[0]["sv"] if _t2_short else 0
-        vol_t2_raw     = _tv_recent.get(t2_key, {}).get(code, {})
-        vol_t2         = vol_t2_raw.get("vol", 0) if isinstance(vol_t2_raw, dict) else 0
+        tv_t2_raw   = get_tv(code, t2_key)
+        # T-2 short: use the day after t2_date as the exclusive upper bound
+        _t2_before  = (t2_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        _t2_short   = get_short_history(code, 1, _t2_before)
+        short_sv_t2 = _t2_short[0]["sv"] if _t2_short else 0
+        vol_t2_raw  = _tv_recent.get(t2_key, {}).get(code, {})
+        vol_t2      = vol_t2_raw.get("vol", 0) if isinstance(vol_t2_raw, dict) else 0
         short_ratio_t2 = round(short_sv_t2 / vol_t2 * 100, 2) if vol_t2 > 0 else short_ratio
         turnover_t2    = tv_t2_raw if tv_t2_raw > 0 else float(row.turnover)
 
-        stock_type       = classify_stock(code, row.name)
-        _, ind_zh        = get_industry(code)
+        stock_type = classify_stock(code, row.name)
+        _, ind_zh  = get_industry(code)
 
-        sb           = sb_map.get(code, {})
-        has_history  = len(tv_hist30) >= 5 and len(vol_hist30) >= 5
+        sb          = sb_map.get(code, {})
+        has_history = len(tv_hist30) >= 5 and len(vol_hist30) >= 5
         insight = classify_insight(
             code, stock_type, short_ratio, short_avg5, short_ratio_t2,
             int(row.turnover), tv_avg5, turnover_t2,
@@ -879,7 +808,8 @@ def run_analysis():
         rank_change = 0 if rank_new else prev_rank - i
         results.append({
             "rank": i, "rank_change": rank_change, "rank_new": rank_new,
-            "code": code, "name": row.name, "name_chi": getattr(row, "name_chi", row.name),
+            "code": code, "name": row.name,
+            "name_chi": getattr(row, "name_chi", row.name),
             "stock_type": stock_type, "industry_zh": ind_zh,
             "turnover": int(row.turnover),
             "sb_buy":   sb.get("sb_buy",   0),
@@ -888,7 +818,8 @@ def run_analysis():
             "sb_total": sb.get("sb_total", 0),
             "sb_net_prev": int(sb_prev_map.get(code, 0)),
             "sb_consec":   int(sb_consec_map.get(code, 0)),
-            "short_ratio": round(short_ratio, 2), "short_avg5": round(short_avg5, 2),
+            "short_ratio":    round(short_ratio, 2),
+            "short_avg5":     round(short_avg5, 2),
             "short_ratio_t2": round(short_ratio_t2, 2),
             "short_vol":      int(short_vol_today),
             "days_to_cover":  days_to_cover,
@@ -896,9 +827,9 @@ def run_analysis():
             "sfc_sh":   sfc_map.get(code, {}).get("sfc_sh",  0),
             "sfc_hkd":  sfc_map.get(code, {}).get("sfc_hkd", 0.0),
             "sfc_pct":  sfc_map.get(code, {}).get("sfc_pct", 0.0),
-            "tv_ratio30":     tv_ratio30,
-            "pct_dev30":      round(pct_dev30, 4),
-            "ccass_trade_date": t2_date.strftime("%Y-%m-%d"),
+            "tv_ratio30": tv_ratio30,
+            "pct_dev30":  round(pct_dev30, 4),
+            "ccass_trade_date":  t2_date.strftime("%Y-%m-%d"),
             "ccass_delta":       int(ccass_delta),
             "ccass_consec":      int(ccass_consec),
             "ccass_streak_pct":  round(ccass_streak_pct, 4),
@@ -907,13 +838,9 @@ def run_analysis():
             "insight": insight,
         })
 
-    # 7b. Append sc_top10 stocks missing from today's quotation
-    # These are large H-shares/tech stocks (Tencent, Alibaba, Xiaomi etc.) with
-    # SB flow but absent from the HKEX c.htm quotation file, which only covers
-    # a subset of stocks. Without this block their sb_buy/sb_sell data is silently
-    # dropped and the 北水 chart shows only stocks that happen to appear in both.
+    # 7b. Append sc_top10 stocks not in today's quotation
     _codes_in_results = {r["code"] for r in results}
-    _nm = load_store(NAME_MAP_FILE)
+    _nm        = load_store(NAME_MAP_FILE)
     _sb_extras = 0
     for _code, _sb in sb_map.items():
         if _code in _codes_in_results:
@@ -924,8 +851,7 @@ def run_analysis():
         _stype     = classify_stock(_code, _name_eng)
         _, _ind_zh = get_industry(_code)
         _consec, _prev = _sb_consec_and_prev(_code)
-        # Use real turnover from library if available; fall back to sb_total
-        _tv = get_tv(_code, trading_day.strftime("%Y%m%d"))
+        _tv       = get_tv(_code, trading_day.strftime("%Y%m%d"))
         _turnover = _tv if _tv > 0 else _sb.get("sb_total", 0)
         _prev_rank = prev_ranks.get(_code)
         results.append({
@@ -947,10 +873,10 @@ def run_analysis():
             "sfc_hkd": sfc_map.get(_code, {}).get("sfc_hkd", 0.0),
             "sfc_pct": sfc_map.get(_code, {}).get("sfc_pct", 0.0),
             "tv_ratio30": 0.0, "pct_dev30": 0.0,
-            "ccass_trade_date": t2_date.strftime("%Y-%m-%d"),
-            "ccass_delta":      int(ccass_delta_map.get(_code, 0)),
-            "ccass_consec":     int(ccass_consec_map.get(_code, 0)),
-            "ccass_streak_pct": round(ccass_streak_pct_map.get(_code, 0.0), 4),
+            "ccass_trade_date":  t2_date.strftime("%Y-%m-%d"),
+            "ccass_delta":       int(ccass_delta_map.get(_code, 0)),
+            "ccass_consec":      int(ccass_consec_map.get(_code, 0)),
+            "ccass_streak_pct":  round(ccass_streak_pct_map.get(_code, 0.0), 4),
             "pct_listed": round(pct_listed_map.get(_code, ccass_pct_map.get(_code, 0.0)), 4),
             "pct_delta":  round(pct_delta_map.get(_code, 0.0), 4),
             "insight": None,
@@ -959,22 +885,26 @@ def run_analysis():
     if _sb_extras:
         log.info("Added %d sc_top10 stocks not in quotation", _sb_extras)
 
-    # 7. Persist
-    output = {"update_time": trading_day.strftime("%Y-%m-%d %H:%M"),
-              "sb_date": sb_date_used,
-              "name_map": load_store(NAME_MAP_FILE), "stocks": results}
+    # 8. Persist
+    output = {
+        "update_time": trading_day.strftime("%Y-%m-%d %H:%M"),
+        "sb_date":     sb_date_used,
+        "name_map":    load_store(NAME_MAP_FILE),
+        "stocks":      results,
+    }
     with open("data.json", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, separators=(",", ":"))
     log.info("data.json written: %d stocks", len(results))
     save_rank_history(trading_day, results)
 
-    # 8. Telegram
+    # 9. Telegram
     if results:
         flagged     = [s for s in results if s["insight"]]
         new_entries = [s for s in results if s["rank_new"]]
         big_movers  = [s for s in results if not s["rank_new"] and s["rank_change"] >= 5]
         top         = results[0]
-        top_rc      = f" [↑{top['rank_change']}]" if top['rank_change'] > 0 else (" [new]" if top['rank_new'] else "")
+        top_rc      = (f" [↑{top['rank_change']}]" if top["rank_change"] > 0
+                       else (" [new]" if top["rank_new"] else ""))
         lines = [
             "📊 港股策略板",
             f"時間: {output['update_time']}",
@@ -982,14 +912,21 @@ def run_analysis():
             f"異動股: {len(flagged)} 隻 | 新進榜: {len(new_entries)} 隻",
         ]
         if new_entries:
-            lines.append("⭐ 新進: " + "、".join(f"{s['name_chi']}({s['code']})" for s in new_entries[:3]))
+            lines.append("⭐ 新進: " + "、".join(
+                f"{s['name_chi']}({s['code']})" for s in new_entries[:3]))
         if big_movers:
-            lines.append("🔺 大升: " + "、".join(f"{s['name_chi']} ↑{s['rank_change']}" for s in big_movers[:3]))
+            lines.append("🔺 大升: " + "、".join(
+                f"{s['name_chi']} ↑{s['rank_change']}" for s in big_movers[:3]))
         if flagged:
             lines.append("─────────────")
             for s in flagged[:5]:
-                rc = f" [↑{s['rank_change']}]" if s['rank_change'] > 0 else (" [new]" if s['rank_new'] else "")
-                lines.append(f"{s['insight']} {s['name_chi']}({s['code']}){rc} | 沽空率 {s['short_ratio']}% | CCASS {'+' if s['pct_delta']>=0 else ''}{s['pct_delta']}pp")
+                rc = (f" [↑{s['rank_change']}]" if s["rank_change"] > 0
+                      else (" [new]" if s["rank_new"] else ""))
+                lines.append(
+                    f"{s['insight']} {s['name_chi']}({s['code']}){rc}"
+                    f" | 沽空率 {s['short_ratio']}%"
+                    f" | CCASS {'+' if s['pct_delta']>=0 else ''}{s['pct_delta']}pp"
+                )
         send_telegram("\n".join(lines))
 
 
