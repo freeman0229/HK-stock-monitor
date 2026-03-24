@@ -36,9 +36,13 @@ log = logging.getLogger(__name__)
 
 START_DATE      = date(2026, 2, 2)   # first date to include
 SLEEP_SEC       = 1.5                # polite delay between requests
-# A day whose total HKD turnover is below this is treated as incomplete /
-# fetched before HKEX published final settlement figures (usually ~18:00 HKT).
-MIN_TOTAL_TV    = 50_000_000_000     # 50 billion HKD
+# Minimum number of stock records to consider a fetch valid.
+# Archive files return the full market (~500-800 stocks); today-only fetches
+# return a narrower set. 30 is a safe lower bound — any real trading day
+# will have far more. Do NOT use a total-HKD threshold: stored data contains
+# only the top ~50-60 stocks, but archive re-fetches return all active stocks
+# whose combined HKD can be 10-15B (well below any "50B" floor) yet be valid.
+MIN_RECORDS     = 30
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
@@ -135,7 +139,7 @@ def day_status(ds: str, lib: dict) -> str:
     """
     Returns one of:
       'missing'   — date not stored at all
-      'bad_tv'    — stored but total turnover < MIN_TOTAL_TV (incomplete fetch)
+      'bad_tv'    — stored but record count < MIN_RECORDS (incomplete fetch)
       'no_price'  — stored but missing high/low/close fields (old schema)
       'ok'        — complete
     """
@@ -143,7 +147,7 @@ def day_status(ds: str, lib: dict) -> str:
     if not day:
         return "missing"
     total = sum(v["tv"] for v in day.values() if isinstance(v, dict) and "tv" in v)
-    if total < MIN_TOTAL_TV:
+    if len(day) < MIN_RECORDS:
         return "bad_tv"
     # Check if any record is missing the new price fields
     sample = next((v for v in day.values() if isinstance(v, dict)), None)
@@ -366,12 +370,10 @@ def build(start: date, end: date, force_date: date | None = None, dry_run: bool 
             failed += 1
             time.sleep(SLEEP_SEC)
             continue
-        total_tv = sum(r["tv"] for r in records)
-        if total_tv < MIN_TOTAL_TV:
+        if len(records) < MIN_RECORDS:
             log.warning(
-                "  Total turnover HKD %s < threshold — HKEX may not have published "
-                "final data yet (publishes ~18:00 HKT). Skipping save.",
-                f"{total_tv:,.0f}"
+                "  Only %d records — HKEX file not yet published or non-trading day "
+                "(skipping save).", len(records)
             )
             failed += 1
             time.sleep(SLEEP_SEC)
