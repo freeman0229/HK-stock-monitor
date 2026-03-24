@@ -97,7 +97,7 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in ccass_20*.json ccass_sdw_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
+          for f in ccass_20*.json ccass_sdw_*_20*.json ccass_sdw_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || \
@@ -163,7 +163,7 @@ jobs:
 
   # ── SDW full backfill (manual, resume-able) ─────────────────────────────────
   sdw-build:
-    name: SDW participant holdings full backfill
+    name: SDW participant holdings full backfill (range-split, all SFC stocks)
     runs-on: ubuntu-latest
     timeout-minutes: 320
     permissions:
@@ -176,13 +176,15 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
+      - name: Migrate old single-file SDW data to range-split format (safe to re-run)
+        run: python ccass_sdw_library.py --migrate
       - name: Build SDW holdings library (resumes from last stored date)
         run: python ccass_sdw_library.py
       - name: Commit progress
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
-          for f in ccass_sdw_20*.json; do [ -f "$f" ] && git add "$f"; done
+          for f in ccass_sdw_*_20*.json ccass_sdw_20*.json; do [ -f "$f" ] && git add "$f"; done
           git diff --staged --quiet || \
             (git commit -m "SDW build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
