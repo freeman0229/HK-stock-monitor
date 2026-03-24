@@ -3,6 +3,7 @@ name: Daily Sync
 on:
   schedule:
     - cron: '0 12 * * 1-5'   # 12:00 UTC / 20:00 HKT (Mon–Fri)
+    - cron: '0 14 * * 1-5'   # 14:00 UTC / 22:00 HKT (Mon–Fri) — SFC check
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
   workflow_dispatch:
     inputs:
@@ -72,6 +73,16 @@ jobs:
           else
             echo "Not Thu/Fri (DOW=$DOW) — skipping SDW fetch"
           fi
+
+      - name: Restore SFC cache (needed for reparse)
+        uses: actions/cache@v4
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
+          restore-keys: sfc-cache-
+
+      - name: Check SFC for new reports (any day)
+        run: python sfc_library.py --update
 
       - name: Run daily analysis
         env:
@@ -175,9 +186,9 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SDW build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SFC weekly (Saturday 10:00 HKT) ─────────────────────────────────────────
+  # ── SFC check (also runs daily at 22:00 HKT as part of daily job) ────────────
   sfc-weekly:
-    name: SFC weekly short position library
+    name: SFC short position library (manual / Saturday reparse)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
