@@ -7,8 +7,9 @@ Source:
   https://www.sfc.hk/TC/Regulatory-functions/Market/Short-position-reporting/
   Aggregated-reportable-short-positions-of-specified-shares
 
-Published: Tuesdays (data as of previous Friday close)
-Schedule:  Saturday run in daily-sync.yml (picks up the week's report)
+Published: SFC publishes whenever ready — no fixed day.
+           The filename encodes the report date (usually a Friday).
+Schedule:  Runs daily at 22:00 HKT — scrapes page for any new files.
 Storage:   sfc_{YYYY}.json — one per year
 
 Structure:
@@ -52,7 +53,7 @@ log = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-START_DATE  = date(2025, 3, 21)
+START_DATE  = date(2018, 1, 1)   # SFC reporting available from 2018
 CACHE_DIR   = "sfc_cache"
 SLEEP_SEC   = 2.0
 
@@ -116,23 +117,29 @@ def _normalise_total(total) -> dict:
     return {}
 
 # ── Schedule helpers ──────────────────────────────────────────────────────────
+# SFC can publish on any day — no Friday-only restriction.
+# We check every calendar day; the report date comes from the Excel filename.
 
-def _prev_friday(ref: date = None) -> date:
-    """Most recent Friday on or before ref."""
-    ref = ref or date.today()
-    return ref - timedelta(days=(ref.weekday() - 4) % 7)
-
-def all_report_fridays(up_to: date = None) -> list[date]:
-    """All Fridays from START_DATE up to up_to (inclusive)."""
+def all_report_dates(up_to: date = None) -> list[date]:
+    """
+    All Fridays from START_DATE to up_to.
+    Used for direct-URL gap-filling. The Excel filename date is always
+    a Friday (the report date), even if SFC publishes it on a different day.
+    The page-scrape step handles unusual publish dates without restriction.
+    """
     up_to  = up_to or date.today()
     result = []
     d = START_DATE
+    # Advance to first Friday
     while d.weekday() != 4:
         d += timedelta(days=1)
     while d <= up_to:
         result.append(d)
         d += timedelta(weeks=1)
     return result
+
+# Backward-compatible alias so main.py imports still work
+all_report_fridays = all_report_dates
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
@@ -384,43 +391,108 @@ def reparse(specific_date: date = None):
     log.info("Reparse done: %d reparsed | %d no cache | %d failed",
              reparsed, no_cache, parse_fail)
 
-def build(update_only: bool = False, specific_date: date = None):
-    if specific_date:
-        dates_to_fetch = [specific_date]
-    else:
-        all_dates      = all_report_fridays()
-        stored         = all_stored_dates()
-        dates_to_fetch = [d for d in all_dates if d.isoformat() not in stored]
-        log.info("%s: %d dates to fetch (%d already stored, %d total)",
-                 "Update" if update_only else "Build",
-                 len(dates_to_fetch), len(stored), len(all_dates))
+def _extract_date_from_url(url: str) -> date | None:
+    """Extract report date from an SFC Excel URL filename (YYYYMMDD)."""
+    m = re.search(r"(\d{8})(?:\.xlsx|\.xls|\.csv)", url, re.I)
+    if not m:
+        return None
+    ds = m.group(1)
+    try:
+        return date(int(ds[:4]), int(ds[4:6]), int(ds[6:8]))
+    except (ValueError, TypeError):
+        return None
 
-    if not dates_to_fetch:
+
+def _fetch_from_scraped_links(stored: set) -> int:
+    """
+    Scrape the SFC page, download any Excel link whose report date
+    is not yet stored, parse and save it.
+    Returns number of new dates stored.
+    """
+    links = _scrape_excel_links()
+    if not links:
+        log.info("Page scrape returned no links")
+        return 0
+
+    log.info("Page scrape found %d links", len(links))
+    fetched = 0
+    for link in links:
+        report_date = _extract_date_from_url(link)
+        if report_date is None:
+            continue
+        if report_date.isoformat() in stored or report_date < START_DATE:
+            continue
+
+        log.info("New report date on page: %s", report_date.isoformat())
+        try:
+            r = requests.get(link, headers=HEADERS, timeout=30)
+            if r.status_code != 200 or len(r.content) < 1000:
+                continue
+            cache_file = os.path.join(CACHE_DIR, f"sfc_{report_date.strftime('%Y%m%d')}.xlsx")
+            with open(cache_file, "wb") as cf:
+                cf.write(r.content)
+            records = _parse_excel(r.content, report_date)
+            if not records:
+                continue
+            lib = load_year(report_date.year)
+            lib["by_date"][report_date.isoformat()] = records
+            save_year(report_date.year, lib)
+            stored.add(report_date.isoformat())
+            fetched += 1
+            log.info("Stored %s (%d stocks)", report_date.isoformat(), len(records) - 1)
+            time.sleep(SLEEP_SEC)
+        except Exception as e:
+            log.warning("Failed to process %s: %s", link, e)
+
+    return fetched
+
+
+def build(update_only: bool = False, specific_date: date = None):
+    """
+    Build or update the SFC library.
+
+    Step 1: Scrape the SFC page for new links — catches any report
+            published on any day without needing to know the date.
+    Step 2: Try direct URL patterns for every calendar day not yet
+            stored — fills historical gaps where the page no longer
+            lists the link but the direct URL still works.
+    """
+    stored = all_stored_dates()
+
+    # Step 1: page scrape (most reliable for recent data)
+    new_from_page = _fetch_from_scraped_links(stored)
+    if new_from_page:
+        stored = all_stored_dates()  # refresh after new saves
+
+    if specific_date:
+        dates_to_try = [specific_date]
+    else:
+        dates_to_try = [d for d in all_report_dates() if d.isoformat() not in stored]
+        log.info("%s: %d calendar days to try via direct URL",
+                 "Update" if update_only else "Build", len(dates_to_try))
+
+    if not dates_to_try:
         log.info("Already up to date.")
         return
 
-    scraped_links = _scrape_excel_links()
-    if scraped_links:
-        log.info("Page scrape found %d candidate links", len(scraped_links))
-
+    # Step 2: direct URL patterns (fills gaps not covered by page scrape)
     fetched = 0
-    for di, d in enumerate(dates_to_fetch, 1):
-        log.info("── [%d/%d] %s ──", di, len(dates_to_fetch), d.isoformat())
+    for d in dates_to_try:
         raw = _download_excel(d)
         if not raw:
-            time.sleep(SLEEP_SEC)
-            continue
+            continue  # 404 is normal for non-report days
         records = _parse_excel(raw, d)
         if not records:
-            time.sleep(SLEEP_SEC)
             continue
         lib = load_year(d.year)
         lib["by_date"][d.isoformat()] = records
         save_year(d.year, lib)
         fetched += 1
+        log.info("Stored %s (%d stocks)", d.isoformat(), len(records) - 1)
         time.sleep(SLEEP_SEC)
 
-    log.info("Build complete: %d/%d dates fetched", fetched, len(dates_to_fetch))
+    log.info("Build complete: %d from page scrape + %d from direct URLs",
+             new_from_page, fetched)
 
 # ── API ───────────────────────────────────────────────────────────────────────
 
