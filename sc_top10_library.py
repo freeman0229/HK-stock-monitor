@@ -47,7 +47,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 BASE_URL   = "https://www.hkex.com.hk/chi/csm/DailyStat/data_tab_daily_{date}c.js"
-START_DATE = date(2025, 1, 1)   # match ccass_library START_DATE; Jan-Aug 2025 data exists
+START_DATE = date(2025, 9, 1)   # user-requested start: 1 Sep 2025
 SLEEP_SEC  = 1.2
 CACHE_DIR  = "sc_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -65,8 +65,40 @@ try:
 except Exception:
     _HK = set()
 
+# Mainland China public holidays — Stock Connect is closed when EITHER
+# exchange is on holiday. These are CN-only holidays where HK is open.
+_CN_HOLIDAY_DATES = {
+    "2024-01-01","2024-02-12","2024-02-13","2024-02-14","2024-02-15","2024-02-16",
+    "2024-04-04","2024-04-05","2024-05-01","2024-05-02","2024-05-03",
+    "2024-06-10","2024-09-16","2024-09-17",
+    "2024-10-01","2024-10-02","2024-10-03","2024-10-04","2024-10-07",
+    "2025-01-01","2025-01-27","2025-01-28","2025-01-29","2025-01-30","2025-01-31",
+    "2025-04-04","2025-05-01","2025-05-02","2025-05-05",
+    "2025-06-02",
+    "2025-10-01","2025-10-02","2025-10-03","2025-10-06","2025-10-07","2025-10-08",
+    "2026-01-01","2026-01-28","2026-01-29","2026-01-30","2026-02-02","2026-02-03","2026-02-04",
+    "2026-04-06","2026-05-01","2026-05-04","2026-05-05",
+    "2026-06-19",
+    "2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07","2026-10-08",
+}
+
+try:
+    _CN_LIB = _hol.China()
+except Exception:
+    _CN_LIB = set()
+
+def _is_cn_holiday(d: date) -> bool:
+    return d.isoformat() in _CN_HOLIDAY_DATES or d in _CN_LIB
+
 def is_trading_day(d: date) -> bool:
-    return d.weekday() < 5 and d not in _HK
+    # Both HK and mainland exchanges must be open for Stock Connect to trade
+    if d.weekday() >= 5:
+        return False
+    if d in _HK:
+        return False
+    if _is_cn_holiday(d):
+        return False
+    return True
 
 def last_trading_day(d: date) -> date:
     while not is_trading_day(d):
