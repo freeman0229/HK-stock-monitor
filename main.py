@@ -280,37 +280,149 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
         return EMPTY_QUOTE
 
 # ── Source 2: Short selling ───────────────────────────────────────────────────
-SHORT_SELL_URL = "https://www.hkex.com.hk/chi/stat/smstat/ssturnover/ncms/ashtmain_c.htm"
-EMPTY_SHORT    = pd.DataFrame(columns=["stock_code", "name", "short_volume", "short_turnover"])
+# URL priority: modern page (table HTML) → legacy static file (Big5 pre-text)
+_SS_URL_MODERN = (
+    "https://www.hkex.com.hk/Market-Data/Statistics/Securities-Market/"
+    "Short-Selling-Turnover-Today?sc_lang=zh-HK"
+)
+_SS_URL_LEGACY = (
+    "https://www.hkex.com.hk/chi/stat/smstat/ssturnover/ncms/ashtmain_c.htm"
+)
+EMPTY_SHORT = pd.DataFrame(columns=["stock_code", "name", "short_volume", "short_turnover"])
 
-_SS_PAT  = re.compile(r'^\s{0,8}(\d{1,6})\s{1,4}(.+?)\s{2,}([\d,]+)\s+([\d,]+)\s*$')
-_SS_SKIP = {"股票代號", "沽空成交量", "合計", "TOTAL", "CODE", "NAME OF STOCK"}
+# Pre-formatted text pattern: CODE  CHI_NAME  SHARES  AMOUNT
+_SS_PRE_PAT  = re.compile(
+    r'^\s{0,8}(\d{1,6})\s{1,4}'
+    r'(.+?)\s{2,}'
+    r'([\d,]+)\s+'
+    r'([\d,]+)\s*$'
+)
+_SS_SKIP = frozenset({
+    "股票代號","沽空成交量","合計","TOTAL","CODE","NAME OF STOCK","代號","股票名稱"
+})
+
+def _is_valid_cjk_name(s: str) -> bool:
+    return bool(s) and any('\u4e00' <= c <= '\u9fff' for c in s)
+
+def _parse_ss_table(raw: bytes) -> list[dict]:
+    """Parse the modern HKEX HTML table (UTF-8). Returns list of row dicts."""
+    text = raw.decode("utf-8", errors="replace")
+    soup = BeautifulSoup(text, "html.parser")
+    # Find table containing 代號/CODE and 股數/VOLUME
+    target = None
+    for table in soup.find_all("table"):
+        tc = table.get_text()
+        if ("代號" in tc or "CODE" in tc) and ("股數" in tc or "VOLUME" in tc):
+            target = table
+            break
+    if not target:
+        return []
+    # Detect column positions from header row
+    col_code = col_name = col_sv = col_st = None
+    header_row = target.find("tr")
+    if header_row:
+        for i, cell in enumerate(header_row.find_all(["th", "td"])):
+            h = cell.get_text(strip=True)
+            if "代號" in h or h.upper() in ("CODE", "STOCK CODE"):
+                col_code = i
+            elif "名稱" in h or "NAME" in h.upper():
+                col_name = i
+            elif "股數" in h or "VOLUME" in h.upper() or "SHARES" in h.upper():
+                col_sv = i
+            elif "金額" in h or "AMOUNT" in h.upper() or "TURNOVER" in h.upper():
+                col_st = i
+    if col_code is None: col_code = 0
+    if col_name is None: col_name = 1
+    if col_sv   is None: col_sv   = 2
+    if col_st   is None: col_st   = 3
+    rows = []
+    seen = set()
+    for tr in target.find_all("tr")[1:]:
+        cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+        if len(cells) <= max(col_code, col_name, col_sv, col_st):
+            continue
+        raw_code = cells[col_code].strip().lstrip("0")
+        if not raw_code.isdigit():
+            continue
+        code_int = int(raw_code)
+        if code_int < 1 or code_int > 9999:
+            continue
+        code = str(code_int).zfill(5)
+        if code in seen:
+            continue
+        seen.add(code)
+        name = cells[col_name].strip()
+        try:
+            sv = float(cells[col_sv].replace(",", ""))
+            st = float(cells[col_st].replace(",", ""))
+        except (ValueError, AttributeError):
+            continue
+        if sv <= 0 and st <= 0:
+            continue
+        rows.append({"stock_code": code,
+                     "name":         name if _is_valid_cjk_name(name) else "",
+                     "short_volume": sv,
+                     "short_turnover": st})
+    return rows
+
+def _parse_ss_pre(raw: bytes, encoding: str) -> list[dict]:
+    """Parse Big5/latin-1 <pre>-formatted short sell file."""
+    try:
+        text = raw.decode(encoding, errors="replace")
+    except Exception:
+        text = raw.decode("latin-1", errors="replace")
+    pre  = BeautifulSoup(text, "html.parser").find("pre")
+    body = pre.get_text() if pre else text
+    rows = []
+    seen = set()
+    for line in body.splitlines():
+        m = _SS_PRE_PAT.match(line)
+        if not m:
+            continue
+        code_int = int(m.group(1))
+        if code_int < 1 or code_int > 9999:
+            continue
+        code = str(code_int).zfill(5)
+        name = m.group(2).strip()
+        if name in _SS_SKIP or not name or code in seen:
+            continue
+        seen.add(code)
+        sv = to_num(m.group(3))
+        st = to_num(m.group(4))
+        if sv <= 0 and st <= 0:
+            continue
+        rows.append({"stock_code": code, "name": name,
+                     "short_volume": sv, "short_turnover": st})
+    return rows
 
 def get_short_sell_today() -> pd.DataFrame:
+    """
+    Fetch today's short selling data.
+    Priority: modern HKEX page (HTML table) → legacy Big5 static file.
+    Returns DataFrame with columns: stock_code, name, short_volume, short_turnover.
+    """
+    # ── Try modern page (HTML table, UTF-8) ───────────────────────────────────
     try:
-        resp = requests.get(SHORT_SELL_URL, headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-        try:
-            text = resp.content.decode("big5", errors="replace")
-        except Exception:
-            text = resp.content.decode("latin-1", errors="replace")
-        rows = []
-        for line in text.splitlines():
-            m = _SS_PAT.match(line)
-            if not m:
-                continue
-            code = fmt_code(m.group(1))
-            name = m.group(2).strip()
-            if not code or name in _SS_SKIP:
-                continue
-            sv = to_num(m.group(3))
-            st = to_num(m.group(4))
-            if sv <= 0 and st <= 0:
-                continue
-            rows.append({"stock_code": code, "name": name,
-                         "short_volume": sv, "short_turnover": st})
-        df = pd.DataFrame(rows) if rows else EMPTY_SHORT
-        log.info("Short sell today: %d records", len(df))
+        r = requests.get(_SS_URL_MODERN, headers=HEADERS, timeout=30)
+        if r.status_code == 200 and len(r.content) > 2000:
+            text = r.content.decode("utf-8", errors="replace")
+            if "代號" in text or "股票名稱" in text or (
+                    "Short" in text and "<table" in text.lower()):
+                rows = _parse_ss_table(r.content)
+                if len(rows) >= 10:
+                    log.info("Short sell today: %d records (modern page)", len(rows))
+                    return pd.DataFrame(rows)
+                log.debug("Modern page table had only %d rows — falling back", len(rows))
+    except Exception as e:
+        log.debug("Modern short sell URL failed: %s", e)
+
+    # ── Fall back to legacy static file (Big5) ────────────────────────────────
+    try:
+        r = requests.get(_SS_URL_LEGACY, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        rows = _parse_ss_pre(r.content, "big5")
+        df   = pd.DataFrame(rows) if rows else EMPTY_SHORT
+        log.info("Short sell today: %d records (legacy file)", len(df))
         return df
     except Exception as e:
         log.error("get_short_sell_today failed: %s", e)
