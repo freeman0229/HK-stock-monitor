@@ -48,6 +48,9 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
+      - name: Backfill any missing or bad turnover dates
+        run: python build_turnover.py
+
       - name: Update Stock Connect top10 (today + repair incomplete history)
         run: python sc_top10_library.py --update
 
