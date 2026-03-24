@@ -16,7 +16,7 @@ on:
           - sfc-weekly
           - di-weekly
           - both-weekly
-          - ccass-build      # full CCASS build from 2025-01-01 (run multiple times)
+          - ccass-build      # full CCASS build from 2025-03-23 (run multiple times)
           - sc-top10-build   # full Stock Connect top10 build (run multiple times)
           - sdw-build        # full SDW participant holdings backfill (run multiple times)
           - sfc-reparse      # re-parse all cached SFC Excel files (fixes hkd=0 bug)
@@ -94,7 +94,7 @@ jobs:
 
   # ── CCASS full build (manual, resume-able) ───────────────────────────────────
   ccass-build:
-    name: CCASS full build (2025-01-01 to today)
+    name: CCASS full build (2025-03-23 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
     permissions:
