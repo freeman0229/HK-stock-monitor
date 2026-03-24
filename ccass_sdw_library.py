@@ -1,49 +1,56 @@
 """
 ccass_sdw_library.py — CCASS Per-Stock Participant Holdings Library
 ====================================================================
-Fetches weekly CCASS participant-level shareholding for stocks with
-turnover > 66,600,000 HKD.
+Fetches weekly CCASS participant-level shareholding for ALL stocks
+listed in the SFC short-position universe.
 
-Schedule: every Friday. If Friday is a HK public holiday → use Thursday.
-          If both Thursday and Friday are holidays → skip that week.
-Start:    2025-03-21
+Source (holdings):  https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx
+Stock universe:     SFC short-position library (sfc_library.py)
+                    ~1286 shortable HK stocks — updated weekly
 
-Source (holdings): https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx
-Source (filter):   https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
+Schedule: every Friday; Thursday fallback if Friday is a HK holiday.
+          Both Thu+Fri holiday → skip week.
+Start:    2025-03-23  (first trading Friday = 2025-03-28)
 
-Summary values captured from page:
-  total_sh   — 總數 (total CCASS-settled shares for this stock)
-               Used as denominator for 累積沽空% = sfc_sh / total_sh * 100
-  issued_sh  — 已發行股份/權證/單位 (最近更新數目)
+Library files split by stock code range — one set of 7 files per year:
+  ccass_sdw_0001_1000_{YYYY}.json  — codes 00001–01000  (~237 stocks, ~15 MB/yr)
+  ccass_sdw_1001_2000_{YYYY}.json  — codes 01001–02000  (~201 stocks, ~13 MB/yr)
+  ccass_sdw_2001_3000_{YYYY}.json  — codes 02001–03000  (~239 stocks, ~15 MB/yr)
+  ccass_sdw_3001_4000_{YYYY}.json  — codes 03001–04000  (~246 stocks, ~15 MB/yr)
+  ccass_sdw_4001_7000_{YYYY}.json  — codes 04001–07000  (~77 stocks,   ~5 MB/yr)
+  ccass_sdw_7001_9999_{YYYY}.json  — codes 07001–09999  (~201 stocks, ~13 MB/yr)
+  ccass_sdw_10000plus_{YYYY}.json  — codes 10000+       (~85 stocks,   ~5 MB/yr)
 
-Library files: ccass_sdw_{YYYY}.json — one per year
-
-Schema v2 (current):
+Schema v2:
 {
-  "meta": {"year": 2026, ..., "schema_version": 2},
+  "meta": {"year": 2026, "range": "0001_4000", "schema_version": 2, ...},
   "by_date": {
-    "2026-03-19": {
+    "2026-03-21": {
       "00700": {
-        "p":         [{pid, name, sh, pct}, ...],   sorted by sh desc
-        "total_sh":  9234567890,
-        "issued_sh": 9567000000
+        "p":         [{"pid": "B01234", "name": "...", "sh": 1234567, "pct": 1.23}, ...],
+        "total_sh":  9234567890,   ← 總數 (total CCASS-settled shares)
+        "issued_sh": 9567000000    ← 已發行股份/權證/單位
       }
     }
   }
 }
 
-Schema v1 (legacy): "00700": [{pid, name, sh, pct}, ...]  — all API reads handle both.
+Fields per participant:
+  pid      — 參與者編號 (Participant ID)
+  name     — 中央結算系統參與者名稱
+  sh       — 持股量 (shares held)
+  pct      — 佔已發行股份/權證/單位百分比
 
 Usage:
   python ccass_sdw_library.py                    # full backfill
   python ccass_sdw_library.py --update           # only new dates
-  python ccass_sdw_library.py --date 2026-03-19  # one date
-  python ccass_sdw_library.py --query 00700
-  python ccass_sdw_library.py --migrate          # upgrade files to v2
+  python ccass_sdw_library.py --date 2026-03-21  # one specific date
+  python ccass_sdw_library.py --query 00700      # show holdings for a stock
+  python ccass_sdw_library.py --migrate          # upgrade old files to range-split format
 
 API:
-  from ccass_sdw_library import get_holders, get_holders_history,
-                                 get_total_sh, get_latest_total_sh, save_day
+  from ccass_sdw_library import get_holders, get_total_sh,
+                                 get_latest_total_sh, get_holders_history
 """
 
 import os, json, re, time, logging, argparse
@@ -55,31 +62,50 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 SDW_URL  = "https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx"
-QUOT_URL = "https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{date}c.htm"
 HEADERS  = {
     "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
     "Referer":    "https://www3.hkexnews.hk/",
 }
-QUOT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
-    "Referer":    "https://www.hkex.com.hk/",
-}
-START_DATE     = date(2025, 3, 21)
-MIN_TURNOVER   = 66_600_000
+
+START_DATE     = date(2025, 3, 23)   # first Friday = 2025-03-28
 SLEEP_SEC      = 1.5
 SCHEMA_VERSION = 2
 
+# ── Code ranges ───────────────────────────────────────────────────────────────
+
+RANGES = [
+    ("0001_1000",    1,  1000),
+    ("1001_2000", 1001,  2000),
+    ("2001_3000", 2001,  3000),
+    ("3001_4000", 3001,  4000),
+    ("4001_7000", 4001,  7000),
+    ("7001_9999", 7001,  9999),
+    ("10000plus",10000, 99999),
+]
+
+def code_range(code: str) -> str:
+    """Return the range label for a 5-digit code string."""
+    n = int(code)
+    for label, lo, hi in RANGES:
+        if lo <= n <= hi:
+            return label
+    return "0001_1000"   # fallback
+
+# ── HK holidays ───────────────────────────────────────────────────────────────
+
 _HK_HOLIDAYS = {
-    date(2025,4,4),  date(2025,4,18), date(2025,4,19), date(2025,4,21),
-    date(2025,5,1),  date(2025,5,5),  date(2025,7,1),  date(2025,10,1),
-    date(2025,10,7), date(2025,12,25),date(2025,12,26),
-    date(2026,1,1),  date(2026,1,28), date(2026,1,29), date(2026,1,30),
-    date(2026,2,2),  date(2026,2,3),  date(2026,2,4),
-    date(2026,3,20), date(2026,4,3),  date(2026,4,6),
-    date(2026,5,1),  date(2026,5,4),  date(2026,5,5),
-    date(2026,6,19), date(2026,7,1),  date(2026,10,1),
-    date(2026,10,5), date(2026,10,6), date(2026,10,7), date(2026,10,8),
-    date(2026,12,25),date(2026,12,26),
+    date(2025, 1, 1),  date(2025, 1, 29), date(2025, 1, 30), date(2025, 1, 31),
+    date(2025, 4, 4),  date(2025, 4, 18), date(2025, 4, 19), date(2025, 4, 21),
+    date(2025, 5, 1),  date(2025, 5, 5),  date(2025, 6, 2),  date(2025, 7, 1),
+    date(2025, 9, 30), date(2025, 10, 1), date(2025, 10, 29),
+    date(2025, 12, 25),date(2025, 12, 26),
+    date(2026, 1, 1),  date(2026, 1, 28), date(2026, 1, 29), date(2026, 1, 30),
+    date(2026, 2, 2),  date(2026, 2, 3),  date(2026, 2, 4),
+    date(2026, 2, 17), date(2026, 2, 18), date(2026, 2, 19), date(2026, 2, 20),
+    date(2026, 4, 3),  date(2026, 4, 4),  date(2026, 4, 5),  date(2026, 4, 6),
+    date(2026, 5, 1),  date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 1),
+    date(2026, 9, 7),  date(2026, 10, 1), date(2026, 10, 26),
+    date(2026, 12, 25),date(2026, 12, 26),
 }
 try:
     import holidays as _hol
@@ -90,20 +116,24 @@ except ImportError:
 
 # ── Schedule ──────────────────────────────────────────────────────────────────
 
-def weekly_fetch_date(friday: date) -> date | None:
+def _fetch_date_for_friday(friday: date) -> date | None:
+    """Friday → actual fetch date (Thu fallback if Friday is holiday). None = skip week."""
     thu = friday - timedelta(days=1)
-    if friday not in _HK_HOLIDAYS: return friday
-    if thu    not in _HK_HOLIDAYS: return thu
+    if friday not in _HK_HOLIDAYS:
+        return friday
+    if thu not in _HK_HOLIDAYS:
+        return thu
     return None
 
-def all_fetch_dates(up_to: date = None) -> list:
+def all_fetch_dates(up_to: date = None) -> list[date]:
+    """All scheduled weekly fetch dates from START_DATE to up_to."""
     up_to  = up_to or date.today()
     result = []
     d = START_DATE
-    while d.weekday() != 4:
+    while d.weekday() != 4:          # advance to first Friday
         d += timedelta(days=1)
     while d <= up_to:
-        fd = weekly_fetch_date(d)
+        fd = _fetch_date_for_friday(d)
         if fd:
             result.append(fd)
         d += timedelta(weeks=1)
@@ -112,145 +142,124 @@ def all_fetch_dates(up_to: date = None) -> list:
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
-def lib_path(year: int) -> str:
-    return f"ccass_sdw_{year}.json"
+def lib_path(year: int, range_label: str) -> str:
+    return f"ccass_sdw_{range_label}_{year}.json"
 
-def load_year(year: int) -> dict:
-    p = lib_path(year)
+def all_lib_paths(year: int) -> dict[str, str]:
+    """Return {range_label: path} for all three range files for a given year."""
+    return {label: lib_path(year, label) for label, _, _ in RANGES}
+
+def load_range(year: int, range_label: str) -> dict:
+    p = lib_path(year, range_label)
     if os.path.exists(p):
         with open(p, encoding="utf-8") as f:
             return json.load(f)
-    return {"meta": {"year": year, "schema_version": SCHEMA_VERSION}, "by_date": {}}
+    return {"meta": {"year": year, "range": range_label,
+                     "schema_version": SCHEMA_VERSION}, "by_date": {}}
 
-def save_year(year: int, lib: dict):
+def save_range(year: int, range_label: str, lib: dict):
     n_dates  = len(lib["by_date"])
     n_stocks = sum(len(v) for v in lib["by_date"].values())
     lib["meta"] = {
         "year":           year,
+        "range":          range_label,
         "last_updated":   date.today().isoformat(),
         "total_dates":    n_dates,
         "total_stocks":   n_stocks,
         "schema_version": SCHEMA_VERSION,
     }
-    with open(lib_path(year), "w", encoding="utf-8") as f:
+    p = lib_path(year, range_label)
+    with open(p, "w", encoding="utf-8") as f:
         json.dump(lib, f, ensure_ascii=False, separators=(",", ":"))
-    kb = os.path.getsize(lib_path(year)) / 1024
-    log.info("Saved ccass_sdw_%d.json  %d dates  %d stocks  %.0f KB",
-             year, n_dates, n_stocks, kb)
+    kb = os.path.getsize(p) / 1024
+    log.info("Saved %s  %d dates  %d stocks  %.0f KB", p, n_dates, n_stocks, kb)
 
-def all_stored_dates() -> set:
+def all_stored_dates() -> set[str]:
+    """Return all dates stored across any range file."""
     stored = set()
     for year in range(START_DATE.year, date.today().year + 1):
-        p = lib_path(year)
-        if os.path.exists(p):
-            with open(p, encoding="utf-8") as f:
-                stored.update(json.load(f).get("by_date", {}).keys())
+        for label, _, _ in RANGES:
+            p = lib_path(year, label)
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    stored.update(json.load(f).get("by_date", {}).keys())
     return stored
 
-def save_day(d: date, stock_code: str, entry: dict):
-    """entry = {"p": [...], "total_sh": N, "issued_sh": N}"""
-    if not entry:
-        return
-    ds  = d.isoformat()
-    lib = load_year(d.year)
-    lib["by_date"].setdefault(ds, {})[stock_code.zfill(5)] = entry
-    save_year(d.year, lib)
+def _stored_codes_for_date(ds: str) -> set[str]:
+    """Return all stock codes already stored for a given date across all range files."""
+    year = int(ds[:4])
+    codes = set()
+    for label, _, _ in RANGES:
+        p = lib_path(year, label)
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8") as f:
+            codes.update(json.load(f).get("by_date", {}).get(ds, {}).keys())
+    return codes
 
 
 # ── Schema normalisation ──────────────────────────────────────────────────────
 
 def _to_v2(raw) -> dict:
-    """Normalise v1 (flat list) or v2 (dict) to v2 dict."""
+    """Normalise v1 (flat list) or v2 (dict with p key) to v2 dict."""
     if isinstance(raw, list):
         return {"p": raw, "total_sh": 0, "issued_sh": 0}
     if isinstance(raw, dict):
         return raw if "p" in raw else {"p": [], "total_sh": 0, "issued_sh": 0}
     return {"p": [], "total_sh": 0, "issued_sh": 0}
 
-def migrate_schema():
-    """Upgrade all ccass_sdw_YYYY.json files from v1 to v2. Safe to re-run."""
-    for year in range(START_DATE.year, date.today().year + 1):
-        p = lib_path(year)
-        if not os.path.exists(p):
-            continue
-        with open(p, encoding="utf-8") as f:
-            lib = json.load(f)
-        if lib.get("meta", {}).get("schema_version", 1) >= SCHEMA_VERSION:
-            log.info("ccass_sdw_%d.json already v%d — skip", year, SCHEMA_VERSION)
-            continue
-        changed = 0
-        for ds, stocks in lib["by_date"].items():
-            for code, raw in stocks.items():
-                if isinstance(raw, list):
-                    stocks[code] = {"p": raw, "total_sh": 0, "issued_sh": 0}
-                    changed += 1
-        save_year(year, lib)
-        log.info("ccass_sdw_%d.json: %d entries → v2", year, changed)
-    log.info("Migration complete")
 
+# ── Stock universe from SFC library ──────────────────────────────────────────
 
-# ── Turnover filter ───────────────────────────────────────────────────────────
+def get_sfc_universe() -> list[str]:
+    """
+    Return sorted list of 5-digit stock codes from the SFC short-position library.
+    Falls back to a broad range scan if SFC library is not available.
+    """
+    codes = set()
 
-def _last_trading_day(ref: date = None) -> date:
-    """Return the most recent weekday that is not a HK public holiday."""
-    d = ref or date.today()
-    for _ in range(10):
-        if d.weekday() < 5 and d not in _HK_HOLIDAYS:
-            return d
-        d -= timedelta(days=1)
-    return ref or date.today()
-
-def get_qualifying_stocks(ref_date: date = None) -> list:
-    # Always use the most recent trading day so this works correctly when
-    # called on weekends or public holidays (e.g. sdw-build triggered Saturday).
-    d        = _last_trading_day(ref_date)
-    date_str = d.strftime("%y%m%d")
-    url      = QUOT_URL.format(date=date_str)
-    log.info("Qualifying stocks: using quotation date %s", d.isoformat())
+    # Try importing sfc_library
     try:
-        r = requests.get(url, headers=QUOT_HEADERS, timeout=30)
-        r.raise_for_status()
-        try:
-            text = r.content.decode("big5", errors="replace")
-        except Exception:
-            text = r.content.decode("latin-1", errors="replace")
-
-        pre  = BeautifulSoup(text, "html.parser").find("pre")
-        body = pre.get_text() if pre else text
-
-        PAT = re.compile(
-            r"^[\*\s]{0,5}(\d{1,5})\s+(\S[^\u3000\n]{1,22}?)\s{2,}"
-            r"(.{1,30}?)\s*(?:HKD|USD|CNY|EUR|GBP)\s+"
-            r"[\d,.NA-]+\s+[\d,.NA-]+\s+[\d,.NA-]+\s+[\d,.NA-]+\s+[\d,.NA-]+\s+[\d,.NA-]+\s+"
-            r"[\d,]{5,}\s+"
-            r"([\d,]{8,})\s*$"
-        )
-        best = {}
-        for line in body.splitlines():
-            m = PAT.match(line)
-            if not m: continue
-            code_int = int(m.group(1))
-            if code_int > 9999: continue
-            code = str(code_int).zfill(5)
-            tv   = float(m.group(4).replace(",", ""))
-            if tv > 0 and (code not in best or tv > best[code]):
-                best[code] = tv
-        codes = [c for c, tv in best.items() if tv >= MIN_TURNOVER]
-        log.info("Qualifying stocks %s: %d (tv >= %s HKD)",
-                 d.isoformat(), len(codes), f"{MIN_TURNOVER:,}")
-        return codes
-
-    except requests.HTTPError as e:
-        log.warning("Quotation %s for %s — skipping", e.response.status_code, date_str)
-        return []
+        from sfc_library import all_stored_dates as sfc_stored, lib_path as sfc_lib_path
+        import json as _json
+        for year in range(2018, date.today().year + 1):
+            p = sfc_lib_path(year)
+            if not os.path.exists(p):
+                continue
+            with open(p, encoding="utf-8") as f:
+                by_date = _json.load(f).get("by_date", {})
+            for ds, day in by_date.items():
+                for code in day.keys():
+                    if code != "__total__" and code.isdigit():
+                        codes.add(code.zfill(5))
+        if codes:
+            log.info("SFC universe: %d unique codes from sfc_library", len(codes))
+            return sorted(codes, key=lambda x: int(x))
     except Exception as e:
-        log.error("get_qualifying_stocks (%s): %s", date_str, e)
-        return []
+        log.warning("Could not load SFC universe from sfc_library: %s", e)
+
+    # Fallback: use codes from existing SDW files
+    for year in range(START_DATE.year, date.today().year + 1):
+        for label, _, _ in RANGES:
+            p = lib_path(year, label)
+            if not os.path.exists(p):
+                continue
+            with open(p, encoding="utf-8") as f:
+                by_date = json.load(f).get("by_date", {})
+            for ds, stocks in by_date.items():
+                codes.update(stocks.keys())
+
+    if codes:
+        log.info("SFC universe (fallback from SDW cache): %d codes", len(codes))
+        return sorted(codes, key=lambda x: int(x))
+
+    log.warning("No SFC universe available — returning empty list")
+    return []
 
 
 # ── SDW fetch for one stock ───────────────────────────────────────────────────
 
-def _parse_num(s: str) -> int:
+def _parse_num(s) -> int:
     try:
         return int(str(s).replace(",", "").replace(" ", "").strip())
     except (ValueError, TypeError):
@@ -259,10 +268,14 @@ def _parse_num(s: str) -> int:
 def fetch_stock(stock_code: str, d: date) -> dict | None:
     """
     Fetch CCASS participant holdings for one stock on one date.
-    Returns {"p": [...], "total_sh": N, "issued_sh": N} or None.
 
-    total_sh  = 總數 (total CCASS-settled shares shown on page footer)
-    issued_sh = 已發行股份/權證/單位 (最近更新數目) from page header
+    Returns:
+      {
+        "p":         [{"pid": str, "name": str, "sh": int, "pct": float}, ...],
+        "total_sh":  int,   ← 總數
+        "issued_sh": int,   ← 已發行股份/權證/單位 (最近更新數目)
+      }
+      or None if no data found.
     """
     code5    = stock_code.zfill(5)
     date_str = d.strftime("%Y/%m/%d")
@@ -270,6 +283,7 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
         sess = requests.Session()
         sess.headers.update(HEADERS)
 
+        # GET to retrieve ASP.NET viewstate tokens
         r1 = sess.get(SDW_URL, timeout=30)
         r1.raise_for_status()
         soup1 = BeautifulSoup(r1.text, "html.parser")
@@ -278,6 +292,7 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
             tag = soup1.find("input", {"name": name})
             return tag["value"] if tag else ""
 
+        # POST with stock code and date
         r2 = sess.post(SDW_URL, data={
             "__EVENTTARGET":        "btnSearch",
             "__EVENTARGUMENT":      "",
@@ -295,7 +310,6 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
         full_text = soup2.get_text(" ", strip=True)
 
         # ── 已發行股份/權證/單位 (最近更新數目) ─────────────────────────────
-        # Shown in the page header / stock summary section.
         issued_sh = 0
         for pat in [
             r"已發行股份[^\d]{0,30}([\d,]{6,})",
@@ -309,10 +323,12 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
                     break
 
         # ── Participant rows ─────────────────────────────────────────────────
+        # Table columns:
+        #   [0] 參與者編號  [1] 中央結算系統參與者名稱  [2] (skip)  [3] 持股量  [4] 佔...百分比
         def clean(s):
             return re.sub(r'^[^:：]+[:：]\s*', '', s).strip()
 
-        participants  = []
+        participants      = []
         total_sh_fallback = 0
 
         for tr in soup2.find_all("tr"):
@@ -338,9 +354,7 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
             except (ValueError, TypeError):
                 continue
 
-        # ── 總數 from page footer ────────────────────────────────────────────
-        # The SDW page footer row typically has fewer tds (<5) so it was
-        # skipped in the loop above. Search page text and then table rows.
+        # ── 總數 ─────────────────────────────────────────────────────────────
         total_sh = 0
 
         # 1. Regex on full page text
@@ -354,7 +368,7 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
                 if total_sh > 0:
                     break
 
-        # 2. Scan all trs for a row containing 總數/Total text
+        # 2. Scan table rows for a footer containing 總數
         if total_sh == 0:
             for tr in soup2.find_all("tr"):
                 tds = [td.get_text(strip=True) for td in tr.find_all("td")]
@@ -368,20 +382,17 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
                     if total_sh > 0:
                         break
 
-        # 3. Fallback: sum of participant rows
+        # 3. Fallback: sum participant rows
         if total_sh == 0 and total_sh_fallback > 0:
             total_sh = total_sh_fallback
             log.warning("SDW %s %s: 總數 not found — using participant sum %d",
                         code5, date_str, total_sh)
 
         if not participants:
-            log.warning("SDW: 0 records for %s on %s", code5, date_str)
+            log.debug("SDW: 0 records for %s on %s", code5, date_str)
             return None
 
         participants.sort(key=lambda x: -x["sh"])
-        log.debug("SDW %s %s: %d participants  total_sh=%d  issued_sh=%d",
-                  code5, date_str, len(participants), total_sh, issued_sh)
-
         return {"p": participants, "total_sh": total_sh, "issued_sh": issued_sh}
 
     except Exception as e:
@@ -392,13 +403,21 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
 # ── Build / update ────────────────────────────────────────────────────────────
 
 def build(update_only: bool = False, specific_date: date = None):
+    """
+    Build or update all range-split SDW files.
+
+    For each scheduled weekly date:
+      - Get full SFC stock universe (~1286 codes)
+      - Fetch any code not yet stored for that date
+      - Write results into the appropriate range file
+    """
     if specific_date:
         dates_to_fetch = [specific_date]
     else:
         all_dates = all_fetch_dates()
         stored    = all_stored_dates()
         dates_to_fetch = [d for d in all_dates if d.isoformat() not in stored]
-        log.info("%s: %d dates to fetch (%d already stored, %d total in schedule)",
+        log.info("%s: %d dates to fetch (%d already stored, %d in schedule)",
                  "Update" if update_only else "Build",
                  len(dates_to_fetch), len(stored), len(all_dates))
 
@@ -406,99 +425,162 @@ def build(update_only: bool = False, specific_date: date = None):
         log.info("Already up to date")
         return
 
-    codes = get_qualifying_stocks()
-    if not codes:
-        log.error("Could not get qualifying stocks — aborting")
+    universe = get_sfc_universe()
+    if not universe:
+        log.error("Empty stock universe — aborting")
         return
-    log.info("Using %d qualifying stocks (tv >= %s) for all dates",
-             len(codes), f"{MIN_TURNOVER:,}")
+    log.info("Stock universe: %d codes across %d ranges", len(universe), len(RANGES))
 
     for di, d in enumerate(dates_to_fetch, 1):
-        log.info("-- [%d/%d] %s --", di, len(dates_to_fetch), d.isoformat())
-        lib     = load_year(d.year)
-        ds      = d.isoformat()
-        already = set(lib["by_date"].get(ds, {}).keys())
-        todo    = [c for c in codes if c not in already]
+        ds         = d.isoformat()
+        year       = d.year
+        log.info("── [%d/%d] %s ──", di, len(dates_to_fetch), ds)
+
+        # Load all three range libs for this year
+        range_libs = {label: load_range(year, label) for label, _, _ in RANGES}
+
+        already  = _stored_codes_for_date(ds)
+        todo     = [c for c in universe if c not in already]
         log.info("  %d stocks to fetch (%d already stored)", len(todo), len(already))
 
         fetched = 0
         for ci, code in enumerate(todo, 1):
             entry = fetch_stock(code, d)
             if entry:
-                lib["by_date"].setdefault(ds, {})[code] = entry
+                rl = code_range(code)
+                range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
                 fetched += 1
             time.sleep(SLEEP_SEC)
-            if ci % 20 == 0:
-                save_year(d.year, lib)
-                log.info("    [%d/%d] %d saved so far", ci, len(todo), fetched)
 
-        save_year(d.year, lib)
+            # Checkpoint: save all ranges every 50 stocks
+            if ci % 50 == 0:
+                for label, lib in range_libs.items():
+                    if lib["by_date"].get(ds):
+                        save_range(year, label, lib)
+                log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
+
+        # Final save for this date
+        for label, lib in range_libs.items():
+            if lib["by_date"].get(ds):
+                save_range(year, label, lib)
         log.info("  %s done: %d/%d stocks saved", ds, fetched, len(todo))
 
     log.info("Build complete")
 
 
+# ── Migration from old single-file format ────────────────────────────────────
+
+def migrate_to_range_split():
+    """
+    Migrate old ccass_sdw_{YYYY}.json files (single file per year)
+    to the new range-split format ccass_sdw_{range}_{YYYY}.json.
+    Safe to re-run — already-migrated files are skipped.
+    """
+    for year in range(START_DATE.year, date.today().year + 1):
+        old_path = f"ccass_sdw_{year}.json"
+        if not os.path.exists(old_path):
+            continue
+        with open(old_path, encoding="utf-8") as f:
+            old_lib = json.load(f)
+        by_date = old_lib.get("by_date", {})
+        if not by_date:
+            log.info("ccass_sdw_%d.json: empty — skipping", year)
+            continue
+
+        # Check if already migrated
+        range_files_exist = all(
+            os.path.exists(lib_path(year, label))
+            for label, _, _ in RANGES
+        )
+        if range_files_exist:
+            log.info("Range files for %d already exist — skipping migration", year)
+            continue
+
+        log.info("Migrating ccass_sdw_%d.json (%d dates)…", year, len(by_date))
+        range_libs = {label: load_range(year, label) for label, _, _ in RANGES}
+        migrated = 0
+        for ds, stocks in by_date.items():
+            for code, raw in stocks.items():
+                rl  = code_range(code)
+                entry = _to_v2(raw)
+                range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
+                migrated += 1
+        for label, lib in range_libs.items():
+            if lib["by_date"]:
+                save_range(year, label, lib)
+        log.info("Migrated %d records from ccass_sdw_%d.json", migrated, year)
+
+    log.info("Migration complete")
+
+
 # ── API ───────────────────────────────────────────────────────────────────────
 
-def get_holders(stock_code: str, ds: str) -> list:
-    """Return participant list [{pid, name, sh, pct}] or []. Handles v1 + v2."""
-    year = int(ds[:4])
-    p    = lib_path(year)
-    if not os.path.exists(p): return []
+def _load_for_code(code: str, ds: str) -> dict:
+    year  = int(ds[:4])
+    label = code_range(code.zfill(5))
+    p     = lib_path(year, label)
+    if not os.path.exists(p):
+        return {}
     with open(p, encoding="utf-8") as f:
-        raw = json.load(f).get("by_date", {}).get(ds, {}).get(stock_code.zfill(5))
+        return json.load(f).get("by_date", {}).get(ds, {})
+
+def get_holders(stock_code: str, ds: str) -> list:
+    """Return participant list [{pid, name, sh, pct}] or []."""
+    raw = _load_for_code(stock_code, ds).get(stock_code.zfill(5))
     return _to_v2(raw)["p"] if raw is not None else []
 
 def get_total_sh(stock_code: str, ds: str) -> int:
     """Return 總數 for a stock on YYYY-MM-DD, or 0."""
-    year = int(ds[:4])
-    p    = lib_path(year)
-    if not os.path.exists(p): return 0
-    with open(p, encoding="utf-8") as f:
-        raw = json.load(f).get("by_date", {}).get(ds, {}).get(stock_code.zfill(5))
+    raw = _load_for_code(stock_code, ds).get(stock_code.zfill(5))
     return _to_v2(raw).get("total_sh", 0) if raw is not None else 0
 
 def get_issued_sh(stock_code: str, ds: str) -> int:
     """Return 已發行股份 for a stock on YYYY-MM-DD, or 0."""
-    year = int(ds[:4])
-    p    = lib_path(year)
-    if not os.path.exists(p): return 0
-    with open(p, encoding="utf-8") as f:
-        raw = json.load(f).get("by_date", {}).get(ds, {}).get(stock_code.zfill(5))
+    raw = _load_for_code(stock_code, ds).get(stock_code.zfill(5))
     return _to_v2(raw).get("issued_sh", 0) if raw is not None else 0
 
 def get_latest_total_sh(stock_code: str, before: str = None) -> int:
-    """Most recent 總數 for a stock (optionally before a date). Returns 0 if not found."""
+    """Most recent 總數 for a stock (optionally before a YYYY-MM-DD date)."""
     code5  = stock_code.zfill(5)
+    label  = code_range(code5)
     cutoff = before or (date.today() + timedelta(days=1)).isoformat()
     for year in sorted(range(START_DATE.year, date.today().year + 1), reverse=True):
-        p = lib_path(year)
-        if not os.path.exists(p): continue
+        p = lib_path(year, label)
+        if not os.path.exists(p):
+            continue
         with open(p, encoding="utf-8") as f:
             by_date = json.load(f).get("by_date", {})
         for ds in sorted(by_date.keys(), reverse=True):
-            if ds >= cutoff: continue
+            if ds >= cutoff:
+                continue
             raw = by_date[ds].get(code5)
-            if raw is None: continue
+            if raw is None:
+                continue
             total_sh = _to_v2(raw).get("total_sh", 0)
             if total_sh > 0:
                 return total_sh
     return 0
 
 def get_holders_history(stock_code: str, n: int, before: str) -> list:
-    """Last n weekly snapshots before `before`, newest-first.
-    Returns [{"date": ds, "holders": [...], "total_sh": N, "issued_sh": N}, ...]"""
+    """
+    Last n weekly snapshots before `before` (YYYY-MM-DD), newest-first.
+    Returns [{date, holders, total_sh, issued_sh}, ...].
+    """
     code5  = stock_code.zfill(5)
+    label  = code_range(code5)
     result = []
     for year in sorted(range(START_DATE.year, date.today().year + 1), reverse=True):
-        p = lib_path(year)
-        if not os.path.exists(p): continue
+        p = lib_path(year, label)
+        if not os.path.exists(p):
+            continue
         with open(p, encoding="utf-8") as f:
             by_date = json.load(f).get("by_date", {})
         for ds in sorted(by_date.keys(), reverse=True):
-            if ds >= before: continue
+            if ds >= before:
+                continue
             raw = by_date[ds].get(code5)
-            if raw is None: continue
+            if raw is None:
+                continue
             entry = _to_v2(raw)
             if entry["p"]:
                 result.append({
@@ -517,45 +599,59 @@ def get_holders_history(stock_code: str, n: int, before: str) -> list:
 def _query(code: str, top: int, ds: str = None):
     code5 = code.zfill(5)
     if not ds:
+        label = code_range(code5)
         for year in sorted(range(START_DATE.year, date.today().year + 1), reverse=True):
-            p = lib_path(year)
-            if not os.path.exists(p): continue
+            p = lib_path(year, label)
+            if not os.path.exists(p):
+                continue
             with open(p, encoding="utf-8") as f:
                 by_date = json.load(f).get("by_date", {})
             dates = [d for d, s in by_date.items() if code5 in s]
-            if dates: ds = max(dates); break
+            if dates:
+                ds = max(dates)
+                break
     if not ds:
-        print(f"No data for {code5}"); return
-    year = int(ds[:4])
-    with open(lib_path(year), encoding="utf-8") as f:
+        print(f"No data for {code5}")
+        return
+    year  = int(ds[:4])
+    label = code_range(code5)
+    with open(lib_path(year, label), encoding="utf-8") as f:
         raw = json.load(f).get("by_date", {}).get(ds, {}).get(code5)
     if raw is None:
-        print(f"No data for {code5} on {ds}"); return
-    entry = _to_v2(raw)
+        print(f"No data for {code5} on {ds}")
+        return
+    entry   = _to_v2(raw)
     holders = entry["p"]
-    print(f"\n{code5}  {ds}  ({len(holders)} participants)")
+    print(f"\n{code5}  {ds}  ({len(holders)} participants)  "
+          f"[range: {label}]")
     print(f"  總數:       {entry.get('total_sh',  0):>20,}")
     print(f"  已發行股份: {entry.get('issued_sh', 0):>20,}")
     print(f"{'#':<4} {'ID':<12} {'Name':<40} {'Shares':>16} {'%':>8}")
     print("─" * 84)
     for i, h in enumerate(holders[:top], 1):
-        print(f"{i:<4} {h['pid']:<12} {h['name'][:39]:<40} {h['sh']:>16,} {h['pct']:>7.2f}%")
-    hist = get_holders_history(code5, 6, (date.today()+timedelta(1)).isoformat())
+        print(f"{i:<4} {h['pid']:<12} {h['name'][:39]:<40} "
+              f"{h['sh']:>16,} {h['pct']:>7.2f}%")
+    hist = get_holders_history(code5, 6, (date.today() + timedelta(1)).isoformat())
     if hist:
         print(f"\nAvailable dates: {[h['date'] for h in hist]}")
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--update",  action="store_true")
-    ap.add_argument("--date",    metavar="YYYY-MM-DD")
-    ap.add_argument("--query",   metavar="CODE")
-    ap.add_argument("--top",     type=int, default=20)
-    ap.add_argument("--migrate", action="store_true", help="Upgrade all files to v2 schema")
+    ap = argparse.ArgumentParser(description="CCASS SDW Participant Holdings Library")
+    ap.add_argument("--update",  action="store_true",
+                    help="Fetch only dates newer than last stored")
+    ap.add_argument("--date",    metavar="YYYY-MM-DD",
+                    help="Fetch one specific date")
+    ap.add_argument("--query",   metavar="CODE",
+                    help="Show participant holdings for a stock code")
+    ap.add_argument("--top",     type=int, default=20,
+                    help="Number of top participants to show (default 20)")
+    ap.add_argument("--migrate", action="store_true",
+                    help="Migrate old ccass_sdw_YYYY.json files to range-split format")
     args = ap.parse_args()
 
     if args.migrate:
-        migrate_schema()
+        migrate_to_range_split()
     elif args.query:
         _query(args.query, args.top, args.date)
     else:
