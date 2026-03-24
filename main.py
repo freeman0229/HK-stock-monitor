@@ -657,10 +657,11 @@ def run_analysis():
 
     _seed_name_map_from_ref()
 
-    # 1. Daily quotation
+    # ── 1. Daily quotation (~60 most-traded stocks) ───────────────────────────
+    # This file gives us tv, vol, high, low, close for top stocks only.
+    # It is NOT the full market — do not use it as the stock universe.
     df_quote = get_daily_quotation(trading_day)
     if df_quote.empty:
-        # HKEX file not yet published — rebuild from turnover cache
         log.warning("Daily quotation unavailable for %s — attempting cache fallback", today_ds)
         _fallback_tv = tv_load_recent(1, today_ds)
         if _fallback_tv:
@@ -695,67 +696,98 @@ def run_analysis():
             log.error(msg); send_telegram(msg); return
 
     save_daily_turnover(trading_day, df_quote)
-    stock_codes  = df_quote["stock_code"].tolist()
-    turnover_map = dict(zip(df_quote["stock_code"], df_quote["turnover"]))
-    vol_map      = dict(zip(df_quote["stock_code"], df_quote["shares"]))
 
-    # 2. Short selling
-    df_short  = get_short_sell_today()
+    # Quotation lookup: code → {tv, vol, high, low, close}
+    quote_map = {
+        r.stock_code: {
+            "tv":    int(r.turnover),
+            "vol":   int(r.shares),
+            "high":  float(r.high)  if hasattr(r, "high")  and r.high  else 0.0,
+            "low":   float(r.low)   if hasattr(r, "low")   and r.low   else 0.0,
+            "close": float(r.close) if hasattr(r, "close") and r.close else 0.0,
+            "name":       r.name,
+            "name_chi":   getattr(r, "name_chi", r.name),
+        }
+        for r in df_quote.itertuples()
+    }
+
+    # ── 2. Short selling (full market: 800+ stocks) ───────────────────────────
+    df_short = get_short_sell_today()
     save_short_sell(trading_day, df_short)
-    short_map     = {}
-    short_vol_map = {}
+    short_map     = {}   # code → short_ratio % (needs traded vol from quotation)
+    short_vol_map = {}   # code → short volume (shares)
+    short_st_map  = {}   # code → short turnover (HKD)
     for row in df_short.itertuples():
-        traded_vol = vol_map.get(row.stock_code, 0)
+        code = row.stock_code
+        sv   = int(row.short_volume)
+        st   = float(row.short_turnover)
+        short_vol_map[code] = sv
+        short_st_map[code]  = st
+        traded_vol = quote_map.get(code, {}).get("vol", 0)
         if traded_vol > 0:
-            short_map[row.stock_code] = round(row.short_volume / traded_vol * 100, 2)
-        short_vol_map[row.stock_code] = int(row.short_volume)
+            short_map[code] = round(sv / traded_vol * 100, 2)
 
-    # 3. Short average (35-day window to cover 10-day avg lookback with gaps)
-    _tv_recent    = tv_load_recent(35, today_ds)
-    _sa_df        = get_short_avg_ratio(stock_codes, 10, _tv_recent, today_ds)
-    short_avg_map = dict(zip(_sa_df["stock_code"], _sa_df["short_avg5"]))
-
-    # T-2: actual trade date that today's CCASS settlement reflects
+    # ── 3. CCASS southbound (917 stocks) ─────────────────────────────────────
     t2_date = ccass_trade_date(trading_day)
     t2_key  = t2_date.strftime("%Y%m%d")
     log.info("T-2 trade date (CCASS settlement): %s", t2_key)
 
-    # 4. CCASS — fetch today; fall back to previous trading day if empty.
-    #    Track which date was actually fetched to avoid writing stale data
-    #    under today's key (Bug 3 fix).
-    df_ccass   = get_ccass_southbound(trading_day)
+    df_ccass        = get_ccass_southbound(trading_day)
     ccass_save_date = trading_day
     if df_ccass.empty:
         prev_td  = last_trading_day(trading_day - timedelta(days=1))
         log.info("CCASS empty for %s, trying %s",
                  trading_day.strftime("%Y-%m-%d"), prev_td.strftime("%Y-%m-%d"))
-        df_ccass = get_ccass_southbound(prev_td)
-        ccass_save_date = prev_td   # save under the date we actually fetched
+        df_ccass        = get_ccass_southbound(prev_td)
+        ccass_save_date = prev_td
 
     ccass_sh_map  = {}
     ccass_pct_map = {}
+    ccass_name_map = {}
     if not df_ccass.empty:
-        ccass_sh_map  = dict(zip(df_ccass["stock_code"], df_ccass["shareholding"]))
-        ccass_pct_map = dict(zip(df_ccass["stock_code"], df_ccass["pct_listed"]))
-
-    df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, today_ds,
-                                    today_pct_map=ccass_pct_map)
-
-    # Save CCASS under the date that was actually fetched
-    if not df_ccass.empty:
+        ccass_sh_map   = dict(zip(df_ccass["stock_code"], df_ccass["shareholding"]))
+        ccass_pct_map  = dict(zip(df_ccass["stock_code"], df_ccass["pct_listed"]))
+        ccass_name_map = dict(zip(df_ccass["stock_code"], df_ccass["name"]))
         ccass_save_day(ccass_save_date, {r.stock_code: {
             "sh":   r.shareholding,
             "pct":  r.pct_listed,
             "name": r.name,
         } for r in df_ccass.itertuples()})
 
+    # ── 4. Full stock universe ────────────────────────────────────────────────
+    # Union of: short sell (800+), CCASS (917), quotation (60)
+    # Ranked by: turnover from quotation where available;
+    #            short_turnover (st) as proxy for the rest
+    stock_universe = (set(short_vol_map.keys()) |
+                      set(ccass_sh_map.keys()) |
+                      set(quote_map.keys()))
+
+    # Sort: quotation stocks (have real tv) first by tv desc,
+    #       then remaining by short_turnover desc
+    def _sort_key(code):
+        tv = quote_map.get(code, {}).get("tv", 0)
+        st = short_st_map.get(code, 0)
+        return (-tv, -st)
+
+    stock_codes = sorted(stock_universe, key=_sort_key)
+    log.info("Stock universe: %d stocks (%d from quotation, %d from short sell, %d from CCASS)",
+             len(stock_codes), len(quote_map), len(short_vol_map), len(ccass_sh_map))
+
+    # ── 5. CCASS deltas for the full universe ─────────────────────────────────
+    _tv_recent = tv_load_recent(35, today_ds)
+    df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, today_ds,
+                                    today_pct_map=ccass_pct_map)
     ccass_delta_map      = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
     ccass_consec_map     = dict(zip(df_cs["stock_code"], df_cs["ccass_consec"]))
     ccass_streak_pct_map = dict(zip(df_cs["stock_code"], df_cs["ccass_streak_pct"]))
     pct_listed_map       = dict(zip(df_cs["stock_code"], df_cs["pct_listed"]))
     pct_delta_map        = dict(zip(df_cs["stock_code"], df_cs["pct_delta"]))
 
-    # 4b. SFC cumulative short position
+    # Short average over full universe
+    _sa_df        = get_short_avg_ratio(stock_codes, 10, _tv_recent, today_ds)
+    short_avg_map = dict(zip(_sa_df["stock_code"], _sa_df["short_avg5"]))
+
+    # ── 6. SFC cumulative short positions ────────────────────────────────────
     sfc_map = {}
     if _SFC_AVAILABLE and _SDW_AVAILABLE:
         try:
@@ -776,7 +808,7 @@ def run_analysis():
         except Exception as e:
             log.warning("SFC map build failed: %s", e)
 
-    # 5. Southbound top10
+    # ── 7. Southbound top10 ───────────────────────────────────────────────────
     from sc_top10_library import (fetch_day as sc_fetch_day, save_year as sc_save_year,
                                    load_year as sc_load_year, lib_path as sc_lib_path)
     from datetime import date as _date
@@ -828,16 +860,16 @@ def run_analysis():
 
     log.info("Southbound top10: %d stocks for %s", len(sb_map), sb_date_used)
 
-    # 5a. sb_consec and sb_net_prev
+    # sb_consec and sb_net_prev
     def _sb_consec_and_prev(code: str) -> tuple[int, int]:
-        history  = get_top10_history(code, 30, today_ds)
-        prev_net = (history[0]["buy"] - history[0]["sell"]) if history else 0
-        today_net = sb_map[code]["sb_net"]
+        history   = get_top10_history(code, 30, today_ds)
+        prev_net  = (history[0]["buy"] - history[0]["sell"]) if history else 0
+        today_net = sb_map.get(code, {}).get("sb_net", 0)
         if today_net < 0:
             consec = -1
             for entry in history:
                 net = entry["buy"] - entry["sell"]
-                if net < 0:   consec -= 1
+                if net < 0:    consec -= 1
                 elif net == 0: continue
                 else:          break
             return consec, prev_net
@@ -846,7 +878,7 @@ def run_analysis():
         consec = 1
         for entry in history:
             net = entry["buy"] - entry["sell"]
-            if net > 0:   consec += 1
+            if net > 0:    consec += 1
             elif net == 0: continue
             else:          break
         return consec, prev_net
@@ -858,15 +890,41 @@ def run_analysis():
         sb_consec_map[code] = consec
         sb_prev_map[code]   = prev
 
-    # 6. Previous ranks
+    # ── 8. Previous ranks ─────────────────────────────────────────────────────
     prev_ranks = get_prev_ranks(exclude_date=trading_day)
 
-    # 7. Build results
+    # ── 9. Name lookup ────────────────────────────────────────────────────────
+    _nm = load_store(NAME_MAP_FILE)
+
+    def _get_names(code: str) -> tuple[str, str]:
+        """Return (name_eng, name_chi) from best available source."""
+        # Priority: stock_ref > quotation > short sell > CCASS > name_map > code
+        ref_zh   = get_zh_name(code)
+        q        = quote_map.get(code, {})
+        sh_name  = df_short[df_short["stock_code"] == code]["name"].iloc[0] if (
+                       not df_short.empty and code in short_vol_map) else ""
+        cc_name  = ccass_name_map.get(code, "")
+        nm_entry = _nm.get(code, {})
+
+        name_chi = (ref_zh or q.get("name_chi") or sh_name or cc_name
+                    or nm_entry.get("zh") or nm_entry.get("en") or code)
+        name_eng = (q.get("name") or nm_entry.get("en") or ref_zh or code)
+        return name_eng, name_chi
+
+    # ── 10. Build results (full universe) ─────────────────────────────────────
     results = []
-    for i, row in enumerate(df_quote.itertuples(), 1):
-        code         = row.stock_code
+    _t2_before = (t2_date + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    for i, code in enumerate(stock_codes, 1):
+        q            = quote_map.get(code, {})
+        turnover     = q.get("tv", 0)
+        today_vol    = q.get("vol", 0)
+        name_eng, name_chi = _get_names(code)
+
         short_ratio  = short_map.get(code, 0.0)
         short_avg5   = short_avg_map.get(code, 0.0)
+        short_vol_today = short_vol_map.get(code, 0)
+
         ccass_delta      = ccass_delta_map.get(code, 0)
         ccass_consec     = ccass_consec_map.get(code, 0)
         ccass_streak_pct = ccass_streak_pct_map.get(code, 0.0)
@@ -874,38 +932,35 @@ def run_analysis():
         pct_delta        = pct_delta_map.get(code, 0.0)
         tv_avg5          = _turnover_avg(code, today_ds, 5)
 
-        short_vol_today = short_vol_map.get(code, 0)
-        vol_hist30      = get_vol_history(code, 30, today_ds)
-        avg_vol30       = sum(vol_hist30) / len(vol_hist30) if vol_hist30 else 0
-        today_vol       = int(row.shares)
-        days_to_cover   = round(short_vol_today / avg_vol30, 2) if avg_vol30 > 0 else 0.0
-        vol_ratio       = round(today_vol / avg_vol30, 2)       if avg_vol30 > 0 else 0.0
+        vol_hist30  = get_vol_history(code, 30, today_ds)
+        avg_vol30   = sum(vol_hist30) / len(vol_hist30) if vol_hist30 else 0
+        days_to_cover = round(short_vol_today / avg_vol30, 2) if avg_vol30 > 0 else 0.0
+        vol_ratio     = round(today_vol / avg_vol30, 2)       if avg_vol30 > 0 else 0.0
 
         tv_hist30  = get_tv_history(code, 30, today_ds)
         tv_avg30   = sum(tv_hist30) / len(tv_hist30) if tv_hist30 else 0.0
-        tv_ratio30 = round(float(row.turnover) / tv_avg30, 2) if tv_avg30 > 0 else 0.0
+        tv_ratio30 = round(turnover / tv_avg30, 2)  if tv_avg30 > 0 else 0.0
         pct_hist30 = get_pct_history(code, 30, today_ds)
         pct_avg30_lvl = round(sum(pct_hist30) / len(pct_hist30), 4) if pct_hist30 else 0.0
         pct_dev30  = round(pct_listed - pct_avg30_lvl, 4) if pct_avg30_lvl > 0 else 0.0
 
-        tv_t2_raw   = get_tv(code, t2_key)
-        # T-2 short: use the day after t2_date as the exclusive upper bound
-        _t2_before  = (t2_date + timedelta(days=1)).strftime("%Y-%m-%d")
-        _t2_short   = get_short_history(code, 1, _t2_before)
-        short_sv_t2 = _t2_short[0]["sv"] if _t2_short else 0
-        vol_t2_raw  = _tv_recent.get(t2_key, {}).get(code, {})
-        vol_t2      = vol_t2_raw.get("vol", 0) if isinstance(vol_t2_raw, dict) else 0
+        tv_t2_raw      = get_tv(code, t2_key)
+        _t2_short      = get_short_history(code, 1, _t2_before)
+        short_sv_t2    = _t2_short[0]["sv"] if _t2_short else 0
+        vol_t2_raw     = _tv_recent.get(t2_key, {}).get(code, {})
+        vol_t2         = vol_t2_raw.get("vol", 0) if isinstance(vol_t2_raw, dict) else 0
         short_ratio_t2 = round(short_sv_t2 / vol_t2 * 100, 2) if vol_t2 > 0 else short_ratio
-        turnover_t2    = tv_t2_raw if tv_t2_raw > 0 else float(row.turnover)
+        turnover_t2    = tv_t2_raw if tv_t2_raw > 0 else turnover
 
-        stock_type = classify_stock(code, row.name)
+        stock_type = classify_stock(code, name_eng)
         _, ind_zh  = get_industry(code)
 
         sb          = sb_map.get(code, {})
+        # Signals need price history — suppress for stocks with no turnover history
         has_history = len(tv_hist30) >= 5 and len(vol_hist30) >= 5
         insight = classify_insight(
             code, stock_type, short_ratio, short_avg5, short_ratio_t2,
-            int(row.turnover), tv_avg5, turnover_t2,
+            turnover, tv_avg5, turnover_t2,
             int(ccass_delta), int(ccass_consec),
             pct_delta=pct_delta,
             days_to_cover=days_to_cover if has_history else 0.0,
@@ -918,22 +973,26 @@ def run_analysis():
         prev_rank   = prev_ranks.get(code)
         rank_new    = prev_rank is None
         rank_change = 0 if rank_new else prev_rank - i
+
+        _consec, _prev = _sb_consec_and_prev(code) if code in sb_map else (
+            int(ccass_consec_map.get(code, 0)), 0)
+
         results.append({
             "rank": i, "rank_change": rank_change, "rank_new": rank_new,
-            "code": code, "name": row.name,
-            "name_chi": getattr(row, "name_chi", row.name),
+            "code": code, "name": name_eng, "name_chi": name_chi,
             "stock_type": stock_type, "industry_zh": ind_zh,
-            "turnover": int(row.turnover),
-            "sb_buy":   sb.get("sb_buy",   0),
-            "sb_sell":  sb.get("sb_sell",  0),
-            "sb_net":   sb.get("sb_net",   0),
-            "sb_total": sb.get("sb_total", 0),
-            "sb_net_prev": int(sb_prev_map.get(code, 0)),
-            "sb_consec":   int(sb_consec_map.get(code, 0)),
+            "turnover": turnover,
+            "sb_buy":      sb.get("sb_buy",   0),
+            "sb_sell":     sb.get("sb_sell",  0),
+            "sb_net":      sb.get("sb_net",   0),
+            "sb_total":    sb.get("sb_total", 0),
+            "sb_net_prev": int(sb_prev_map.get(code, _prev)),
+            "sb_consec":   int(sb_consec_map.get(code, _consec)),
             "short_ratio":    round(short_ratio, 2),
             "short_avg5":     round(short_avg5, 2),
             "short_ratio_t2": round(short_ratio_t2, 2),
             "short_vol":      int(short_vol_today),
+            "short_st":       int(short_st_map.get(code, 0)),
             "days_to_cover":  days_to_cover,
             "vol_ratio":      vol_ratio,
             "sfc_sh":   sfc_map.get(code, {}).get("sfc_sh",  0),
@@ -950,54 +1009,7 @@ def run_analysis():
             "insight": insight,
         })
 
-    # 7b. Append sc_top10 stocks not in today's quotation
-    _codes_in_results = {r["code"] for r in results}
-    _nm        = load_store(NAME_MAP_FILE)
-    _sb_extras = 0
-    for _code, _sb in sb_map.items():
-        if _code in _codes_in_results:
-            continue
-        _nm_entry  = _nm.get(_code, {})
-        _name_eng  = _nm_entry.get("en", _code)
-        _name_chi  = _nm_entry.get("zh", "") or get_zh_name(_code) or _name_eng
-        _stype     = classify_stock(_code, _name_eng)
-        _, _ind_zh = get_industry(_code)
-        _consec, _prev = _sb_consec_and_prev(_code)
-        _tv       = get_tv(_code, trading_day.strftime("%Y%m%d"))
-        _turnover = _tv if _tv > 0 else _sb.get("sb_total", 0)
-        _prev_rank = prev_ranks.get(_code)
-        results.append({
-            "rank": len(results) + 1,
-            "rank_change": 0 if _prev_rank is None else _prev_rank - (len(results) + 1),
-            "rank_new": _prev_rank is None,
-            "code": _code, "name": _name_eng, "name_chi": _name_chi,
-            "stock_type": _stype, "industry_zh": _ind_zh,
-            "turnover": _turnover,
-            "sb_buy":      _sb.get("sb_buy",  0),
-            "sb_sell":     _sb.get("sb_sell", 0),
-            "sb_net":      _sb.get("sb_net",  0),
-            "sb_total":    _sb.get("sb_total",0),
-            "sb_net_prev": int(_prev),
-            "sb_consec":   int(_consec),
-            "short_ratio": 0.0, "short_avg5": 0.0, "short_ratio_t2": 0.0,
-            "short_vol": 0, "days_to_cover": 0.0, "vol_ratio": 0.0,
-            "sfc_sh":  sfc_map.get(_code, {}).get("sfc_sh",  0),
-            "sfc_hkd": sfc_map.get(_code, {}).get("sfc_hkd", 0.0),
-            "sfc_pct": sfc_map.get(_code, {}).get("sfc_pct", 0.0),
-            "tv_ratio30": 0.0, "pct_dev30": 0.0,
-            "ccass_trade_date":  t2_date.strftime("%Y-%m-%d"),
-            "ccass_delta":       int(ccass_delta_map.get(_code, 0)),
-            "ccass_consec":      int(ccass_consec_map.get(_code, 0)),
-            "ccass_streak_pct":  round(ccass_streak_pct_map.get(_code, 0.0), 4),
-            "pct_listed": round(pct_listed_map.get(_code, ccass_pct_map.get(_code, 0.0)), 4),
-            "pct_delta":  round(pct_delta_map.get(_code, 0.0), 4),
-            "insight": None,
-        })
-        _sb_extras += 1
-    if _sb_extras:
-        log.info("Added %d sc_top10 stocks not in quotation", _sb_extras)
-
-    # 8. Persist
+    # ── 11. Persist ───────────────────────────────────────────────────────────
     output = {
         "update_time": trading_day.strftime("%Y-%m-%d %H:%M"),
         "sb_date":     sb_date_used,
@@ -1009,14 +1021,15 @@ def run_analysis():
     log.info("data.json written: %d stocks", len(results))
     save_rank_history(trading_day, results)
 
-    # 9. Telegram
+    # ── 12. Telegram ──────────────────────────────────────────────────────────
     if results:
         flagged     = [s for s in results if s["insight"]]
         new_entries = [s for s in results if s["rank_new"]]
         big_movers  = [s for s in results if not s["rank_new"] and s["rank_change"] >= 5]
-        top         = results[0]
-        top_rc      = (f" [↑{top['rank_change']}]" if top["rank_change"] > 0
-                       else (" [new]" if top["rank_new"] else ""))
+        # Top = highest actual turnover (quotation stocks ranked first)
+        top = next((s for s in results if s["turnover"] > 0), results[0])
+        top_rc = (f" [↑{top['rank_change']}]" if top["rank_change"] > 0
+                  else (" [new]" if top["rank_new"] else ""))
         lines = [
             "📊 港股策略板",
             f"時間: {output['update_time']}",

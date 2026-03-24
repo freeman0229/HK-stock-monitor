@@ -131,28 +131,18 @@ def save_name_map(nm: dict):
 
 # ── Status check ──────────────────────────────────────────────────────────────
 
-def _record_has_price(rec: dict) -> bool:
-    """True if this record already has the new high/low/close fields."""
-    return isinstance(rec, dict) and "high" in rec
-
 def day_status(ds: str, lib: dict) -> str:
     """
     Returns one of:
       'missing'   — date not stored at all
-      'bad_tv'    — stored but record count < MIN_RECORDS (incomplete fetch)
-      'no_price'  — stored but missing high/low/close fields (old schema)
+      'bad_tv'    — stored but record count < MIN_RECORDS (incomplete/failed fetch)
       'ok'        — complete
     """
     day = lib.get("by_date", {}).get(ds)
     if not day:
         return "missing"
-    total = sum(v["tv"] for v in day.values() if isinstance(v, dict) and "tv" in v)
     if len(day) < MIN_RECORDS:
         return "bad_tv"
-    # Check if any record is missing the new price fields
-    sample = next((v for v in day.values() if isinstance(v, dict)), None)
-    if sample and not _record_has_price(sample):
-        return "no_price"
     return "ok"
 
 # ── Fetch & parse ─────────────────────────────────────────────────────────────
