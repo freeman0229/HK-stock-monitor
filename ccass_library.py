@@ -48,7 +48,9 @@ HEADERS = {
 # Chinese mutualmarket page — cleaner table, GET-based with txtShareholdingDate param
 BASE_URL   = "https://www3.hkexnews.hk/sdw/search/mutualmarket_c.aspx"
 SLEEP_SEC  = 1.5
-START_DATE = date(2025, 1, 1)
+START_DATE = date(2025, 3, 23)  # user-requested start: 23 Mar 2025
+                                # Note: 2025-03-23 is a Sunday — first
+                                # trading day is 2025-03-24
 
 
 # ── Trading day helpers ───────────────────────────────────────────────────────
@@ -59,8 +61,44 @@ try:
 except ImportError:
     _HK_HOLIDAYS = set()
 
+# Mainland China holidays — CCASS southbound settles only on days both
+# HK and mainland exchanges are open. These are CN-only holidays where
+# HK is open (CNY extension, Golden Week, etc.).
+_CN_HOLIDAY_DATES = {
+    # 2024
+    "2024-01-01","2024-02-12","2024-02-13","2024-02-14","2024-02-15","2024-02-16",
+    "2024-04-04","2024-04-05","2024-05-01","2024-05-02","2024-05-03",
+    "2024-06-10","2024-09-16","2024-09-17",
+    "2024-10-01","2024-10-02","2024-10-03","2024-10-04","2024-10-07",
+    # 2025
+    "2025-01-01","2025-01-27","2025-01-28","2025-01-29","2025-01-30","2025-01-31",
+    "2025-04-04","2025-05-01","2025-05-02","2025-05-05",
+    "2025-06-02",
+    "2025-10-01","2025-10-02","2025-10-03","2025-10-06","2025-10-07","2025-10-08",
+    # 2026
+    "2026-01-01","2026-01-28","2026-01-29","2026-01-30","2026-02-02","2026-02-03","2026-02-04",
+    "2026-04-06","2026-05-01","2026-05-04","2026-05-05",
+    "2026-06-19",
+    "2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07","2026-10-08",
+}
+
+try:
+    _CN_LIB = hol.China()
+except Exception:
+    _CN_LIB = set()
+
+def _is_cn_holiday(d: date) -> bool:
+    return d.isoformat() in _CN_HOLIDAY_DATES or d in _CN_LIB
+
 def is_trading_day(d: date) -> bool:
-    return d.weekday() < 5 and d not in _HK_HOLIDAYS
+    """True only when both HK and mainland exchanges are open."""
+    if d.weekday() >= 5:
+        return False
+    if d in _HK_HOLIDAYS:
+        return False
+    if _is_cn_holiday(d):
+        return False
+    return True
 
 def last_trading_day(d: date) -> date:
     while not is_trading_day(d):
@@ -209,7 +247,24 @@ def fetch_ccass(d: date) -> dict | None:
 
 # ── Build / update ────────────────────────────────────────────────────────────
 
-def build(update_only: bool = False):
+
+def _dates_missing_name() -> set:
+    """Return stored dates where the name field is absent from records."""
+    missing = set()
+    for year in all_years():
+        p = lib_path(year)
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8") as f:
+            by_date = json.load(f).get("by_date", {})
+        for ds, day in by_date.items():
+            sample = next((v for v in day.values() if isinstance(v, dict)), None)
+            if sample and "name" not in sample:
+                missing.add(ds)
+    return missing
+
+
+def build(update_only: bool = False, fix_names: bool = False):
     stored  = all_stored_dates()
     end     = last_trading_day(date.today() - timedelta(days=1))
     start   = last_trading_day(START_DATE)
@@ -222,6 +277,15 @@ def build(update_only: bool = False):
     else:
         trading = [d for d in trading if d.isoformat() not in stored]
         log.info("Build: %d trading days to fetch", len(trading))
+
+    if fix_names:
+        # Also include stored dates where name field is missing
+        no_name = _dates_missing_name()
+        extra = [d for d in all_trading_days(start, end)
+                 if d.isoformat() in no_name and d not in trading]
+        if extra:
+            log.info("fix-names: %d dates need name backfill", len(extra))
+            trading = sorted(set(trading) | set(extra))
 
     if not trading:
         log.info("Already up to date")
@@ -368,7 +432,8 @@ def get_ccass_name(code: str) -> str | None:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="CCASS Southbound Library")
-    ap.add_argument("--update", action="store_true",  help="Fetch only new dates")
+    ap.add_argument("--update",     action="store_true", help="Fetch only new dates")
+    ap.add_argument("--fix-names",  action="store_true", help="Re-fetch dates missing the name field")
     ap.add_argument("--query",  metavar="CODE",        help="Stock history e.g. 00700")
     ap.add_argument("--date",   metavar="YYYY-MM-DD",  help="All stocks for a date")
     ap.add_argument("--weeks",  type=int,              help="Limit query to last N weeks")
@@ -378,7 +443,7 @@ if __name__ == "__main__":
     if   args.query:  query_stock(args.query, args.weeks)
     elif args.date:   query_date(args.date)
     elif args.export: export_stock_csv(args.export)
-    else:             build(update_only=args.update)
+    else:             build(update_only=args.update, fix_names=getattr(args, "fix_names", False))
 
 
 # ── API for main.py ───────────────────────────────────────────────────────────
