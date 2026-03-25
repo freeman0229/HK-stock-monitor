@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 import holidays
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from stock_ref import get_zh_name, get_industry, get_type, STOCKS
 from ccass_library import (get_pct_history, get_sh_history,
                             save_day as ccass_save_day,
@@ -12,6 +12,11 @@ from short_library import save_day as short_save_day, get_short_history, get_sho
 from turnover_library import (save_day as tv_save_day, get_tv_history,
                                get_vol_history, get_close_history, get_close,
                                load_recent as tv_load_recent, get_tv)
+from sc_top10_library import (get_top10, get_top10_history,
+                               fetch_day as sc_fetch_day,
+                               save_year as sc_save_year,
+                               load_year as sc_load_year,
+                               lib_path as sc_lib_path)
 try:
     from sfc_library import get_short_position as sfc_get_position, all_report_fridays as sfc_fridays
     _SFC_AVAILABLE = True
@@ -22,8 +27,6 @@ try:
     _SDW_AVAILABLE = True
 except ImportError:
     _SDW_AVAILABLE = False
-
-from sc_top10_library import get_top10, get_top10_history
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -789,9 +792,8 @@ def run_analysis():
 
     # ── 6. SFC cumulative short positions ────────────────────────────────────
     sfc_map = {}
-    if _SFC_AVAILABLE and _SDW_AVAILABLE:
+    if _SFC_AVAILABLE:
         try:
-            from datetime import date as _date2
             _sfc_fridays = [d for d in sfc_fridays() if d <= trading_day.date()]
             if _sfc_fridays:
                 _latest_sfc_ds = max(_sfc_fridays).isoformat()
@@ -799,19 +801,21 @@ def run_analysis():
                     pos = sfc_get_position(code, _latest_sfc_ds)
                     if not pos or pos.get("sh", 0) <= 0:
                         continue
-                    sfc_sh   = pos["sh"]
-                    sfc_hkd  = pos.get("hkd", 0.0)
-                    total_sh = sdw_get_total_sh(code, today_ds)
-                    sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
+                    sfc_sh  = pos["sh"]
+                    sfc_hkd = pos.get("hkd", 0.0)
+                    if _SDW_AVAILABLE:
+                        total_sh = sdw_get_total_sh(code, today_ds)
+                        sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
+                    else:
+                        sfc_pct = 0.0
                     sfc_map[code] = {"sfc_sh": sfc_sh, "sfc_hkd": sfc_hkd, "sfc_pct": sfc_pct}
-                log.info("SFC short positions: %d stocks from %s", len(sfc_map), _latest_sfc_ds)
+                log.info("SFC short positions: %d stocks from %s%s",
+                         len(sfc_map), _latest_sfc_ds,
+                         " (pct=0, SDW unavailable)" if not _SDW_AVAILABLE else "")
         except Exception as e:
             log.warning("SFC map build failed: %s", e)
 
     # ── 7. Southbound top10 ───────────────────────────────────────────────────
-    from sc_top10_library import (fetch_day as sc_fetch_day, save_year as sc_save_year,
-                                   load_year as sc_load_year, lib_path as sc_lib_path)
-    from datetime import date as _date
 
     def _build_sb_map(top10_list: list) -> dict:
         m = {}
@@ -835,8 +839,8 @@ def run_analysis():
 
     if not sb_map:
         log.info("Southbound top10: not in library for %s — attempting live fetch", today_ds)
-        live_rec   = sc_fetch_day(trading_day.date() if hasattr(trading_day, "date") else
-                                  _date.fromisoformat(today_ds))
+        live_rec   = sc_fetch_day(trading_day.date() if isinstance(trading_day, datetime)
+                                  else date.fromisoformat(today_ds))
         live_count = len(live_rec.get("top10", [])) if live_rec else 0
         if live_rec and live_count >= _MIN_SB:
             year = trading_day.year
@@ -974,8 +978,10 @@ def run_analysis():
         rank_new    = prev_rank is None
         rank_change = 0 if rank_new else prev_rank - i
 
-        _consec, _prev = _sb_consec_and_prev(code) if code in sb_map else (
-            int(ccass_consec_map.get(code, 0)), 0)
+        # Use pre-computed maps (populated above for all codes in sb_map).
+        # Fall back to ccass_consec for stocks not in today's southbound top10.
+        _sb_consec_final = int(sb_consec_map.get(code, ccass_consec_map.get(code, 0)))
+        _sb_prev_final   = int(sb_prev_map.get(code, 0))
 
         results.append({
             "rank": i, "rank_change": rank_change, "rank_new": rank_new,
@@ -986,8 +992,8 @@ def run_analysis():
             "sb_sell":     sb.get("sb_sell",  0),
             "sb_net":      sb.get("sb_net",   0),
             "sb_total":    sb.get("sb_total", 0),
-            "sb_net_prev": int(sb_prev_map.get(code, _prev)),
-            "sb_consec":   int(sb_consec_map.get(code, _consec)),
+            "sb_net_prev": _sb_prev_final,
+            "sb_consec":   _sb_consec_final,
             "short_ratio":    round(short_ratio, 2),
             "short_avg5":     round(short_avg5, 2),
             "short_ratio_t2": round(short_ratio_t2, 2),

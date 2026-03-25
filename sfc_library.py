@@ -14,7 +14,8 @@ Storage:   sfc_{YYYY}.json — one per year
 
 Structure:
 {
-  "meta": {"year": 2026, "last_updated": "...", "total_dates": N},
+  "meta": {"year": 2026, "schema": "v2", "last_updated": "...",
+           "total_weeks": N, "total_records": M, "pct_available": false},
   "by_date": {
     "2026-03-14": {
       "__total__": {"sh": 9876543210, "hkd": 987654321000.0},
@@ -154,16 +155,30 @@ def load_year(year: int) -> dict:
     return {"meta": {"year": year}, "by_date": {}}
 
 def save_year(year: int, lib: dict):
-    n = len(lib["by_date"])
+    by_date = lib["by_date"]
+    total_weeks   = len(by_date)
+    total_records = sum(
+        len(w) - (1 if "__total__" in w else 0)
+        for w in by_date.values()
+    )
     lib["meta"] = {
-        "year":         year,
-        "last_updated": date.today().isoformat(),
-        "total_dates":  n,
+        "year":          year,
+        "schema":        "v2",
+        "last_updated":  date.today().isoformat(),
+        "total_weeks":   total_weeks,
+        "total_records": total_records,
+        "pct_available": any(
+            rec.get("pct") is not None
+            for w in by_date.values()
+            for k, rec in w.items()
+            if k != "__total__"
+        ),
     }
     with open(lib_path(year), "w", encoding="utf-8") as f:
         json.dump(lib, f, ensure_ascii=False, separators=(",", ":"))
     kb = os.path.getsize(lib_path(year)) / 1024
-    log.info("Saved sfc_%d.json  %d dates  %.0f KB", year, n, kb)
+    log.info("Saved sfc_%d.json  %d weeks  %d records  %.0f KB",
+             year, total_weeks, total_records, kb)
 
 def all_stored_dates() -> set:
     stored = set()
