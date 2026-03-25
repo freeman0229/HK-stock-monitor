@@ -20,6 +20,7 @@ on:
           - ccass-build      # full CCASS build from 2025-03-23 (run multiple times)
           - sc-top10-build   # full Stock Connect top10 build (run multiple times)
           - sdw-build        # full SDW participant holdings backfill (run multiple times)
+          - sfc-build        # full SFC backfill from 2018-01-01 (run multiple times)
           - sfc-reparse      # re-parse all cached SFC Excel files (fixes hkd=0 bug)
           - turnover-build   # backfill turnover library from 2026-02-02 (adds high/low/close)
           - short-build      # backfill short selling library from 2026-03-20
@@ -313,6 +314,39 @@ jobs:
             (git commit -m "Turnover build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
   # ── DI weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
+  sfc-build:
+    name: SFC full backfill (2018-01-01 to today)
+    runs-on: ubuntu-latest
+    timeout-minutes: 320
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'sfc-build'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Restore SFC cache
+        uses: actions/cache@v4
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
+          restore-keys: sfc-cache-
+      - name: Full SFC backfill (resumes from last stored date)
+        run: python sfc_library.py
+      - name: Re-parse all cached Excel files (fixes schema)
+        run: python sfc_library.py --reparse
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --staged --quiet || \
+            (git commit -m "SFC build: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+
   di-weekly:
     name: DI substantial shareholder library
     runs-on: ubuntu-latest
