@@ -177,6 +177,15 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
+      - name: Check SFC library files exist (required for stock universe)
+        run: |
+          if ! ls sfc_20*.json 1>/dev/null 2>&1; then
+            echo "ERROR: No sfc_20*.json files found in repo."
+            echo "Run sfc-build first to build the SFC short position library,"
+            echo "which provides the stock universe for SDW fetching."
+            exit 1
+          fi
+          echo "SFC files found: $(ls sfc_20*.json | tr '\n' ' ')"
       - name: Migrate old single-file SDW data to range-split format (safe to re-run)
         run: python ccass_sdw_library.py --migrate
       - name: Build SDW holdings library (resumes from last stored date)
@@ -328,7 +337,7 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - name: Restore SFC cache
+      - name: Restore SFC Excel cache (avoids re-downloading on each re-run)
         uses: actions/cache@v4
         with:
           path: sfc_cache
@@ -338,6 +347,12 @@ jobs:
         run: python sfc_library.py
       - name: Re-parse all cached Excel files (fixes schema)
         run: python sfc_library.py --reparse
+      - name: Save SFC Excel cache (so next re-run skips re-downloading)
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
       - name: Commit
         run: |
           git config --global user.name "Bot"
