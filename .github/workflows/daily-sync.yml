@@ -85,6 +85,13 @@ jobs:
       - name: Check SFC for new reports (any day)
         run: python sfc_library.py --update
 
+      - name: Save SFC cache (persist any newly downloaded Excel files)
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
+
       - name: Run daily analysis
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
