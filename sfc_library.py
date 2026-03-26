@@ -221,6 +221,11 @@ def _is_valid_xlsx(data: bytes) -> bool:
     return len(data) > 4 and data[:4] == _XLSX_MAGIC
 
 def _download_excel(report_date: date) -> bytes | None:
+    """
+    Attempt to download an SFC Excel file via direct URL patterns only.
+    Page scraping is handled separately by build() Step 1 — do NOT scrape here,
+    as that would trigger one full page scrape per missing date (very slow).
+    """
     ds_nodash  = report_date.strftime("%Y%m%d")
     cache_file = os.path.join(CACHE_DIR, f"sfc_{ds_nodash}.xlsx")
 
@@ -248,20 +253,6 @@ def _download_excel(report_date: date) -> bytes | None:
         except Exception:
             pass
 
-    scraped = _scrape_excel_links()
-    for link in scraped:
-        if ds_nodash in link or report_date.strftime("%d%m%Y") in link:
-            try:
-                r = requests.get(link, headers=HEADERS, timeout=30)
-                if r.status_code == 200 and _is_valid_xlsx(r.content):
-                    with open(cache_file, "wb") as f:
-                        f.write(r.content)
-                    log.info("Downloaded %s via scraped link %s", ds_nodash, link)
-                    return r.content
-            except Exception:
-                pass
-
-    log.warning("Could not download Excel for %s", report_date.isoformat())
     return None
 
 def _parse_excel(data: bytes, report_date: date) -> dict | None:
