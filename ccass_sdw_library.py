@@ -266,85 +266,43 @@ def _parse_num(s) -> int:
         return 0
 
 
-def fetch_viewstate(d: date) -> dict | None:
-    """
-    Fetch ASP.NET viewstate tokens for SDW search on date d.
-    Call once per date and pass result into fetch_stock() to avoid
-    a redundant GET per stock (~halves total request count).
-    Returns dict with session, date_str, and ASP.NET token fields, or None.
-    """
-    date_str = d.strftime("%Y/%m/%d")
-    try:
-        sess = requests.Session()
-        sess.headers.update(HEADERS)
-        r = sess.get(SDW_URL, timeout=15)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        def hv(name):
-            tag = soup.find("input", {"name": name})
-            return tag["value"] if tag else ""
-
-        return {
-            "session":              sess,
-            "date_str":             date_str,
-            "__VIEWSTATE":          hv("__VIEWSTATE"),
-            "__VIEWSTATEGENERATOR": hv("__VIEWSTATEGENERATOR"),
-            "__EVENTVALIDATION":    hv("__EVENTVALIDATION"),
-        }
-    except Exception as e:
-        log.error("fetch_viewstate failed for %s: %s", d.isoformat(), e)
-        return None
-
-
-def fetch_stock(stock_code: str, d: date,
-                vs: dict | None = None) -> dict | None:
+def fetch_stock(stock_code: str, d: date) -> dict | None:
     """
     Fetch CCASS participant holdings for one stock on one date.
 
-    vs — optional pre-fetched viewstate dict from fetch_viewstate().
-         When provided the GET step is skipped, saving ~half the requests.
-         When None a fresh session+GET is performed (backward-compatible).
+    Each call does its own GET (viewstate) + POST (data) — ASP.NET
+    __EVENTVALIDATION tokens are single-use per page load and cannot be
+    shared across requests.
 
     Returns {p, total_sh, issued_sh} or None if no data found.
     """
     code5    = stock_code.zfill(5)
     date_str = d.strftime("%Y/%m/%d")
     try:
-        if vs is not None:
-            sess     = vs["session"]
-            date_str = vs["date_str"]
-            vs_data  = {
-                "__VIEWSTATE":          vs["__VIEWSTATE"],
-                "__VIEWSTATEGENERATOR": vs["__VIEWSTATEGENERATOR"],
-                "__EVENTVALIDATION":    vs["__EVENTVALIDATION"],
-            }
-        else:
-            sess = requests.Session()
-            sess.headers.update(HEADERS)
-            r1 = sess.get(SDW_URL, timeout=15)
-            r1.raise_for_status()
-            soup1 = BeautifulSoup(r1.text, "html.parser")
+        sess = requests.Session()
+        sess.headers.update(HEADERS)
 
-            def hv(name):
-                tag = soup1.find("input", {"name": name})
-                return tag["value"] if tag else ""
+        # GET to retrieve fresh ASP.NET viewstate tokens
+        r1 = sess.get(SDW_URL, timeout=15)
+        r1.raise_for_status()
+        soup1 = BeautifulSoup(r1.text, "html.parser")
 
-            vs_data = {
-                "__VIEWSTATE":          hv("__VIEWSTATE"),
-                "__VIEWSTATEGENERATOR": hv("__VIEWSTATEGENERATOR"),
-                "__EVENTVALIDATION":    hv("__EVENTVALIDATION"),
-            }
+        def hv(name):
+            tag = soup1.find("input", {"name": name})
+            return tag["value"] if tag else ""
 
+        # POST with stock code and date
         r2 = sess.post(SDW_URL, data={
             "__EVENTTARGET":        "btnSearch",
             "__EVENTARGUMENT":      "",
-            **vs_data,
+            "__VIEWSTATE":          hv("__VIEWSTATE"),
+            "__VIEWSTATEGENERATOR": hv("__VIEWSTATEGENERATOR"),
+            "__EVENTVALIDATION":    hv("__EVENTVALIDATION"),
             "txtShareholdingDate":  date_str,
             "txtStockCode":         code5,
             "txtParticipantID":     "",
             "txtParticipantName":   "",
-        }, timeout=30)
+        }, timeout=20)
         r2.raise_for_status()
 
         soup2     = BeautifulSoup(r2.text, "html.parser")
@@ -499,15 +457,6 @@ def build(update_only: bool = False, specific_date: date = None,
         todo    = [c for c in universe if c not in already]
         log.info("  %d stocks to fetch (%d already stored)", len(todo), len(already))
 
-        # Fetch viewstate once per date — reused for all stock POSTs.
-        # ASP.NET viewstate is session-scoped so the same tokens work for every
-        # stock on the same date, saving one GET per stock (~halves request count).
-        vs = fetch_viewstate(d)
-        if vs is None:
-            log.warning("  Could not fetch viewstate for %s — skipping date", ds)
-            continue
-        vs_refresh_interval = 200   # refresh every N stocks in case session expires
-
         fetched = 0
         timed_out = False
         for ci, code in enumerate(todo, 1):
@@ -517,14 +466,7 @@ def build(update_only: bool = False, specific_date: date = None,
                 timed_out = True
                 break
 
-            # Periodically refresh viewstate to avoid session expiry on long runs
-            if ci > 1 and ci % vs_refresh_interval == 0:
-                fresh = fetch_viewstate(d)
-                if fresh:
-                    vs = fresh
-                    log.debug("  Viewstate refreshed at stock %d", ci)
-
-            entry = fetch_stock(code, d, vs=vs)
+            entry = fetch_stock(code, d)
             if entry:
                 rl = code_range(code)
                 range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
