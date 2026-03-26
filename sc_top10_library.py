@@ -33,7 +33,7 @@ Structure:
 }
 
 Usage:
-  python sc_top10_library.py              # full build 2018 to today
+  python sc_top10_library.py              # full build from START_DATE to today
   python sc_top10_library.py --update     # only new dates
   python sc_top10_library.py --query 2026-03-04
   python sc_top10_library.py --export     # export all to CSV
@@ -47,7 +47,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 BASE_URL   = "https://www.hkex.com.hk/chi/csm/DailyStat/data_tab_daily_{date}c.js"
-START_DATE = date(2025, 9, 1)   # user-requested start: 1 Sep 2025
+START_DATE = date(2025, 9, 1)    # SC top10 data available from Sep 2025
 SLEEP_SEC  = 1.2
 CACHE_DIR  = "sc_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -66,7 +66,7 @@ except Exception:
     _HK = set()
 
 # Mainland China public holidays — Stock Connect is closed when EITHER
-# exchange is on holiday. These are CN-only holidays where HK is open.
+# exchange is on holiday.
 _CN_HOLIDAY_DATES = {
     "2024-01-01","2024-02-12","2024-02-13","2024-02-14","2024-02-15","2024-02-16",
     "2024-04-04","2024-04-05","2024-05-01","2024-05-02","2024-05-03",
@@ -91,7 +91,6 @@ def _is_cn_holiday(d: date) -> bool:
     return d.isoformat() in _CN_HOLIDAY_DATES or d in _CN_LIB
 
 def is_trading_day(d: date) -> bool:
-    # Both HK and mainland exchanges must be open for Stock Connect to trade
     if d.weekday() >= 5:
         return False
     if d in _HK:
@@ -108,7 +107,8 @@ def last_trading_day(d: date) -> date:
 def all_trading_days(start: date, end: date) -> list:
     days, d = [], start
     while d <= end:
-        if is_trading_day(d): days.append(d)
+        if is_trading_day(d):
+            days.append(d)
         d += timedelta(days=1)
     return days
 
@@ -151,44 +151,37 @@ def all_stored_dates() -> set:
 
 # ── Parse ─────────────────────────────────────────────────────────────────────
 
-def _to_f(s: str) -> float:
+def _to_f(s) -> float:
     try:    return float(str(s).replace(",", "").strip())
     except: return 0.0
 
-def _to_i(s: str) -> int:
+def _to_i(s) -> int:
     try:    return int(str(s).replace(",", "").strip())
     except: return 0
 
 def _clean_name(s: str) -> str:
-    return s.strip().rstrip("　").strip()
+    return s.strip().rstrip("\u3000").strip()
 
 def _parse_summary(table: dict) -> dict:
-    """Parse style:1 tradingTable — aggregate figures."""
     schema = table.get("schema", [[]])[0]
     trs    = table.get("tr", [])
     vals   = [tr["td"][0][0] for tr in trs if tr.get("td")]
     result = {}
     for key, val in zip(schema, vals):
         k = key.lower().replace(" ", "_")
-        # trade counts are integers, turnover is float
         result[k] = _to_i(val) if "count" in k or "dqb" in k else _to_f(val)
-    # Normalise key names
     return {
-        "total":  result.get("total_turnover",    0.0),
-        "buy":    result.get("buy_turnover",      0.0),
-        "sell":   result.get("sell_turnover",     0.0),
+        "total":  result.get("total_turnover",   0.0),
+        "buy":    result.get("buy_turnover",     0.0),
+        "sell":   result.get("sell_turnover",    0.0),
         "trades": _to_i(str(int(result.get("total_trade_count", 0)))),
-        "etf":    result.get("etf_turnover",      0.0),
+        "etf":    result.get("etf_turnover",     0.0),
     }
 
 def _parse_top10(table: dict, is_southbound: bool) -> list:
-    """Parse style:2 top10Table — per-stock rows.
-
-    Defensive against HKEX returning row values as Python ints/floats rather
-    than strings — e.g. stock code 175 instead of "00175". Any unhandled row
-    format is logged and skipped rather than crashing the whole parse, which
-    previously caused subsequent stocks to be silently dropped after the first
-    AttributeError on row[1].strip() when the value was an int.
+    """
+    Parse style:2 top10Table — per-stock rows.
+    Defensive against HKEX returning row values as ints/floats instead of strings.
     """
     stocks  = []
     skipped = 0
@@ -204,9 +197,8 @@ def _parse_top10(table: dict, is_southbound: bool) -> list:
                 rank = _to_i(row[0])
                 if rank <= 0:
                     continue
-                code_raw = str(row[1]).strip()
                 try:
-                    code_int = int(float(code_raw))
+                    code_int = int(float(str(row[1]).strip()))
                 except (ValueError, TypeError):
                     skipped += 1
                     continue
@@ -225,10 +217,8 @@ def _parse_top10(table: dict, is_southbound: bool) -> list:
                 rank = _to_i(row[0])
                 if rank <= 0:
                     continue
-                # Code can arrive as int (175) or string ("00175") — normalise both
-                code_raw = str(row[1]).strip()
                 try:
-                    code_int = int(float(code_raw))
+                    code_int = int(float(str(row[1]).strip()))
                 except (ValueError, TypeError):
                     skipped += 1
                     continue
@@ -245,39 +235,26 @@ def _parse_top10(table: dict, is_southbound: bool) -> list:
                 })
         except Exception as e:
             skipped += 1
-            log.debug("_parse_top10: skipped row due to %s: %s", type(e).__name__, e)
+            log.debug("_parse_top10: skipped row: %s", e)
     if skipped:
         log.warning("_parse_top10: skipped %d rows (format issues)", skipped)
     return stocks
 
 def parse_js(text: str) -> dict | None:
-    """
-    Parse the tabData JS variable.
-    Returns a dict with sse_summary, szse_summary, top10 combined.
-    Each top10 entry includes full per-exchange fields:
-      sse_buy, sse_sell, sse_total, szse_buy, szse_sell, szse_total,
-      buy (combined), sell (combined), total (combined),
-      rank_sse, rank_szse
-    """
-    # Strip JS variable assignment to get pure JSON
-    m = re.search(r'tabData\s*=\s*(\[.*\])', text, re.DOTALL)
+    m = re.search(r"tabData\s*=\s*(\[.*\])", text, re.DOTALL)
     if not m:
         log.warning("tabData not found in JS")
         return None
-
     try:
         tab = json.loads(m.group(1))
     except json.JSONDecodeError as e:
         log.warning("JSON parse error: %s", e)
         return None
 
-    # Index by market name
     markets = {item["market"]: item for item in tab}
+    result  = {}
 
-    result = {}
-
-    # SSE Southbound
-    sse_sb = markets.get("SSE Southbound")
+    sse_sb     = markets.get("SSE Southbound")
     sse_stocks = {}
     if sse_sb:
         for content in sse_sb.get("content", []):
@@ -288,8 +265,7 @@ def parse_js(text: str) -> dict | None:
                 for s in _parse_top10(tbl, is_southbound=True):
                     sse_stocks[s["code"]] = s
 
-    # SZSE Southbound
-    szse_sb = markets.get("SZSE Southbound")
+    szse_sb     = markets.get("SZSE Southbound")
     szse_stocks = {}
     if szse_sb:
         for content in szse_sb.get("content", []):
@@ -300,8 +276,7 @@ def parse_js(text: str) -> dict | None:
                 for s in _parse_top10(tbl, is_southbound=True):
                     szse_stocks[s["code"]] = s
 
-    # Combine SSE + SZSE: preserve per-exchange fields + combined totals.
-    # Same stock can appear on both lists — merge keeping full breakdown.
+    # Merge SSE + SZSE keeping per-exchange breakdown
     merged = {}
     for s in sse_stocks.values():
         code = s["code"]
@@ -347,18 +322,14 @@ def parse_js(text: str) -> dict | None:
             merged[code]["total"]     += s["total"]
             merged[code]["rank_szse"]  = s["rank"]
 
-    # Sanity check
     n_sse, n_szse, n_merged = len(sse_stocks), len(szse_stocks), len(merged)
     if n_sse < 10:
-        log.warning("parse_js: only %d SSE stocks (expected 10) — table structure may have changed", n_sse)
+        log.warning("parse_js: only %d SSE stocks (expected 10)", n_sse)
     if n_szse < 10:
-        log.warning("parse_js: only %d SZSE stocks (expected 10) — table structure may have changed", n_szse)
-    if n_merged < 10:
-        log.warning("parse_js: only %d unique stocks after merge (expected ≥10)", n_merged)
+        log.warning("parse_js: only %d SZSE stocks (expected 10)", n_szse)
     log.info("parse_js: SSE=%d SZSE=%d merged=%d (overlap=%d)",
              n_sse, n_szse, n_merged, n_sse + n_szse - n_merged)
 
-    # Sort by combined total descending
     result["top10"] = sorted(merged.values(), key=lambda x: x["total"], reverse=True)
     return result
 
@@ -369,9 +340,7 @@ def _cache_path(d: date) -> str:
     return os.path.join(CACHE_DIR, f"sc_{d.strftime('%Y%m%d')}.json")
 
 def fetch_day(d: date) -> dict | None:
-    """Fetch and parse southbound top 10 data for one trading day.
-    Cache stores raw JS text so parse_js always runs fresh.
-    If the cached file is stale (old JSON format), it is replaced."""
+    """Fetch and parse southbound top 10 data for one trading day."""
     cp = _cache_path(d)
     if os.path.exists(cp):
         with open(cp, encoding="utf-8") as f:
@@ -381,11 +350,7 @@ def fetch_day(d: date) -> dict | None:
             n = len(parsed.get("top10", []))
             if n >= 10:
                 return parsed
-            # Parsed successfully but got < 10 stocks — cache was written while
-            # HKEX was mid-publish, or a row-format issue caused silent drops.
-            # Delete and re-fetch so we always get a complete result.
-            log.warning("  cache for %s has only %d stocks — deleting and re-fetching",
-                        d.isoformat(), n)
+            log.warning("  cache for %s has only %d stocks — re-fetching", d.isoformat(), n)
         else:
             log.info("  stale cache for %s — re-fetching", d.isoformat())
         os.remove(cp)
@@ -408,20 +373,18 @@ def fetch_day(d: date) -> dict | None:
 # ── Build / update ────────────────────────────────────────────────────────────
 
 def _is_valid_top10(rec: dict) -> bool:
-    """Return True if the top10 record looks complete and valid."""
     top10 = rec.get("top10", [])
     if len(top10) < 10:
         return False
-    # Check for garbage codes like "-0000" (placeholder rows from holiday stubs)
     valid_codes = [s for s in top10 if s.get("code", "").isdigit()]
     return len(valid_codes) >= 10
 
 def _incomplete_dates() -> set:
-    """Return stored dates where top10 has fewer than 10 stocks or contains invalid codes."""
     incomplete = set()
     for year in all_years():
         p = lib_path(year)
-        if not os.path.exists(p): continue
+        if not os.path.exists(p):
+            continue
         with open(p, encoding="utf-8") as f:
             by_date = json.load(f).get("by_date", {})
         for ds, rec in by_date.items():
@@ -432,34 +395,33 @@ def _incomplete_dates() -> set:
     return incomplete
 
 def build(update_only: bool = False):
-    stored  = all_stored_dates()
-    end     = last_trading_day(date.today())   # include today — HKEX publishes same-day SC data
-    trading = all_trading_days(last_trading_day(START_DATE), end)
-
-    # Always include incomplete dates (stored but < 10 stocks) for re-fetch
+    stored     = all_stored_dates()
+    end        = last_trading_day(date.today())
+    trading    = all_trading_days(last_trading_day(START_DATE), end)
     incomplete = _incomplete_dates()
 
     if update_only and stored:
-        last    = date.fromisoformat(max(stored))
+        last     = date.fromisoformat(max(stored))
         new_days = [d for d in trading if d > last]
-        # Add incomplete historical dates to the fetch list
         repair   = [d for d in trading if d.isoformat() in incomplete]
         trading  = repair + new_days
         log.info("Update: %d new + %d incomplete to repair", len(new_days), len(repair))
     else:
-        trading = [d for d in trading if d.isoformat() not in stored or d.isoformat() in incomplete]
-        log.info("Build: %d trading days to fetch (%d repairs)", len(trading), len(incomplete & {d.isoformat() for d in trading}))
+        trading = [d for d in trading
+                   if d.isoformat() not in stored or d.isoformat() in incomplete]
+        log.info("Build: %d trading days to fetch", len(trading))
 
     if not trading:
-        log.info("Already up to date"); return
+        log.info("Already up to date")
+        return
 
     by_year: dict = {}
     for d in trading:
         by_year.setdefault(d.year, []).append(d)
 
-    missing = []
+    missing    = []
     consec_404 = 0
-    MAX_CONSEC_404 = 30   # stop if 30 consecutive days 404 — hit archive limit
+    MAX_CONSEC = 30
 
     for year, days in sorted(by_year.items()):
         lib = load_year(year)
@@ -468,22 +430,23 @@ def build(update_only: bool = False):
             rec = fetch_day(d)
             if rec and _is_valid_top10(rec):
                 lib["by_date"][d.isoformat()] = rec
-                top = rec.get("top10", [])
+                top   = rec.get("top10", [])
                 names = ", ".join(s["code"] for s in top[:3])
                 log.info("  [%d/%d] %s  %d stocks  top: %s",
                          i, len(days), d.isoformat(), len(top), names)
                 consec_404 = 0
             elif rec:
                 top = rec.get("top10", [])
-                log.warning("  [%d/%d] %s  only %d stocks — not saved (need >= 10)",
+                log.warning("  [%d/%d] %s  only %d stocks — not saved",
                             i, len(days), d.isoformat(), len(top))
                 missing.append(d)
             else:
                 missing.append(d)
                 consec_404 += 1
-                log.warning("  [%d/%d] %s  no data (%d consec)", i, len(days), d.isoformat(), consec_404)
-                if consec_404 >= MAX_CONSEC_404:
-                    log.warning("  %d consecutive 404s — HKEX archive limit reached, stopping", MAX_CONSEC_404)
+                log.warning("  [%d/%d] %s  no data (%d consec)",
+                            i, len(days), d.isoformat(), consec_404)
+                if consec_404 >= MAX_CONSEC:
+                    log.warning("  %d consecutive 404s — HKEX archive limit, stopping", MAX_CONSEC)
                     save_year(year, lib)
                     break
             time.sleep(SLEEP_SEC)
@@ -493,7 +456,7 @@ def build(update_only: bool = False):
             save_year(year, lib)
             continue
         save_year(year, lib)
-        break   # break outer loop too
+        break
 
     log.info("── Done ──")
     if missing:
@@ -508,11 +471,13 @@ def build(update_only: bool = False):
 def query_date(ds: str):
     year = int(ds[:4])
     if not os.path.exists(lib_path(year)):
-        print(f"No library for {year}"); return
+        print(f"No library for {year}")
+        return
     with open(lib_path(year), encoding="utf-8") as f:
         rec = json.load(f).get("by_date", {}).get(ds)
     if not rec:
-        print(f"No data for {ds}"); return
+        print(f"No data for {ds}")
+        return
 
     def fmt(n): return f"{n/1e8:>8.2f}億"
 
@@ -544,7 +509,6 @@ def get_top10(ds: str) -> list:
     return rec.get("top10", [])
 
 def get_top10_codes(ds: str) -> set:
-    """Return set of stock codes in top10 for a date."""
     return {s["code"] for s in get_top10(ds)}
 
 def get_top10_history(code: str, n: int, before: str) -> list:
@@ -556,17 +520,20 @@ def get_top10_history(code: str, n: int, before: str) -> list:
     result = []
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
-        if not os.path.exists(p): continue
+        if not os.path.exists(p):
+            continue
         with open(p, encoding="utf-8") as f:
             by_date = json.load(f).get("by_date", {})
         for ds in sorted(by_date.keys(), reverse=True):
-            if ds >= before: continue
+            if ds >= before:
+                continue
             for s in by_date[ds].get("top10", []):
                 if s["code"] == code5:
                     result.append({"date": ds, "buy": s["buy"],
                                    "sell": s["sell"], "total": s["total"]})
                     break
-            if len(result) >= n: return result
+            if len(result) >= n:
+                return result
     return result
 
 
@@ -575,19 +542,22 @@ def get_top10_history(code: str, n: int, before: str) -> list:
 def export_csv():
     rows = []
     for year in all_years():
-        if not os.path.exists(lib_path(year)): continue
+        if not os.path.exists(lib_path(year)):
+            continue
         with open(lib_path(year), encoding="utf-8") as f:
             by_date = json.load(f).get("by_date", {})
         for ds, rec in sorted(by_date.items()):
             for s in rec.get("top10", []):
                 rows.append({"date": ds, **s})
     if not rows:
-        print("No data to export"); return
+        print("No data to export")
+        return
     import csv
     path = "sc_top10_history.csv"
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=rows[0].keys())
-        w.writeheader(); w.writerows(rows)
+        w.writeheader()
+        w.writerows(rows)
     print(f"Exported {len(rows)} rows to {path}")
 
 
@@ -595,11 +565,11 @@ def export_csv():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="HKEX Southbound Top 10 Library")
-    ap.add_argument("--update",      action="store_true",  help="Fetch new dates + repair incomplete entries")
+    ap.add_argument("--update",      action="store_true",  help="Fetch new dates + repair incomplete")
     ap.add_argument("--query",       metavar="YYYY-MM-DD", help="Show data for a date")
     ap.add_argument("--export",      action="store_true",  help="Export all data to CSV")
-    ap.add_argument("--clear-cache", action="store_true",  help="Delete sc_cache/ so JS is re-fetched and re-parsed")
-    ap.add_argument("--reparse",     action="store_true",  help="Delete all incomplete year-JSON entries and re-fetch from HKEX")
+    ap.add_argument("--clear-cache", action="store_true",  help="Delete sc_cache/ and rebuild")
+    ap.add_argument("--reparse",     action="store_true",  help="Remove incomplete entries and re-fetch")
     args = ap.parse_args()
 
     if args.clear_cache:
@@ -607,13 +577,13 @@ if __name__ == "__main__":
         if os.path.exists(CACHE_DIR):
             shutil.rmtree(CACHE_DIR)
             os.makedirs(CACHE_DIR)
-            log.info("sc_cache cleared — re-run without --clear-cache to rebuild")
+            log.info("sc_cache cleared")
     elif args.reparse:
-        # Remove incomplete entries from year JSON so build() re-fetches them
         removed = 0
         for year in all_years():
             p = lib_path(year)
-            if not os.path.exists(p): continue
+            if not os.path.exists(p):
+                continue
             with open(p, encoding="utf-8") as f:
                 lib = json.load(f)
             before = len(lib.get("by_date", {}))
@@ -623,9 +593,12 @@ if __name__ == "__main__":
             if before != after:
                 save_year(year, lib)
                 removed += before - after
-                log.info("Year %d: removed %d incomplete entries, kept %d", year, before-after, after)
-        log.info("Reparse: removed %d incomplete entries total — run --update to re-fetch", removed)
+                log.info("Year %d: removed %d incomplete, kept %d", year, before-after, after)
+        log.info("Reparse: removed %d incomplete entries — run --update to re-fetch", removed)
         build(update_only=False)
-    elif args.query:  query_date(args.query)
-    elif args.export: export_csv()
-    else:             build(update_only=args.update)
+    elif args.query:
+        query_date(args.query)
+    elif args.export:
+        export_csv()
+    else:
+        build(update_only=args.update)

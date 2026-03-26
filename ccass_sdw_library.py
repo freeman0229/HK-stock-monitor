@@ -402,7 +402,8 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
 
 # ── Build / update ────────────────────────────────────────────────────────────
 
-def build(update_only: bool = False, specific_date: date = None):
+def build(update_only: bool = False, specific_date: date = None,
+          max_minutes: float = 0):
     """
     Build or update all range-split SDW files.
 
@@ -410,7 +411,15 @@ def build(update_only: bool = False, specific_date: date = None):
       - Get full SFC stock universe (~1286 codes)
       - Fetch any code not yet stored for that date
       - Write results into the appropriate range file
+
+    max_minutes: stop gracefully after this many minutes (0 = no limit).
+    Partial progress is saved on every checkpoint (every 50 stocks) and on
+    exit, so subsequent runs resume from where this one stopped.
+    A 15-minute GitHub Actions workflow can safely use max_minutes=12.
     """
+    import time as _time
+    deadline = (_time.monotonic() + max_minutes * 60) if max_minutes > 0 else None
+
     if specific_date:
         dates_to_fetch = [specific_date]
     else:
@@ -430,21 +439,33 @@ def build(update_only: bool = False, specific_date: date = None):
         log.error("Empty stock universe — aborting")
         return
     log.info("Stock universe: %d codes across %d ranges", len(universe), len(RANGES))
+    if deadline:
+        log.info("Time limit: %.0f minutes", max_minutes)
 
     for di, d in enumerate(dates_to_fetch, 1):
+        if deadline and _time.monotonic() >= deadline:
+            log.info("Time limit reached after %d/%d dates — stopping cleanly",
+                     di - 1, len(dates_to_fetch))
+            break
+
         ds         = d.isoformat()
         year       = d.year
         log.info("── [%d/%d] %s ──", di, len(dates_to_fetch), ds)
 
-        # Load all three range libs for this year
         range_libs = {label: load_range(year, label) for label, _, _ in RANGES}
 
-        already  = _stored_codes_for_date(ds)
-        todo     = [c for c in universe if c not in already]
+        already = _stored_codes_for_date(ds)
+        todo    = [c for c in universe if c not in already]
         log.info("  %d stocks to fetch (%d already stored)", len(todo), len(already))
 
         fetched = 0
+        timed_out = False
         for ci, code in enumerate(todo, 1):
+            if deadline and _time.monotonic() >= deadline:
+                log.info("  Time limit reached mid-date at stock [%d/%d] — saving progress",
+                         ci, len(todo))
+                timed_out = True
+                break
             entry = fetch_stock(code, d)
             if entry:
                 rl = code_range(code)
@@ -459,11 +480,15 @@ def build(update_only: bool = False, specific_date: date = None):
                         save_range(year, label, lib)
                 log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
 
-        # Final save for this date
+        # Final save for this date (complete or partial)
         for label, lib in range_libs.items():
             if lib["by_date"].get(ds):
                 save_range(year, label, lib)
-        log.info("  %s done: %d/%d stocks saved", ds, fetched, len(todo))
+        status = "partial" if timed_out else "done"
+        log.info("  %s %s: %d/%d stocks saved", ds, status, fetched, len(todo))
+
+        if timed_out:
+            break
 
     log.info("Build complete")
 
@@ -638,15 +663,17 @@ def _query(code: str, top: int, ds: str = None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="CCASS SDW Participant Holdings Library")
-    ap.add_argument("--update",  action="store_true",
+    ap.add_argument("--update",       action="store_true",
                     help="Fetch only dates newer than last stored")
-    ap.add_argument("--date",    metavar="YYYY-MM-DD",
+    ap.add_argument("--date",         metavar="YYYY-MM-DD",
                     help="Fetch one specific date")
-    ap.add_argument("--query",   metavar="CODE",
+    ap.add_argument("--max-minutes",  type=float, default=0, metavar="N",
+                    help="Stop after N minutes (0 = no limit). Use 12 for 15-min CI jobs.")
+    ap.add_argument("--query",        metavar="CODE",
                     help="Show participant holdings for a stock code")
-    ap.add_argument("--top",     type=int, default=20,
+    ap.add_argument("--top",          type=int, default=20,
                     help="Number of top participants to show (default 20)")
-    ap.add_argument("--migrate", action="store_true",
+    ap.add_argument("--migrate",      action="store_true",
                     help="Migrate old ccass_sdw_YYYY.json files to range-split format")
     args = ap.parse_args()
 
@@ -656,4 +683,5 @@ if __name__ == "__main__":
         _query(args.query, args.top, args.date)
     else:
         build(update_only=args.update,
-              specific_date=date.fromisoformat(args.date) if args.date else None)
+              specific_date=date.fromisoformat(args.date) if args.date else None,
+              max_minutes=args.max_minutes)
