@@ -21,7 +21,6 @@ on:
           - sc-top10-build   # full Stock Connect top10 build (run multiple times)
           - sdw-build        # full SDW participant holdings backfill (run multiple times)
           - sfc-build        # full SFC backfill from 2018-01-01 (run multiple times)
-          - sfc-reparse      # re-parse all cached SFC Excel files (fixes hkd=0 bug)
           - turnover-build   # backfill turnover library from 2026-02-02 (adds high/low/close)
           - short-build      # backfill short selling library from 2026-03-20
 
@@ -105,7 +104,7 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in ccass_20*.json ccass_sdw_*_20*.json ccass_sdw_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
+          for f in sfc_20*.json ccass_20*.json ccass_sdw_*_20*.json ccass_sdw_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || \
@@ -238,40 +237,6 @@ jobs:
           for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
           git diff --staged --quiet || \
             (git commit -m "SFC weekly: $(date +'%Y-%m-%d')" && git push)
-
-  # ── SFC reparse (manual — repairs hkd=0 in historical JSON from cache) ───────
-  sfc-reparse:
-    name: SFC reparse cached Excel files
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: write
-    if: |
-      github.event_name == 'workflow_dispatch' && inputs.job == 'sfc-reparse'
-
-    steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
-        with: { python-version: '3.11', cache: 'pip' }
-      - run: pip install -r requirements.txt
-      - name: Restore SFC cache
-        uses: actions/cache@v4
-        with:
-          path: sfc_cache
-          key: sfc-cache-${{ github.run_id }}
-          restore-keys: sfc-cache-
-      - name: Reparse all cached Excel files
-        run: python sfc_library.py --reparse
-      - name: Inspect results
-        run: python sfc_library.py --inspect
-      - name: Commit
-        run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
-          git diff --staged --quiet || \
-            (git commit -m "SFC reparse: $(date +'%Y-%m-%d')" && git push)
-
 
   # ── Short selling backfill (manual — fetches missing dates from 2026-03-20) ─
   short-build:
