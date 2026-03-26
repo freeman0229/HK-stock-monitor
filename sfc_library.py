@@ -214,23 +214,37 @@ def _scrape_excel_links() -> list[str]:
 
 # ── Excel download & parse ────────────────────────────────────────────────────
 
+_XLSX_MAGIC = b"PK\x03\x04"   # xlsx files are ZIP archives
+
+def _is_valid_xlsx(data: bytes) -> bool:
+    """Return True only if data starts with the ZIP/xlsx magic bytes."""
+    return len(data) > 4 and data[:4] == _XLSX_MAGIC
+
 def _download_excel(report_date: date) -> bytes | None:
     ds_nodash  = report_date.strftime("%Y%m%d")
     cache_file = os.path.join(CACHE_DIR, f"sfc_{ds_nodash}.xlsx")
 
     if os.path.exists(cache_file):
         with open(cache_file, "rb") as f:
-            return f.read()
+            data = f.read()
+        if _is_valid_xlsx(data):
+            return data
+        # Cached file is corrupt (HTML error page, partial download, etc.) — delete and re-fetch
+        log.warning("Corrupt cache for %s (not a valid xlsx) — deleting and re-downloading",
+                    report_date.isoformat())
+        os.remove(cache_file)
 
     for pat in _EXCEL_URL_PATTERNS:
         url = pat.format(date=ds_nodash)
         try:
             r = requests.get(url, headers=HEADERS, timeout=30)
-            if r.status_code == 200 and len(r.content) > 1000:
+            if r.status_code == 200 and _is_valid_xlsx(r.content):
                 with open(cache_file, "wb") as f:
                     f.write(r.content)
                 log.info("Downloaded %s (%d bytes) from %s", ds_nodash, len(r.content), url)
                 return r.content
+            elif r.status_code == 200 and len(r.content) > 1000:
+                log.debug("Response for %s from %s is not a valid xlsx — skipping", ds_nodash, url)
         except Exception:
             pass
 
@@ -239,7 +253,7 @@ def _download_excel(report_date: date) -> bytes | None:
         if ds_nodash in link or report_date.strftime("%d%m%Y") in link:
             try:
                 r = requests.get(link, headers=HEADERS, timeout=30)
-                if r.status_code == 200 and len(r.content) > 1000:
+                if r.status_code == 200 and _is_valid_xlsx(r.content):
                     with open(cache_file, "wb") as f:
                         f.write(r.content)
                     log.info("Downloaded %s via scraped link %s", ds_nodash, link)
@@ -384,12 +398,13 @@ def reparse(specific_date: date = None):
     If specific_date is given, re-parses only that date.
     Otherwise scans sfc_cache/ for all *.xlsx files — only processes
     dates that actually have a cached file, avoiding a full Friday scan.
+
+    Corrupt files (not valid xlsx/ZIP) are automatically deleted so the
+    next build() run will re-download them from SFC.
     """
     if specific_date:
         dates = [specific_date]
     else:
-        # Derive dates from cache filenames (sfc_YYYYMMDD.xlsx) rather than
-        # iterating all ~420 Fridays since 2018 and skipping missing ones.
         dates = []
         for fname in sorted(os.listdir(CACHE_DIR)):
             m = re.match(r"sfc_(\d{8})\.xlsx$", fname, re.IGNORECASE)
@@ -402,7 +417,7 @@ def reparse(specific_date: date = None):
                 pass
         log.info("Reparse: found %d cached Excel files to process", len(dates))
 
-    reparsed = parse_fail = 0
+    reparsed = parse_fail = purged = 0
     for d in dates:
         cache_file = os.path.join(CACHE_DIR, f"sfc_{d.strftime('%Y%m%d')}.xlsx")
         if not os.path.exists(cache_file):
@@ -410,6 +425,12 @@ def reparse(specific_date: date = None):
             continue
         with open(cache_file, "rb") as f:
             raw = f.read()
+        if not _is_valid_xlsx(raw):
+            log.warning("Reparse: corrupt cache for %s (not a valid xlsx) — deleting; "
+                        "re-run build() to re-download", d.isoformat())
+            os.remove(cache_file)
+            purged += 1
+            continue
         records = _parse_excel(raw, d)
         if not records:
             log.warning("Re-parse failed for %s", d.isoformat())
@@ -422,7 +443,8 @@ def reparse(specific_date: date = None):
         total_hkd = records.get("__total__", {}).get("hkd", 0)
         log.info("Re-parsed %s -> %d stocks  total HKD %.2fbn",
                  d.isoformat(), len(records) - 1, total_hkd / 1e9)
-    log.info("Reparse done: %d reparsed | %d failed", reparsed, parse_fail)
+    log.info("Reparse done: %d reparsed | %d corrupt (purged) | %d failed",
+             reparsed, purged, parse_fail)
 
 def _extract_date_from_url(url: str) -> date | None:
     """Extract report date from an SFC Excel URL filename (YYYYMMDD)."""
@@ -459,7 +481,7 @@ def _fetch_from_scraped_links(stored: set) -> int:
         log.info("New report date on page: %s", report_date.isoformat())
         try:
             r = requests.get(link, headers=HEADERS, timeout=30)
-            if r.status_code != 200 or len(r.content) < 1000:
+            if r.status_code != 200 or not _is_valid_xlsx(r.content):
                 continue
             cache_file = os.path.join(CACHE_DIR, f"sfc_{report_date.strftime('%Y%m%d')}.xlsx")
             with open(cache_file, "wb") as cf:
