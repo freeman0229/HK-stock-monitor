@@ -68,10 +68,16 @@ SFC_PAGE_EN = (
 )
 
 _EXCEL_URL_PATTERNS = [
+    # Modern xlsx (2020-present)
     "https://www.sfc.hk/TC/data/short-position/AggregatedShortPos_{date}.xlsx",
     "https://www.sfc.hk/TC/data/short-position/aggregated/AggregatedShortPos_{date}.xlsx",
     "https://www.sfc.hk/en/data/short-position/AggregatedShortPos_{date}.xlsx",
     "https://www.sfc.hk/en/data/short-position/aggregated/AggregatedShortPos_{date}.xlsx",
+    # Legacy xls (2018–2019, pre-xlsx migration)
+    "https://www.sfc.hk/TC/data/short-position/AggregatedShortPos_{date}.xls",
+    "https://www.sfc.hk/TC/data/short-position/aggregated/AggregatedShortPos_{date}.xls",
+    "https://www.sfc.hk/en/data/short-position/AggregatedShortPos_{date}.xls",
+    "https://www.sfc.hk/en/data/short-position/aggregated/AggregatedShortPos_{date}.xls",
 ]
 
 HEADERS = {
@@ -214,11 +220,12 @@ def _scrape_excel_links() -> list[str]:
 
 # ── Excel download & parse ────────────────────────────────────────────────────
 
-_XLSX_MAGIC = b"PK\x03\x04"   # xlsx files are ZIP archives
+_XLSX_MAGIC = b"PK\x03\x04"        # xlsx / any ZIP-based format
+_XLS_MAGIC  = b"\xD0\xCF\x11\xE0"  # xls / OLE2 Compound Document (pre-2007)
 
-def _is_valid_xlsx(data: bytes) -> bool:
-    """Return True only if data starts with the ZIP/xlsx magic bytes."""
-    return len(data) > 4 and data[:4] == _XLSX_MAGIC
+def _is_valid_excel(data: bytes) -> bool:
+    """Return True if data is a valid xlsx (ZIP) or xls (OLE2) file."""
+    return len(data) > 4 and data[:4] in (_XLSX_MAGIC, _XLS_MAGIC)
 
 def _download_excel(report_date: date) -> bytes | None:
     """
@@ -232,7 +239,7 @@ def _download_excel(report_date: date) -> bytes | None:
     if os.path.exists(cache_file):
         with open(cache_file, "rb") as f:
             data = f.read()
-        if _is_valid_xlsx(data):
+        if _is_valid_excel(data):
             return data
         # Cached file is corrupt (HTML error page, partial download, etc.) — delete and re-fetch
         log.warning("Corrupt cache for %s (not a valid xlsx) — deleting and re-downloading",
@@ -243,7 +250,7 @@ def _download_excel(report_date: date) -> bytes | None:
         url = pat.format(date=ds_nodash)
         try:
             r = requests.get(url, headers=HEADERS, timeout=30)
-            if r.status_code == 200 and _is_valid_xlsx(r.content):
+            if r.status_code == 200 and _is_valid_excel(r.content):
                 with open(cache_file, "wb") as f:
                     f.write(r.content)
                 log.info("Downloaded %s (%d bytes) from %s", ds_nodash, len(r.content), url)
@@ -258,6 +265,7 @@ def _download_excel(report_date: date) -> bytes | None:
 def _parse_excel(data: bytes, report_date: date) -> dict | None:
     """
     Parse SFC aggregated short position Excel file.
+    Supports both .xlsx (openpyxl) and legacy .xls (xlrd) formats.
 
     Expected columns (flexible detection):
       Stock Code | Stock Name | Short Position (Shares) | Short Position (HKD)
@@ -265,19 +273,42 @@ def _parse_excel(data: bytes, report_date: date) -> dict | None:
 
     Returns {code5: {sh, hkd, pct, name}, "__total__": {sh, hkd}} or None.
     """
-    try:
-        import openpyxl
-    except ImportError:
-        log.error("openpyxl not installed — run: pip install openpyxl")
-        return None
+    # ── Load workbook rows ────────────────────────────────────────────────────
+    rows = None
 
-    try:
-        wb   = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        ws   = wb.active
-        rows = list(ws.iter_rows(values_only=True))
-        wb.close()
-    except Exception as e:
-        log.error("Failed to open Excel: %s", e)
+    if data[:4] == _XLSX_MAGIC:
+        # Modern .xlsx format
+        try:
+            import openpyxl
+        except ImportError:
+            log.error("openpyxl not installed — run: pip install openpyxl")
+            return None
+        try:
+            wb   = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            ws   = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            wb.close()
+        except Exception as e:
+            log.error("Failed to open Excel: %s", e)
+            return None
+
+    elif data[:4] == _XLS_MAGIC:
+        # Legacy .xls format (pre-2020 SFC files)
+        try:
+            import xlrd
+        except ImportError:
+            log.error("xlrd not installed — run: pip install 'xlrd>=1.2,<2.0'")
+            return None
+        try:
+            wb   = xlrd.open_workbook(file_contents=data)
+            ws   = wb.sheet_by_index(0)
+            rows = [ws.row_values(i) for i in range(ws.nrows)]
+        except Exception as e:
+            log.error("Failed to open xls: %s", e)
+            return None
+
+    if rows is None:
+        log.error("Unrecognised file format for %s", report_date.isoformat())
         return None
 
     # ── Locate header row ─────────────────────────────────────────────────────
@@ -416,7 +447,7 @@ def reparse(specific_date: date = None):
             continue
         with open(cache_file, "rb") as f:
             raw = f.read()
-        if not _is_valid_xlsx(raw):
+        if not _is_valid_excel(raw):
             log.warning("Reparse: corrupt cache for %s (not a valid xlsx) — deleting; "
                         "re-run build() to re-download", d.isoformat())
             os.remove(cache_file)
@@ -472,7 +503,7 @@ def _fetch_from_scraped_links(stored: set) -> int:
         log.info("New report date on page: %s", report_date.isoformat())
         try:
             r = requests.get(link, headers=HEADERS, timeout=30)
-            if r.status_code != 200 or not _is_valid_xlsx(r.content):
+            if r.status_code != 200 or not _is_valid_excel(r.content):
                 continue
             cache_file = os.path.join(CACHE_DIR, f"sfc_{report_date.strftime('%Y%m%d')}.xlsx")
             with open(cache_file, "wb") as cf:
