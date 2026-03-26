@@ -119,7 +119,7 @@ jobs:
           restore-keys: sfc-cache-
 
       - name: Fetch any new SFC reports
-        run: python sfc_library.py --update
+        run: python sfc_library.py
 
       - name: Save SFC cache
         uses: actions/cache/save@v4
@@ -253,9 +253,15 @@ jobs:
           key: sfc-cache-${{ github.run_id }}
           restore-keys: sfc-cache-
       - name: Update SFC library
-        run: python sfc_library.py --update
+        run: python sfc_library.py
       - name: Re-parse cached Excel files
         run: python sfc_library.py --reparse
+      - name: Save SFC cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
       - name: Commit
         run: |
           git config --global user.name "Bot"
