@@ -270,6 +270,10 @@ def build(update_only: bool = False, fix_names: bool = False):
     start   = last_trading_day(START_DATE)
     trading = all_trading_days(start, end)
 
+    # HKEX CCASS mutualmarket only keeps ~12 months of rolling data.
+    # Dates older than 12 months will always return 0 records — stop retrying them.
+    cutoff_12m = date.today() - timedelta(days=366)
+
     if update_only and stored:
         last = date.fromisoformat(max(stored))
         trading = [d for d in trading if d > last]
@@ -279,13 +283,24 @@ def build(update_only: bool = False, fix_names: bool = False):
         log.info("Build: %d trading days to fetch", len(trading))
 
     if fix_names:
-        # Also include stored dates where name field is missing
+        # Also include stored dates where name field is missing,
+        # but only within HKEX's 12-month retention window
         no_name = _dates_missing_name()
         extra = [d for d in all_trading_days(start, end)
-                 if d.isoformat() in no_name and d not in trading]
+                 if d.isoformat() in no_name
+                 and d not in trading
+                 and d >= cutoff_12m]
+        skipped_old = [d for d in all_trading_days(start, end)
+                       if d.isoformat() in no_name and d < cutoff_12m]
         if extra:
             log.info("fix-names: %d dates need name backfill", len(extra))
             trading = sorted(set(trading) | set(extra))
+        if skipped_old:
+            log.info("fix-names: skipping %d dates older than 12 months "
+                     "(HKEX data expired): %s%s",
+                     len(skipped_old),
+                     ", ".join(d.isoformat() for d in skipped_old[:3]),
+                     "..." if len(skipped_old) > 3 else "")
 
     if not trading:
         log.info("Already up to date")

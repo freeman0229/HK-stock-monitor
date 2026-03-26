@@ -52,10 +52,12 @@ log = logging.getLogger(__name__)
 
 START_DATE  = date(2026, 2, 2)
 SLEEP_SEC   = 1.5
-# A real full-market file has 500–800 stocks with non-zero turnover.
-# 200 is a safe lower bound — anything below means the data is incomplete
-# (e.g. saved by main.py's limited top-60 pass) and needs a full re-fetch.
-MIN_RECORDS = 200
+
+# Full-market threshold (today: qtn_c.asp returns 500–800 stocks)
+MIN_RECORDS_TODAY = 200
+# Archive threshold (d{YYMMDD}c.htm returns only top ~60 stocks by turnover — that is the
+# complete content of the archive file, not a parse failure)
+MIN_RECORDS_ARCHIVE = 30
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
@@ -145,17 +147,19 @@ def save_name_map(nm: dict):
 
 # ── Status check ──────────────────────────────────────────────────────────────
 
-def day_status(ds: str, lib: dict) -> str:
+def day_status(ds: str, lib: dict, is_today: bool = False) -> str:
     """
     'missing'   — date not stored
-    'partial'   — stored but record count < MIN_RECORDS (incomplete, e.g. saved
-                  by main.py's limited top-60 pass — needs full re-fetch)
-    'ok'        — complete (>= MIN_RECORDS stocks)
+    'partial'   — stored but record count below threshold for this source:
+                  today (qtn_c.asp): needs >= MIN_RECORDS_TODAY (200)
+                  archive: needs >= MIN_RECORDS_ARCHIVE (30)
+    'ok'        — complete
     """
     day = lib.get("by_date", {}).get(ds)
     if not day:
         return "missing"
-    if len(day) < MIN_RECORDS:
+    threshold = MIN_RECORDS_TODAY if is_today else MIN_RECORDS_ARCHIVE
+    if len(day) < threshold:
         return "partial"
     return "ok"
 
@@ -336,9 +340,10 @@ def build(start: date, end: date,
     fetch_queue = []
     skipped     = 0
     for d in days_to_check:
-        ds     = d.isoformat()
-        lib    = libs.get(d.year, {"by_date": {}})
-        status = day_status(ds, lib)
+        ds       = d.isoformat()
+        lib      = libs.get(d.year, {"by_date": {}})
+        is_today = (d == date.today())
+        status   = day_status(ds, lib, is_today=is_today)
         if status == "ok" and not force_date:
             skipped += 1
             continue
@@ -370,11 +375,14 @@ def build(start: date, end: date,
             failed += 1
             time.sleep(SLEEP_SEC)
             continue
-        if len(records) < MIN_RECORDS:
+        is_today  = (d == date.today())
+        threshold = MIN_RECORDS_TODAY if is_today else MIN_RECORDS_ARCHIVE
+        if len(records) < threshold:
             log.warning(
-                "  Only %d records for %s (need >= %d) — "
-                "HKEX file not yet published or non-trading day, skipping.",
-                len(records), d, MIN_RECORDS
+                "  Only %d records for %s (need >= %d for %s) — "
+                "skipping.",
+                len(records), d, threshold,
+                "today's full-market file" if is_today else "archive file"
             )
             failed += 1
             time.sleep(SLEEP_SEC)
