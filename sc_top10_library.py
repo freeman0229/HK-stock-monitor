@@ -153,11 +153,11 @@ def all_stored_dates() -> set:
 
 def _to_f(s) -> float:
     try:    return float(str(s).replace(",", "").strip())
-    except: return 0.0
+    except (ValueError, TypeError, AttributeError): return 0.0
 
 def _to_i(s) -> int:
     try:    return int(str(s).replace(",", "").strip())
-    except: return 0
+    except (ValueError, TypeError, AttributeError): return 0
 
 def _clean_name(s: str) -> str:
     return s.strip().rstrip("\u3000").strip()

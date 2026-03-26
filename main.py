@@ -107,7 +107,7 @@ def fmt_code(val) -> str:
 
 def to_num(s) -> float:
     try:    return float(str(s).replace(",", "").strip())
-    except: return 0.0
+    except (ValueError, TypeError, AttributeError): return 0.0
 
 def load_store(path: str) -> dict:
     if os.path.exists(path):

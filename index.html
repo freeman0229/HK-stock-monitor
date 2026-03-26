@@ -1004,12 +1004,6 @@ const fmtM = n => n == null ? '--' : (Math.abs(n) >= 1e8 ? (n/1e8).toFixed(2)+'�
 const fmtPct = n => n == null ? '--' : n.toFixed(2)+'%';
 const sign = n => n > 0 ? '+' : '';
 
-function typeTag(t) {
-  if (!t) return '';
-  const map = {etf:'ETF <span class="tag tag-etf">ETF</span>', stable:'穩健 <span class="tag tag-stab">穩</span>', bluechip:'藍籌 <span class="tag tag-blue">藍</span>', general:'<span class="tag tag-gen">股</span>'};
-  return map[t] || '';
-}
-
 function insightBadge(s) {
   if (!s) return '<span class="na-txt">—</span>';
   // Handle combined signals like "🚨 北水流出｜異常高沽空"
@@ -1022,13 +1016,6 @@ function insightBadge(s) {
   }).join(' ');
 }
 
-function rankChange(s) {
-  if (s.rank_new) return '<span class="rk-new">NEW</span>';
-  if (s.rank_change > 0) return `<span class="rk-up">▲${s.rank_change}</span>`;
-  if (s.rank_change < 0) return `<span class="rk-dn">▼${Math.abs(s.rank_change)}</span>`;
-  return '<span class="na-txt">—</span>';
-}
-
 const fmtConsec = s => {
   const c = s.ccass_consec || 0;
   const p = s.ccass_streak_pct || 0;
@@ -1037,11 +1024,6 @@ const fmtConsec = s => {
   const pStr = (p >= 0 ? '+' : '') + p.toFixed(2) + 'pp';
   return `${dir}${Math.abs(c)} (${pStr})`;
 };
-
-function miniBar(val, max, cls) {
-  const w = Math.min(80, Math.round(Math.abs(val)/max*80));
-  return `<div class="bar-wrap"><div class="mini-bar ${cls}" style="width:${w}px"></div><span>${fmtPct(val)}</span></div>`;
-}
 
 // ── Load data.json ────────────────────────────────────────────────────────
 const CACHE_KEY = 'hk_dashboard_data_v4';   // v3: SB-only filter restored
@@ -2755,8 +2737,6 @@ async function initSdwPanel() {
 
   sdwInitDone = true;
 }
-
-function renderCcass() { /* legacy stub — SDW panel is handled by initSdwPanel() */ }
 
 // ── Cai Channel ──────────────────────────────────────────────────────────
 function caiChannel(data, period, mult) {

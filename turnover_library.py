@@ -67,45 +67,6 @@ def all_stored_dates() -> set:
     return stored
 
 
-# ── Migration from daily_turnover_history.json ────────────────────────────────
-
-def migrate_from_flat(flat_path: str = "daily_turnover_history.json"):
-    """
-    One-time migration: reads the flat daily_turnover_history.json
-    (keys are YYYYMMDD) and writes into year-split turnover_{YYYY}.json.
-    Handles both old format {code: number} and new format {code: {tv, vol}}.
-    """
-    if not os.path.exists(flat_path):
-        log.info("No %s to migrate", flat_path)
-        return
-    with open(flat_path, encoding="utf-8") as f:
-        flat = json.load(f)
-
-    by_year: dict = {}
-    for yyyymmdd, stocks in flat.items():
-        try:
-            ds   = f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
-            year = int(yyyymmdd[:4])
-        except Exception:
-            continue
-        converted = {}
-        for code, val in stocks.items():
-            if isinstance(val, dict):
-                converted[code] = val   # already {"tv": N, "vol": N}
-            else:
-                converted[code] = {"tv": val, "vol": 0}   # old format had no vol
-        by_year.setdefault(year, {})[ds] = converted
-
-    for year, by_date in sorted(by_year.items()):
-        lib = load_year(year)
-        lib["by_date"].update(by_date)
-        save_year(year, lib)
-        log.info("Migrated %d days into turnover_%d.json", len(by_date), year)
-
-    log.info("Migration complete — %d total dates across %d years",
-             sum(len(v) for v in by_year.values()), len(by_year))
-
-
 # ── API for main.py ───────────────────────────────────────────────────────────
 
 def save_day(d: datetime, records: dict):
@@ -262,16 +223,3 @@ def load_recent(n_days: int, before: str) -> dict:
                 return result
     return result
 
-
-# ── CLI: migrate ──────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import argparse
-    ap = argparse.ArgumentParser(description="Turnover Library")
-    ap.add_argument("--migrate", action="store_true",
-                    help="Migrate daily_turnover_history.json to year-split files")
-    args = ap.parse_args()
-    if args.migrate:
-        migrate_from_flat()
-    else:
-        print("Usage: python turnover_library.py --migrate")
