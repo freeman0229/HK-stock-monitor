@@ -666,8 +666,7 @@ def classify_insight(code, stock_type, short_ratio, short_avg,
     if sfc_week_delta <= sfc_dn  and sfc_level_dev < 0:           return "📊 沽空倉位大減"
 
     flow_out   = sb_net < 0 and pct_delta < 0
-    high_short = short_ratio > hi + spike_warn
-    if flow_out and high_short:   return "🚨 北水流出｜異常高沽空"
+    high_short = short_ratio > hi + spike_warn and vol_ratio > 2
     if flow_out:                  return "🚨 北水流出"
     if high_short:                return "🚨 異常高沽空"
 
