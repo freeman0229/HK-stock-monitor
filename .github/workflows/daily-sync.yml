@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: '0 12 * * 1-5'   # 12:00 UTC / 20:00 HKT (Mon–Fri)
     - cron: '0 14 * * 1-5'   # 14:00 UTC / 22:00 HKT (Mon–Fri) — SFC check
+    - cron: '0 14 * * 4,5'   # 14:00 UTC / 22:00 HKT (Thu+Fri)  — SDW weekly
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
   workflow_dispatch:
     inputs:
@@ -20,7 +21,8 @@ on:
           - both-weekly
           - ccass-build      # full CCASS build from 2025-03-23 (run multiple times)
           - sc-top10-build   # full Stock Connect top10 build (run multiple times)
-          - sdw-build        # full SDW participant holdings backfill (run multiple times)
+          - sdw-build        # full SDW backfill — 7 parallel range jobs, 53 dispatches
+          - sdw-weekly       # manual trigger for weekly SDW update
           - sfc-build        # full SFC backfill from 2018-01-01 (run multiple times)
           - turnover-build   # backfill turnover library from 2026-02-02 (adds high/low/close)
           - short-build      # backfill short selling library from 2026-03-20
@@ -62,15 +64,6 @@ jobs:
 
       - name: Update CCASS southbound holdings (today)
         run: python ccass_library.py --update --fix-names
-
-      - name: SDW participant holdings (Thu/Fri weekly)
-        run: |
-          DOW=$(date +%u)   # 1=Mon … 4=Thu, 5=Fri
-          if [ "$DOW" = "4" ] || [ "$DOW" = "5" ]; then
-            python ccass_sdw_library.py --date "$(date +%Y-%m-%d)" --max-minutes 12
-          else
-            echo "Not Thu/Fri (DOW=$DOW) — skipping SDW fetch"
-          fi
 
       - name: Run daily analysis
         env:
@@ -191,41 +184,90 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SC top10 build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SDW full backfill (manual, resume-able) ─────────────────────────────────
+  # ── SDW full backfill — 7 parallel range jobs (manual dispatch) ─────────────
+  # Each dispatch runs all 7 range jobs in parallel, each completing one date's
+  # data for its own range of stock codes. One dispatch ≈ one full Friday of data.
+  # Run 53 times to backfill 2025-03-28 → today. Resumes from last stored date.
   sdw-build:
-    name: SDW participant holdings full backfill (range-split, all SFC stocks)
+    name: SDW backfill — range ${{ matrix.range }}
     runs-on: ubuntu-latest
-    timeout-minutes: 320
+    timeout-minutes: 90
     permissions:
       contents: write
     if: |
       github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-build'
+    strategy:
+      fail-fast: false
+      matrix:
+        range:
+          - 0001_1000
+          - 1001_2000
+          - 2001_3000
+          - 3001_4000
+          - 4001_7000
+          - 7001_9999
+          - 10000plus
 
     steps:
       - uses: actions/checkout@v4.2.2
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - name: Check SFC library files exist (required for stock universe)
+      - name: Check SFC library files exist
         run: |
           if ! ls sfc_20*.json 1>/dev/null 2>&1; then
-            echo "ERROR: No sfc_20*.json files found in repo."
-            echo "Run sfc-build first to build the SFC short position library,"
-            echo "which provides the stock universe for SDW fetching."
+            echo "ERROR: No sfc_20*.json files. Run sfc-build first."
             exit 1
           fi
-          echo "SFC files found: $(ls sfc_20*.json | tr '\n' ' ')"
-      - name: Migrate old single-file SDW data to range-split format (safe to re-run)
+      - name: Migrate old single-file SDW data (safe to re-run)
         run: python ccass_sdw_library.py --migrate
-      - name: Build SDW holdings library (resumes from last stored date, 12-min batches)
-        run: python ccass_sdw_library.py --max-minutes 12
-      - name: Commit progress
+      - name: Build SDW range ${{ matrix.range }} (resumes from last stored date)
+        run: python ccass_sdw_library.py --range ${{ matrix.range }}
+      - name: Commit
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
-          for f in ccass_sdw_*_20*.json ccass_sdw_20*.json; do [ -f "$f" ] && git add "$f"; done
+          for f in ccass_sdw_${{ matrix.range }}_20*.json; do [ -f "$f" ] && git add "$f"; done
           git diff --staged --quiet || \
-            (git commit -m "SDW build: $(date +'%Y-%m-%d %H:%M')" && git push)
+            (git commit -m "SDW ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── SDW weekly — Thu+Fri to capture each new Friday's data ───────────────────
+  # Triggered by the 22:00 HKT Thu/Fri cron. All 7 ranges run in parallel.
+  sdw-weekly:
+    name: SDW weekly — range ${{ matrix.range }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 14 * * 4,5') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-weekly')
+    strategy:
+      fail-fast: false
+      matrix:
+        range:
+          - 0001_1000
+          - 1001_2000
+          - 2001_3000
+          - 3001_4000
+          - 4001_7000
+          - 7001_9999
+          - 10000plus
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Fetch latest Friday SDW data for range ${{ matrix.range }}
+        run: python ccass_sdw_library.py --update --range ${{ matrix.range }}
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in ccass_sdw_${{ matrix.range }}_20*.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --staged --quiet || \
+            (git commit -m "SDW weekly ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')" && git push)
 
   # ── SFC check (also runs daily at 22:00 HKT as part of daily job) ────────────
   sfc-weekly:
