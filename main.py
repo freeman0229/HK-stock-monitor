@@ -226,7 +226,7 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
 
         def _price(s: str) -> float:
             s = s.replace(",", "").strip()
-            return float(s) if s not in ("NA", "--", "", "N/A") else 0.0
+            return float(s) if s not in ("NA", "--", "-", "", "N/A") else 0.0
 
         best     = {}
         name_map = {}

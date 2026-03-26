@@ -224,7 +224,7 @@ _PAT = re.compile(
 
 def _to_float(s: str) -> float:
     s = s.replace(",", "").strip()
-    return float(s) if s not in ("NA", "--", "", "N/A") else 0.0
+    return float(s) if s not in ("NA", "--", "-", "", "N/A") else 0.0
 
 def _is_valid_cjk(s: str) -> bool:
     if not s:
