@@ -34,9 +34,9 @@ Old compact schema (written by earlier versions — handled transparently):
   {n, s, v, p}  →  {name, sh, hkd, pct}
 
 Usage:
-  python sfc_library.py                  # full backfill from START_DATE
-  python sfc_library.py --update         # only fetch missing dates
+  python sfc_library.py                  # full backfill / update (page scrape + direct URLs)
   python sfc_library.py --date 2026-03-14
+  python sfc_library.py --reparse
   python sfc_library.py --query 00700
 
 API:
@@ -379,15 +379,34 @@ def _parse_excel(data: bytes, report_date: date) -> dict | None:
 
 def reparse(specific_date: date = None):
     """
-    Re-parse all (or one) cached Excel files and overwrite JSON records.
-    Also migrates any old compact-schema records to the new schema.
+    Re-parse cached Excel files and overwrite JSON records.
+
+    If specific_date is given, re-parses only that date.
+    Otherwise scans sfc_cache/ for all *.xlsx files — only processes
+    dates that actually have a cached file, avoiding a full Friday scan.
     """
-    dates = [specific_date] if specific_date else all_report_fridays()
-    reparsed = no_cache = parse_fail = 0
+    if specific_date:
+        dates = [specific_date]
+    else:
+        # Derive dates from cache filenames (sfc_YYYYMMDD.xlsx) rather than
+        # iterating all ~420 Fridays since 2018 and skipping missing ones.
+        dates = []
+        for fname in sorted(os.listdir(CACHE_DIR)):
+            m = re.match(r"sfc_(\d{8})\.xlsx$", fname, re.IGNORECASE)
+            if not m:
+                continue
+            ds = m.group(1)
+            try:
+                dates.append(date(int(ds[:4]), int(ds[4:6]), int(ds[6:8])))
+            except ValueError:
+                pass
+        log.info("Reparse: found %d cached Excel files to process", len(dates))
+
+    reparsed = parse_fail = 0
     for d in dates:
         cache_file = os.path.join(CACHE_DIR, f"sfc_{d.strftime('%Y%m%d')}.xlsx")
         if not os.path.exists(cache_file):
-            no_cache += 1
+            log.warning("Reparse: cache file missing for %s — skipping", d.isoformat())
             continue
         with open(cache_file, "rb") as f:
             raw = f.read()
@@ -403,8 +422,7 @@ def reparse(specific_date: date = None):
         total_hkd = records.get("__total__", {}).get("hkd", 0)
         log.info("Re-parsed %s -> %d stocks  total HKD %.2fbn",
                  d.isoformat(), len(records) - 1, total_hkd / 1e9)
-    log.info("Reparse done: %d reparsed | %d no cache | %d failed",
-             reparsed, no_cache, parse_fail)
+    log.info("Reparse done: %d reparsed | %d failed", reparsed, parse_fail)
 
 def _extract_date_from_url(url: str) -> date | None:
     """Extract report date from an SFC Excel URL filename (YYYYMMDD)."""
@@ -466,30 +484,47 @@ def build(specific_date: date = None):
     """
     Build or update the SFC library.
 
-    Step 1: Scrape the SFC page for new links — catches any report
-            published on any day without needing to know the date.
-    Step 2: Try direct URL patterns for every Friday not yet stored —
-            fills historical gaps where the page no longer lists the link
-            but the direct URL still works.
+    If specific_date is given, attempts a direct URL download for that date only —
+    no page scrape needed since the target is known.
+
+    Otherwise:
+      Step 1: Scrape the SFC page for new links — catches reports published
+              on any day without needing to know the exact date.
+      Step 2: Try direct URL patterns for every Friday not yet stored —
+              fills historical gaps where the page no longer lists the link
+              but the direct URL still works.
     """
     stored = all_stored_dates()
 
-    # Step 1: page scrape (most reliable for recent data)
+    if specific_date:
+        # Targeted fetch — skip page scrape, go straight to direct URL
+        raw = _download_excel(specific_date)
+        if not raw:
+            log.warning("No Excel found for %s", specific_date.isoformat())
+            return
+        records = _parse_excel(raw, specific_date)
+        if not records:
+            log.warning("Parse failed for %s", specific_date.isoformat())
+            return
+        lib = load_year(specific_date.year)
+        lib["by_date"][specific_date.isoformat()] = records
+        save_year(specific_date.year, lib)
+        log.info("Stored %s (%d stocks)", specific_date.isoformat(), len(records) - 1)
+        return
+
+    # Step 1: page scrape (most reliable for recent / unscheduled reports)
     new_from_page = _fetch_from_scraped_links(stored)
     if new_from_page:
         stored = all_stored_dates()  # refresh after new saves
 
-    if specific_date:
-        dates_to_try = [specific_date]
-    else:
-        dates_to_try = [d for d in all_report_dates() if d.isoformat() not in stored]
-        log.info("Build: %d dates to try via direct URL", len(dates_to_try))
+    # Step 2: direct URL patterns for all missing Fridays
+    dates_to_try = [d for d in all_report_dates() if d.isoformat() not in stored]
+    log.info("Build: %d Fridays to try via direct URL", len(dates_to_try))
 
     if not dates_to_try:
         log.info("Already up to date.")
         return
 
-    # Step 2: direct URL patterns (fills gaps not covered by page scrape)
     fetched = 0
     for d in dates_to_try:
         raw = _download_excel(d)
@@ -586,7 +621,6 @@ def _query(code: str, top: int):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--update",  action="store_true", help="Fetch missing dates (same as default build)")
     ap.add_argument("--reparse", action="store_true",
                     help="Re-parse cached Excel files (fixes col detection + schema)")
     ap.add_argument("--date",    metavar="YYYY-MM-DD", help="Target one specific date")
