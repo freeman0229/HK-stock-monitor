@@ -60,9 +60,6 @@ jobs:
       - name: Update Stock Connect top10 (today + repair incomplete history)
         run: python sc_top10_library.py --update
 
-      - name: Refresh CCASS participant list (weekly)
-        run: python ccass_participant_library.py --update
-
       - name: Update CCASS southbound holdings (today)
         run: python ccass_library.py --update --fix-names
 
