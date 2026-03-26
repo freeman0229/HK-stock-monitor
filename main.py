@@ -171,15 +171,25 @@ EMPTY_QUOTE = pd.DataFrame(columns=["stock_code", "name", "name_chi",
 
 def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
     """
-    Parses HKEX d{YYMMDD}c.htm (Big5, served as ISO-8859-1).
+    Fetches HKEX full-market daily quotation (Pattern B, Big5).
+
+    Today  : https://www.hkex.com.hk/chi/stat/smstat/dayquot/qtn_c.asp
+             (live full-market file, 500–800 stocks)
+    Archive: https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
 
     Pattern B — 12 columns:
-      CODE  NAME_ENG  CHI_NAME  CURR  PRV  BID  ASK  HIGH  LOW  CLOSE  SHARES  TURNOVER
-      g1    g2        g3              skip×3       g4   g5   g6   g7     g8
+      代號  NAME OF STOCK  股票名稱  CURR  PRV  BID  ASK  HIGH  LOW  收市  成交股數  成交金額
+      g1    g2             g3              skip×3       g4   g5   g6   g7       g8
     """
     date     = date or datetime.now()
     date_str = date.strftime("%y%m%d")
-    url      = f"https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{date_str}c.htm"
+    is_today = date.date() == datetime.now().date()
+
+    # Use live full-market file for today; archive for historical dates
+    if is_today:
+        url = "https://www.hkex.com.hk/chi/stat/smstat/dayquot/qtn_c.asp"
+    else:
+        url = f"https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{date_str}c.htm"
 
     try:
         resp = requests.get(url, headers=HEADERS, timeout=30)
@@ -197,20 +207,20 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
         pre  = BeautifulSoup(text, "html.parser").find("pre")
         body = pre.get_text() if pre else text
 
-        # Pattern B: CODE NAME CHI CURR PRV BID ASK HIGH LOW CLOSE SHARES TURNOVER
+        # Pattern B: 代號 NAME 股票名稱 CURR PRV BID ASK HIGH LOW 收市 成交股數 成交金額
         PAT = re.compile(
-            r'^[\*\s]{0,5}(\d{1,5})\s+'              # g1: code
-            r'(\S[^\u3000\n]{1,22}?)\s{2,}'          # g2: English name
-            r'(.{1,30}?)\s*'                          # g3: Chinese name
+            r'^[\*\s]{0,5}(\d{1,5})\s+'              # g1: 代號
+            r'(\S[^\u3000\n]{1,22}?)\s{2,}'          # g2: NAME OF STOCK (English)
+            r'(.{1,30}?)\s*'                          # g3: 股票名稱 (Chinese)
             r'(?:HKD|USD|CNY|EUR|GBP)\s+'            # currency (skip)
             r'[\d,.NA-]+\s+'                          # PRV   (skip)
             r'[\d,.NA-]+\s+'                          # BID   (skip)
             r'[\d,.NA-]+\s+'                          # ASK   (skip)
             r'([\d,.NA-]+)\s+'                        # g4: HIGH
             r'([\d,.NA-]+)\s+'                        # g5: LOW
-            r'([\d,.NA-]+)\s+'                        # g6: CLOSE
-            r'([\d,]{5,})\s+'                         # g7: shares (volume)
-            r'([\d,]{8,})\s*$'                        # g8: HKD turnover
+            r'([\d,.NA-]+)\s+'                        # g6: 收市 (close)
+            r'([\d,]{5,})\s+'                         # g7: 成交股數 (volume)
+            r'([\d,]{8,})\s*$'                        # g8: 成交金額 (turnover HKD)
         )
 
         def _price(s: str) -> float:
@@ -758,7 +768,7 @@ def run_analysis():
         } for r in df_ccass.itertuples()})
 
     # ── 4. Full stock universe ────────────────────────────────────────────────
-    # Union of: short sell (800+), CCASS (917), quotation (60)
+    # Union of: short sell (800+), CCASS (917), quotation (500+)
     # Ranked by: turnover from quotation where available;
     #            short_turnover (st) as proxy for the rest
     stock_universe = (set(short_vol_map.keys()) |

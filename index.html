@@ -1434,7 +1434,7 @@ function renderBshui() {
     document.getElementById('sb-consec').textContent = '';
     document.getElementById('sb-consec-name').textContent = '';
     document.getElementById('body-bshui').innerHTML =
-      '<tr><td colspan="9"><div class="loading-box" style="padding:30px">📡 北水數據尚未發布，通常於每交易日 20:00 HKT 後更新</div></td></tr>';
+      '<tr><td colspan="10"><div class="loading-box" style="padding:30px">📡 北水數據尚未發布，通常於每交易日 20:00 HKT 後更新</div></td></tr>';
     // Keep last cached chart visible if available
     if (lastChartData.length) setTimeout(() => drawSbChart(lastChartData), 50);
     return;
