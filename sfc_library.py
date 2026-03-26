@@ -462,15 +462,15 @@ def _fetch_from_scraped_links(stored: set) -> int:
     return fetched
 
 
-def build(update_only: bool = False, specific_date: date = None):
+def build(specific_date: date = None):
     """
     Build or update the SFC library.
 
     Step 1: Scrape the SFC page for new links — catches any report
             published on any day without needing to know the date.
-    Step 2: Try direct URL patterns for every calendar day not yet
-            stored — fills historical gaps where the page no longer
-            lists the link but the direct URL still works.
+    Step 2: Try direct URL patterns for every Friday not yet stored —
+            fills historical gaps where the page no longer lists the link
+            but the direct URL still works.
     """
     stored = all_stored_dates()
 
@@ -483,8 +483,7 @@ def build(update_only: bool = False, specific_date: date = None):
         dates_to_try = [specific_date]
     else:
         dates_to_try = [d for d in all_report_dates() if d.isoformat() not in stored]
-        log.info("%s: %d calendar days to try via direct URL",
-                 "Update" if update_only else "Build", len(dates_to_try))
+        log.info("Build: %d dates to try via direct URL", len(dates_to_try))
 
     if not dates_to_try:
         log.info("Already up to date.")
@@ -587,11 +586,9 @@ def _query(code: str, top: int):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--update",  action="store_true", help="Only fetch missing dates")
+    ap.add_argument("--update",  action="store_true", help="Fetch missing dates (same as default build)")
     ap.add_argument("--reparse", action="store_true",
-                    help="Re-parse cached Excel files (fixes col detection + schema bugs)")
-    ap.add_argument("--inspect", action="store_true",
-                    help="Print stored totals — verify hkd != 0")
+                    help="Re-parse cached Excel files (fixes col detection + schema)")
     ap.add_argument("--date",    metavar="YYYY-MM-DD", help="Target one specific date")
     ap.add_argument("--query",   metavar="CODE",       help="Show stored position history")
     ap.add_argument("--top",     type=int, default=20)
@@ -601,23 +598,5 @@ if __name__ == "__main__":
         _query(args.query, args.top)
     elif args.reparse:
         reparse(specific_date=date.fromisoformat(args.date) if args.date else None)
-    elif args.inspect:
-        for year in range(START_DATE.year, date.today().year + 1):
-            p = lib_path(year)
-            if not os.path.exists(p):
-                continue
-            with open(p, encoding="utf-8") as f:
-                by_date = json.load(f).get("by_date", {})
-            print(f"\n-- sfc_{year}.json ({len(by_date)} dates) --")
-            print(f"{'Date':<12} {'Total HKD':>20} {'Total Sh':>16} {'Stocks':>7}")
-            print("-" * 60)
-            for ds in sorted(by_date.keys()):
-                t      = _normalise_total(by_date[ds].get("__total__"))
-                stocks = len([k for k in by_date[ds] if k != "__total__"])
-                hkd    = t.get("hkd", 0)
-                sh     = t.get("sh",  0)
-                flag   = "  <- HKD=0 !" if hkd == 0 else ""
-                print(f"{ds:<12} {hkd:>20,.0f} {sh:>16,} {stocks:>7}{flag}")
     else:
-        build(update_only=args.update,
-              specific_date=date.fromisoformat(args.date) if args.date else None)
+        build(specific_date=date.fromisoformat(args.date) if args.date else None)
