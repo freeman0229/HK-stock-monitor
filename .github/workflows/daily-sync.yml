@@ -14,6 +14,7 @@ on:
         type: choice
         options:
           - daily
+          - sfc-check        # SFC nightly fetch (22:00 HKT)
           - sfc-weekly
           - di-weekly
           - both-weekly
@@ -74,23 +75,6 @@ jobs:
             echo "Not Thu/Fri (DOW=$DOW) — skipping SDW fetch"
           fi
 
-      - name: Restore SFC cache (needed for reparse)
-        uses: actions/cache@v4
-        with:
-          path: sfc_cache
-          key: sfc-cache-${{ github.run_id }}
-          restore-keys: sfc-cache-
-
-      - name: Check SFC for new reports (any day)
-        run: python sfc_library.py --update
-
-      - name: Save SFC cache (persist any newly downloaded Excel files)
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: sfc_cache
-          key: sfc-cache-${{ github.run_id }}
-
       - name: Run daily analysis
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -104,11 +88,53 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in sfc_20*.json ccass_20*.json ccass_sdw_*_20*.json ccass_sdw_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
+          for f in ccass_20*.json ccass_sdw_*_20*.json ccass_sdw_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || \
             (git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── SFC nightly check (Mon–Fri 22:00 HKT) ────────────────────────────────────
+  sfc-check:
+    name: SFC nightly check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 14 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'sfc-check')
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+
+      - name: Restore SFC cache
+        uses: actions/cache@v4
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
+          restore-keys: sfc-cache-
+
+      - name: Fetch any new SFC reports
+        run: python sfc_library.py --update
+
+      - name: Save SFC cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
+
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --staged --quiet || \
+            (git commit -m "SFC check: $(date +'%Y-%m-%d %H:%M')" && git push)
 
   # ── CCASS full build (manual, resume-able) ───────────────────────────────────
   ccass-build:
