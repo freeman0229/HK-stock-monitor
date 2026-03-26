@@ -145,10 +145,6 @@ def all_fetch_dates(up_to: date = None) -> list[date]:
 def lib_path(year: int, range_label: str) -> str:
     return f"ccass_sdw_{range_label}_{year}.json"
 
-def all_lib_paths(year: int) -> dict[str, str]:
-    """Return {range_label: path} for all three range files for a given year."""
-    return {label: lib_path(year, label) for label, _, _ in RANGES}
-
 def load_range(year: int, range_label: str) -> dict:
     p = lib_path(year, range_label)
     if os.path.exists(p):
@@ -413,8 +409,7 @@ def build(update_only: bool = False, specific_date: date = None,
 
     max_minutes — stop gracefully after N minutes (0 = no limit).
     """
-    import time as _time
-    deadline = (_time.monotonic() + max_minutes * 60) if max_minutes > 0 else None
+    deadline = (time.monotonic() + max_minutes * 60) if max_minutes > 0 else None
 
     # Resolve which ranges this job owns
     if range_label:
@@ -431,31 +426,44 @@ def build(update_only: bool = False, specific_date: date = None,
         dates_to_fetch = [specific_date]
     else:
         all_dates = all_fetch_dates()
-        # A date is complete for this job when all stocks in owned_ranges are stored
-        def _date_complete(ds):
-            stored = _stored_codes_for_date(ds)
-            year   = int(ds[:4])
-            for lbl, lo, hi in owned_ranges:
-                p = lib_path(year, lbl)
+
+        if update_only:
+            # Only fetch dates newer than the most recently stored date
+            stored_all = all_stored_dates()
+            last = date.fromisoformat(max(stored_all)) if stored_all else None
+            all_dates = [d for d in all_dates if last is None or d > last]
+            log.info("Update mode: %d new dates after %s",
+                     len(all_dates), last.isoformat() if last else "none")
+
+        # Determine which dates still need fetching.
+        # For a range-specific run: a date is incomplete if fewer than 95% of
+        # that range's universe codes are stored in its range file.
+        # For a full run: use the global stored-dates set (faster).
+        if range_label:
+            # Pre-compute universe for this range once (not per date)
+            universe_all = get_sfc_universe()
+            owned_lo, owned_hi = owned_ranges[0][1], owned_ranges[0][2]
+            range_universe = [c for c in universe_all if owned_lo <= int(c) <= owned_hi]
+            threshold = max(1, int(len(range_universe) * 0.95))
+
+            def _range_complete(ds):
+                year = int(ds[:4])
+                lbl  = owned_ranges[0][0]
+                p    = lib_path(year, lbl)
                 if not os.path.exists(p):
                     return False
                 with open(p, encoding="utf-8") as f:
                     day = json.load(f).get("by_date", {}).get(ds, {})
-                universe_in_range = get_sfc_universe()
-                range_codes = [c for c in universe_in_range if lo <= int(c) <= hi]
-                if len(day) < len(range_codes) * 0.95:  # 95% threshold
-                    return False
-            return True
+                return len(day) >= threshold
 
-        stored_all = all_stored_dates()
-        # For range-specific runs check per-range completion; otherwise use global stored
-        if range_label:
-            dates_to_fetch = [d for d in all_dates if not _date_complete(d.isoformat())]
+            dates_to_fetch = [d for d in all_dates if not _range_complete(d.isoformat())]
         else:
+            stored_all = all_stored_dates()
             dates_to_fetch = [d for d in all_dates if d.isoformat() not in stored_all]
+
         log.info("%s: %d dates to fetch (%d in schedule)",
                  "Update" if update_only else "Build",
-                 len(dates_to_fetch), len(all_dates))
+                 len(dates_to_fetch), len(all_fetch_dates()))
 
     if not dates_to_fetch:
         log.info("Already up to date")
@@ -479,7 +487,7 @@ def build(update_only: bool = False, specific_date: date = None,
         log.info("Time limit: %.0f minutes", max_minutes)
 
     for di, d in enumerate(dates_to_fetch, 1):
-        if deadline and _time.monotonic() >= deadline:
+        if deadline and time.monotonic() >= deadline:
             log.info("Time limit reached after %d/%d dates — stopping cleanly",
                      di - 1, len(dates_to_fetch))
             break
@@ -491,14 +499,20 @@ def build(update_only: bool = False, specific_date: date = None,
         # Only load range files this job owns
         range_libs = {label: load_range(year, label) for label, _, _ in owned_ranges}
 
-        already = _stored_codes_for_date(ds)
-        todo    = [c for c in universe if c not in already]
+        # For range-specific runs read already-stored codes from the owned range file only
+        # (avoids scanning all 7 range files when only 1 is relevant)
+        if range_label:
+            lbl = owned_ranges[0][0]
+            already = set(range_libs[lbl]["by_date"].get(ds, {}).keys())
+        else:
+            already = _stored_codes_for_date(ds)
+        todo = [c for c in universe if c not in already]
         log.info("  %d stocks to fetch (%d already stored)", len(todo), len(already))
 
         fetched = 0
         timed_out = False
         for ci, code in enumerate(todo, 1):
-            if deadline and _time.monotonic() >= deadline:
+            if deadline and time.monotonic() >= deadline:
                 log.info("  Time limit reached mid-date at stock [%d/%d] — saving progress",
                          ci, len(todo))
                 timed_out = True
@@ -714,6 +728,8 @@ if __name__ == "__main__":
     ap.add_argument("--range",        metavar="LABEL",
                     help="Only fetch stocks in this range (e.g. 0001_1000). "
                          "Used by parallel matrix jobs — each job owns one range.")
+    ap.add_argument("--migrate",      action="store_true",
+                    help="Migrate old ccass_sdw_YYYY.json files to range-split format")
     args = ap.parse_args()
 
     if args.migrate:
