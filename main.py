@@ -458,7 +458,7 @@ def get_short_avg_ratio(stock_codes: list, days: int, daily_tv: dict,
     for c in stock_codes:
         v = get_short_ratio_history(c, days, before, daily_tv)
         rows.append({"stock_code": c,
-                     "short_avg5": round(sum(v) / len(v), 2) if v else 0.0})
+                     "short_avg": round(sum(v) / len(v), 2) if v else 0.0})
     return pd.DataFrame(rows)
 
 # ── Source 3: CCASS southbound ────────────────────────────────────────────────
@@ -633,23 +633,23 @@ THRESHOLDS = {
     "general":  (10.0, 25.0, 15.0, 0.60),
 }
 
-def classify_insight(code, stock_type, short_ratio, short_avg5, short_ratio_t2,
-                     turnover, tv_avg5, turnover_t2,
+def classify_insight(code, stock_type, short_ratio, short_avg,
+                     turnover, tv_avg5,
                      ccass_delta, ccass_consec,
                      pct_delta=0.0,
                      days_to_cover=0.0, vol_ratio=0.0,
-                     tv_ratio30=0.0, pct_dev30=0.0,
+                     tv_ratio=0.0, pct_dev=0.0,
                      sb_net=0) -> str | None:
     lo, hi, spike_warn, cover_drop = THRESHOLDS.get(stock_type, THRESHOLDS["general"])
     r_today = turnover / tv_avg5 if tv_avg5 > 0 else 1.0
 
     if days_to_cover > 5 and vol_ratio > 2:                      return "🔥 挾倉風險"
     if (vol_ratio  >  2.5
-            and tv_ratio30 >  2.0
-            and pct_dev30  >= 0.5):                               return "🐉 異常亢奮"
+            and tv_ratio >  2.0
+            and pct_dev  >= 0.5):                                 return "🐉 異常亢奮"
     if (1.8 <= vol_ratio  <= 2.5
-            and 1.5 <= tv_ratio30 <= 2.0
-            and 0.2 <= pct_dev30  <= 0.5):                        return "🏦 北水增持"
+            and 1.5 <= tv_ratio <= 2.0
+            and 0.2 <= pct_dev  <= 0.5):                          return "🏦 北水增持"
 
     flow_out   = sb_net < 0 and pct_delta < 0
     high_short = short_ratio > hi + spike_warn
@@ -657,7 +657,7 @@ def classify_insight(code, stock_type, short_ratio, short_avg5, short_ratio_t2,
     if flow_out:                  return "🚨 北水流出"
     if high_short:                return "🚨 異常高沽空"
 
-    if (short_avg5 > lo and short_ratio < short_avg5 * cover_drop
+    if (short_avg > lo and short_ratio < short_avg * cover_drop
             and r_today > 1.30):                                  return "📉 空頭平倉"
     return None
 
@@ -798,7 +798,7 @@ def run_analysis():
 
     # Short average over full universe
     _sa_df        = get_short_avg_ratio(stock_codes, 10, _tv_recent, today_ds)
-    short_avg_map = dict(zip(_sa_df["stock_code"], _sa_df["short_avg5"]))
+    short_avg_map = dict(zip(_sa_df["stock_code"], _sa_df["short_avg"]))
 
     # ── 6. SFC cumulative short positions ────────────────────────────────────
     sfc_map = {}
@@ -927,7 +927,6 @@ def run_analysis():
 
     # ── 10. Build results (full universe) ─────────────────────────────────────
     results = []
-    _t2_before = (t2_date + timedelta(days=1)).strftime("%Y-%m-%d")
 
     for i, code in enumerate(stock_codes, 1):
         q            = quote_map.get(code, {})
@@ -936,7 +935,7 @@ def run_analysis():
         name_eng, name_chi = _get_names(code)
 
         short_ratio  = short_map.get(code, 0.0)
-        short_avg5   = short_avg_map.get(code, 0.0)
+        short_avg   = short_avg_map.get(code, 0.0)
         short_vol_today = short_vol_map.get(code, 0)
 
         ccass_delta      = ccass_delta_map.get(code, 0)
@@ -946,41 +945,34 @@ def run_analysis():
         pct_delta        = pct_delta_map.get(code, 0.0)
         tv_avg5          = _turnover_avg(code, today_ds, 5)
 
-        vol_hist30  = get_vol_history(code, 30, today_ds)
-        avg_vol30   = sum(vol_hist30) / len(vol_hist30) if vol_hist30 else 0
-        days_to_cover = round(short_vol_today / avg_vol30, 2) if avg_vol30 > 0 else 0.0
-        vol_ratio     = round(today_vol / avg_vol30, 2)       if avg_vol30 > 0 else 0.0
+        vol_hist24  = get_vol_history(code, 24, today_ds)
+        avg_vol24   = sum(vol_hist24) / len(vol_hist24) if vol_hist24 else 0
+        days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
+        vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
 
-        tv_hist30  = get_tv_history(code, 30, today_ds)
-        tv_avg30   = sum(tv_hist30) / len(tv_hist30) if tv_hist30 else 0.0
-        tv_ratio30 = round(turnover / tv_avg30, 2)  if tv_avg30 > 0 else 0.0
-        pct_hist30 = get_pct_history(code, 30, today_ds)
-        pct_avg30_lvl = round(sum(pct_hist30) / len(pct_hist30), 4) if pct_hist30 else 0.0
-        pct_dev30  = round(pct_listed - pct_avg30_lvl, 4) if pct_avg30_lvl > 0 else 0.0
+        tv_hist24  = get_tv_history(code, 24, today_ds)
+        tv_avg24   = sum(tv_hist24) / len(tv_hist24) if tv_hist24 else 0.0
+        tv_ratio   = round(turnover / tv_avg24, 2)  if tv_avg24 > 0 else 0.0
+        pct_hist24 = get_pct_history(code, 24, today_ds)
+        pct_avg24_lvl = round(sum(pct_hist24) / len(pct_hist24), 4) if pct_hist24 else 0.0
+        pct_dev    = round(pct_listed - pct_avg24_lvl, 4) if pct_avg24_lvl > 0 else 0.0
 
-        tv_t2_raw      = get_tv(code, t2_key)
-        _t2_short      = get_short_history(code, 1, _t2_before)
-        short_sv_t2    = _t2_short[0]["sv"] if _t2_short else 0
-        vol_t2_raw     = _tv_recent.get(t2_key, {}).get(code, {})
-        vol_t2         = vol_t2_raw.get("vol", 0) if isinstance(vol_t2_raw, dict) else 0
-        short_ratio_t2 = round(short_sv_t2 / vol_t2 * 100, 2) if vol_t2 > 0 else short_ratio
-        turnover_t2    = tv_t2_raw if tv_t2_raw > 0 else turnover
 
         stock_type = classify_stock(code, name_eng)
         _, ind_zh  = get_industry(code)
 
         sb          = sb_map.get(code, {})
         # Signals need price history — suppress for stocks with no turnover history
-        has_history = len(tv_hist30) >= 5 and len(vol_hist30) >= 5
+        has_history = len(tv_hist24) >= 5 and len(vol_hist24) >= 5
         insight = classify_insight(
-            code, stock_type, short_ratio, short_avg5, short_ratio_t2,
-            turnover, tv_avg5, turnover_t2,
+            code, stock_type, short_ratio, short_avg,
+            turnover, tv_avg5,
             int(ccass_delta), int(ccass_consec),
             pct_delta=pct_delta,
             days_to_cover=days_to_cover if has_history else 0.0,
             vol_ratio=vol_ratio         if has_history else 0.0,
-            tv_ratio30=tv_ratio30       if has_history else 0.0,
-            pct_dev30=pct_dev30         if has_history else 0.0,
+            tv_ratio=tv_ratio           if has_history else 0.0,
+            pct_dev=pct_dev             if has_history else 0.0,
             sb_net=sb.get("sb_net", 0)
         )
 
@@ -1005,8 +997,7 @@ def run_analysis():
             "sb_net_prev": _sb_prev_final,
             "sb_consec":   _sb_consec_final,
             "short_ratio":    round(short_ratio, 2),
-            "short_avg5":     round(short_avg5, 2),
-            "short_ratio_t2": round(short_ratio_t2, 2),
+            "short_avg":      round(short_avg, 2),
             "short_vol":      int(short_vol_today),
             "short_st":       int(short_st_map.get(code, 0)),
             "days_to_cover":  days_to_cover,
@@ -1014,8 +1005,8 @@ def run_analysis():
             "sfc_sh":   sfc_map.get(code, {}).get("sfc_sh",  0),
             "sfc_hkd":  sfc_map.get(code, {}).get("sfc_hkd", 0.0),
             "sfc_pct":  sfc_map.get(code, {}).get("sfc_pct", 0.0),
-            "tv_ratio30": tv_ratio30,
-            "pct_dev30":  round(pct_dev30, 4),
+            "tv_ratio":  tv_ratio,
+            "pct_dev":   round(pct_dev, 4),
             "ccass_trade_date":  t2_date.strftime("%Y-%m-%d"),
             "ccass_delta":       int(ccass_delta),
             "ccass_consec":      int(ccass_consec),

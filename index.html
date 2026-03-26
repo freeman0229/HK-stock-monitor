@@ -1491,7 +1491,10 @@ function renderBshui() {
     // 北水佔比 = (北水買入及賣出 from HKEX SC) / 全市場成交額 (from daily quotation)
     // HKEX counts buy + sell legs separately, so ratio can legitimately exceed 100%
     // for heavily SC-traded stocks like Tencent
-    const sbPct = s.turnover > 0 ? (s.sb_total / s.turnover * 100) : 0;
+    // sb_total = southbound buy+sell in HKD; turnover = full-market HKD from dayquot
+    // Only valid when full-market turnover exceeds southbound combined flow
+    const sbPct = (s.turnover > 0 && s.turnover > s.sb_total)
+      ? (s.sb_total / s.turnover * 100) : 0;
     return `<tr>
       <td class="rank">${i+1}</td>
       <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
