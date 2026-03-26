@@ -1009,8 +1009,8 @@ function insightBadge(s) {
   // Handle combined signals like "🚨 北水流出｜異常高沽空"
   return s.split('｜').map(part => {
     part = part.trim();
-    const up = ['🔥','🐉','⭐','🎯'].some(e => part.startsWith(e));
-    const dn = ['⚠','🚨','📉','❄'].some(e => part.startsWith(e));
+    const up = ['🔥','🐉','⭐','🎯','📊'].some(e => part.startsWith(e));
+    const dn = ['⚠️','⚠','🚨','📉','❄'].some(e => part.startsWith(e));
     const cls = up ? 'ins-buy' : (dn ? 'ins-sell' : 'ins-warn');
     return `<span class="insight ${cls}">${part}</span>`;
   }).join(' ');
@@ -1127,7 +1127,7 @@ function generateMockData() {
     const sbn = i < SB_TOP ? (i % 3 === 2 ? -flowMag : flowMag) : 0;
     const cd  = Math.round((Math.random()-0.4)*5e6);
     const cc  = Math.round(Math.random()*8)-2;
-    const insightPool = ['🔥 挾倉風險', '🐉 異常亢奮', '🏦 北水增持', '🚨 北水流出', '🚨 異常高沽空', '📉 空頭平倉', '', '', ''];
+    const insightPool = ['🔥 挾倉風險', '🐉 異常亢奮', '🏦 北水增持', '🚨 北水流出', '🚨 異常高沽空', '📉 空頭平倉', '⚠️ 沽空倉位急增', '📊 沽空倉位大減', '', '', ''];
     // Mock exchange ranks: dual-listed stocks (i < 8) appear on both; last 2 are single-exchange
     // Realistic mock: net buy → buy > sell; net sell → sell > buy
     const absMag = Math.abs(sbn);

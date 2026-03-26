@@ -18,7 +18,8 @@ from sc_top10_library import (get_top10, get_top10_history,
                                load_year as sc_load_year,
                                lib_path as sc_lib_path)
 try:
-    from sfc_library import get_short_position as sfc_get_position, all_report_fridays as sfc_fridays
+    from sfc_library import get_short_position as sfc_get_position, \
+    all_report_fridays as sfc_fridays, get_position_history as sfc_get_history
     _SFC_AVAILABLE = True
 except ImportError:
     _SFC_AVAILABLE = False
@@ -633,14 +634,24 @@ THRESHOLDS = {
     "general":  (10.0, 25.0, 15.0, 0.60),
 }
 
+SFC_THRESHOLDS = {
+    #              spike_up  unwind
+    "etf":      (    3.0,    -3.0 ),   # ETFs sit at 40–60%; 1pp is noise
+    "stable":   (    1.0,    -1.0 ),   # Low base (5–10%); 1pp is meaningful
+    "bluechip": (    1.5,    -1.5 ),   # Mid base; slightly more tolerance
+    "general":  (    1.0,    -1.0 ),   # Same as stable
+}
+
 def classify_insight(code, stock_type, short_ratio, short_avg,
                      turnover, tv_avg5,
                      ccass_delta, ccass_consec,
                      pct_delta=0.0,
                      days_to_cover=0.0, vol_ratio=0.0,
                      tv_ratio=0.0, pct_dev=0.0,
-                     sb_net=0) -> str | None:
+                     sb_net=0,
+                     sfc_week_delta=0.0, sfc_level_dev=0.0) -> str | None:
     lo, hi, spike_warn, cover_drop = THRESHOLDS.get(stock_type, THRESHOLDS["general"])
+    sfc_up, sfc_dn = SFC_THRESHOLDS.get(stock_type, SFC_THRESHOLDS["general"])
     r_today = turnover / tv_avg5 if tv_avg5 > 0 else 1.0
 
     if days_to_cover > 5 and vol_ratio > 2:                      return "🔥 挾倉風險"
@@ -650,6 +661,10 @@ def classify_insight(code, stock_type, short_ratio, short_avg,
     if (1.8 <= vol_ratio  <= 2.5
             and 1.5 <= tv_ratio <= 2.0
             and 0.2 <= pct_dev  <= 0.5):                          return "🏦 北水增持"
+
+    # SFC structural signals: week-on-week jump AND elevated vs 4-week avg (Option C)
+    if sfc_week_delta >= sfc_up  and sfc_level_dev > 0:           return "⚠️ 沽空倉位急增"
+    if sfc_week_delta <= sfc_dn  and sfc_level_dev < 0:           return "📊 沽空倉位大減"
 
     flow_out   = sb_net < 0 and pct_delta < 0
     high_short = short_ratio > hi + spike_warn
@@ -818,7 +833,25 @@ def run_analysis():
                         sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
                     else:
                         sfc_pct = 0.0
-                    sfc_map[code] = {"sfc_sh": sfc_sh, "sfc_hkd": sfc_hkd, "sfc_pct": sfc_pct}
+
+                    # Option C: week-on-week delta AND deviation from 4-week rolling avg
+                    # get_position_history returns newest-first snapshots before latest date
+                    sfc_hist = sfc_get_history(code, 5, _latest_sfc_ds)
+                    # sfc_hist[0] = last Friday, sfc_hist[1..4] = prior Fridays
+                    sfc_prev_pct    = sfc_hist[0].get("pct", 0.0) if sfc_hist else 0.0
+                    sfc_week_delta  = round(sfc_pct - sfc_prev_pct, 4) if sfc_prev_pct > 0 else 0.0
+                    # 4-week rolling average (up to 4 prior Fridays)
+                    prior_pcts      = [h.get("pct", 0.0) for h in sfc_hist[:4] if h.get("pct", 0.0) > 0]
+                    sfc_avg4        = sum(prior_pcts) / len(prior_pcts) if prior_pcts else 0.0
+                    sfc_level_dev   = round(sfc_pct - sfc_avg4, 4) if sfc_avg4 > 0 else 0.0
+
+                    sfc_map[code] = {
+                        "sfc_sh":         sfc_sh,
+                        "sfc_hkd":        sfc_hkd,
+                        "sfc_pct":        sfc_pct,
+                        "sfc_week_delta": sfc_week_delta,
+                        "sfc_level_dev":  sfc_level_dev,
+                    }
                 log.info("SFC short positions: %d stocks from %s%s",
                          len(sfc_map), _latest_sfc_ds,
                          " (pct=0, SDW unavailable)" if not _SDW_AVAILABLE else "")
@@ -973,7 +1006,9 @@ def run_analysis():
             vol_ratio=vol_ratio         if has_history else 0.0,
             tv_ratio=tv_ratio           if has_history else 0.0,
             pct_dev=pct_dev             if has_history else 0.0,
-            sb_net=sb.get("sb_net", 0)
+            sb_net=sb.get("sb_net", 0),
+            sfc_week_delta=sfc_map.get(code, {}).get("sfc_week_delta", 0.0),
+            sfc_level_dev=sfc_map.get(code, {}).get("sfc_level_dev",  0.0),
         )
 
         prev_rank   = prev_ranks.get(code)
@@ -1002,9 +1037,11 @@ def run_analysis():
             "short_st":       int(short_st_map.get(code, 0)),
             "days_to_cover":  days_to_cover,
             "vol_ratio":      vol_ratio,
-            "sfc_sh":   sfc_map.get(code, {}).get("sfc_sh",  0),
-            "sfc_hkd":  sfc_map.get(code, {}).get("sfc_hkd", 0.0),
-            "sfc_pct":  sfc_map.get(code, {}).get("sfc_pct", 0.0),
+            "sfc_sh":         sfc_map.get(code, {}).get("sfc_sh",         0),
+            "sfc_hkd":        sfc_map.get(code, {}).get("sfc_hkd",        0.0),
+            "sfc_pct":        sfc_map.get(code, {}).get("sfc_pct",        0.0),
+            "sfc_week_delta": sfc_map.get(code, {}).get("sfc_week_delta", 0.0),
+            "sfc_level_dev":  sfc_map.get(code, {}).get("sfc_level_dev",  0.0),
             "tv_ratio":  tv_ratio,
             "pct_dev":   round(pct_dev, 4),
             "ccass_trade_date":  t2_date.strftime("%Y-%m-%d"),
