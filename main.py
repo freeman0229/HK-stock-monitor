@@ -644,7 +644,6 @@ SFC_THRESHOLDS = {
 
 def classify_insight(code, stock_type, short_ratio, short_avg,
                      turnover, tv_avg5,
-                     ccass_delta, ccass_consec,
                      pct_delta=0.0,
                      days_to_cover=0.0, vol_ratio=0.0,
                      tv_ratio=0.0, pct_dev=0.0,
@@ -757,8 +756,7 @@ def run_analysis():
 
     # ── 3. CCASS southbound (917 stocks) ─────────────────────────────────────
     t2_date = ccass_trade_date(trading_day)
-    t2_key  = t2_date.strftime("%Y%m%d")
-    log.info("T-2 trade date (CCASS settlement): %s", t2_key)
+    log.info("T-2 trade date (CCASS settlement): %s", t2_date.strftime("%Y%m%d"))
 
     df_ccass        = get_ccass_southbound(trading_day)
     ccass_save_date = trading_day
@@ -1000,7 +998,6 @@ def run_analysis():
         insight = classify_insight(
             code, stock_type, short_ratio, short_avg,
             turnover, tv_avg5,
-            int(ccass_delta), int(ccass_consec),
             pct_delta=pct_delta,
             days_to_cover=days_to_cover if has_history else 0.0,
             vol_ratio=vol_ratio         if has_history else 0.0,
