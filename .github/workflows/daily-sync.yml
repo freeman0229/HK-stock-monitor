@@ -63,14 +63,14 @@ jobs:
       - name: Refresh CCASS participant list (weekly)
         run: python ccass_participant_library.py --update
 
+      - name: Update CCASS southbound holdings (today)
+        run: python ccass_library.py --update --fix-names
+
       - name: SDW participant holdings (Thu/Fri weekly)
         run: |
           DOW=$(date +%u)   # 1=Mon … 4=Thu, 5=Fri
           if [ "$DOW" = "4" ] || [ "$DOW" = "5" ]; then
-            # Use --date so we only fetch THIS week — --update would try all
-            # 50+ missing weeks, hit the 45-min timeout, and commit nothing.
-            # Historical backfill is handled by the manual sdw-build job.
-            python ccass_sdw_library.py --date "$(date +%Y-%m-%d)"
+            python ccass_sdw_library.py --date "$(date +%Y-%m-%d)" --max-minutes 12
           else
             echo "Not Thu/Fri (DOW=$DOW) — skipping SDW fetch"
           fi
@@ -151,8 +151,8 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - name: Build CCASS library (resumes from last saved date)
-        run: python ccass_library.py
+      - name: Build CCASS library (resumes from last saved date, backfills missing names)
+        run: python ccass_library.py --fix-names
       - name: Commit progress
         run: |
           git config --global user.name "Bot"
@@ -163,7 +163,7 @@ jobs:
 
   # ── Stock Connect top10 full build (manual, resume-able) ─────────────────────
   sc-top10-build:
-    name: Stock Connect top10 full build
+    name: Stock Connect top10 full build (2025-09-01 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
     permissions:
@@ -220,8 +220,8 @@ jobs:
           echo "SFC files found: $(ls sfc_20*.json | tr '\n' ' ')"
       - name: Migrate old single-file SDW data to range-split format (safe to re-run)
         run: python ccass_sdw_library.py --migrate
-      - name: Build SDW holdings library (resumes from last stored date)
-        run: python ccass_sdw_library.py
+      - name: Build SDW holdings library (resumes from last stored date, 12-min batches)
+        run: python ccass_sdw_library.py --max-minutes 12
       - name: Commit progress
         run: |
           git config --global user.name "Bot"
