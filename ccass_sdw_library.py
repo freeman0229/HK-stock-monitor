@@ -402,32 +402,60 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
 # ── Build / update ────────────────────────────────────────────────────────────
 
 def build(update_only: bool = False, specific_date: date = None,
-          max_minutes: float = 0):
+          max_minutes: float = 0, range_label: str = None):
     """
-    Build or update all range-split SDW files.
+    Build or update SDW files.
 
-    For each scheduled weekly date:
-      - Get full SFC stock universe (~1286 codes)
-      - Fetch any code not yet stored for that date
-      - Write results into the appropriate range file
+    range_label — if given (e.g. "0001_1000"), only fetch stocks in that range.
+                  Used by the parallel matrix strategy in GitHub Actions where
+                  7 jobs run simultaneously, each owning one range file.
+                  When None, fetches all ranges (original behaviour).
 
-    max_minutes: stop gracefully after this many minutes (0 = no limit).
-    Partial progress is saved on every checkpoint (every 50 stocks) and on
-    exit, so subsequent runs resume from where this one stopped.
-    A 15-minute GitHub Actions workflow can safely use max_minutes=12.
+    max_minutes — stop gracefully after N minutes (0 = no limit).
     """
     import time as _time
     deadline = (_time.monotonic() + max_minutes * 60) if max_minutes > 0 else None
+
+    # Resolve which ranges this job owns
+    if range_label:
+        owned_ranges = [(lbl, lo, hi) for lbl, lo, hi in RANGES if lbl == range_label]
+        if not owned_ranges:
+            log.error("Unknown range_label %r — valid: %s",
+                      range_label, [r[0] for r in RANGES])
+            return
+        log.info("Range filter: %s only", range_label)
+    else:
+        owned_ranges = RANGES
 
     if specific_date:
         dates_to_fetch = [specific_date]
     else:
         all_dates = all_fetch_dates()
-        stored    = all_stored_dates()
-        dates_to_fetch = [d for d in all_dates if d.isoformat() not in stored]
-        log.info("%s: %d dates to fetch (%d already stored, %d in schedule)",
+        # A date is complete for this job when all stocks in owned_ranges are stored
+        def _date_complete(ds):
+            stored = _stored_codes_for_date(ds)
+            year   = int(ds[:4])
+            for lbl, lo, hi in owned_ranges:
+                p = lib_path(year, lbl)
+                if not os.path.exists(p):
+                    return False
+                with open(p, encoding="utf-8") as f:
+                    day = json.load(f).get("by_date", {}).get(ds, {})
+                universe_in_range = get_sfc_universe()
+                range_codes = [c for c in universe_in_range if lo <= int(c) <= hi]
+                if len(day) < len(range_codes) * 0.95:  # 95% threshold
+                    return False
+            return True
+
+        stored_all = all_stored_dates()
+        # For range-specific runs check per-range completion; otherwise use global stored
+        if range_label:
+            dates_to_fetch = [d for d in all_dates if not _date_complete(d.isoformat())]
+        else:
+            dates_to_fetch = [d for d in all_dates if d.isoformat() not in stored_all]
+        log.info("%s: %d dates to fetch (%d in schedule)",
                  "Update" if update_only else "Build",
-                 len(dates_to_fetch), len(stored), len(all_dates))
+                 len(dates_to_fetch), len(all_dates))
 
     if not dates_to_fetch:
         log.info("Already up to date")
@@ -437,7 +465,16 @@ def build(update_only: bool = False, specific_date: date = None,
     if not universe:
         log.error("Empty stock universe — aborting")
         return
-    log.info("Stock universe: %d codes across %d ranges", len(universe), len(RANGES))
+
+    # Filter universe to owned ranges only
+    if range_label:
+        owned_lo = owned_ranges[0][1]
+        owned_hi = owned_ranges[0][2]
+        universe = [c for c in universe if owned_lo <= int(c) <= owned_hi]
+        log.info("Filtered universe: %d codes in range %s", len(universe), range_label)
+    else:
+        log.info("Stock universe: %d codes across %d ranges", len(universe), len(RANGES))
+
     if deadline:
         log.info("Time limit: %.0f minutes", max_minutes)
 
@@ -451,7 +488,8 @@ def build(update_only: bool = False, specific_date: date = None,
         year       = d.year
         log.info("── [%d/%d] %s ──", di, len(dates_to_fetch), ds)
 
-        range_libs = {label: load_range(year, label) for label, _, _ in RANGES}
+        # Only load range files this job owns
+        range_libs = {label: load_range(year, label) for label, _, _ in owned_ranges}
 
         already = _stored_codes_for_date(ds)
         todo    = [c for c in universe if c not in already]
@@ -673,8 +711,9 @@ if __name__ == "__main__":
                     help="Show participant holdings for a stock code")
     ap.add_argument("--top",          type=int, default=20,
                     help="Number of top participants to show (default 20)")
-    ap.add_argument("--migrate",      action="store_true",
-                    help="Migrate old ccass_sdw_YYYY.json files to range-split format")
+    ap.add_argument("--range",        metavar="LABEL",
+                    help="Only fetch stocks in this range (e.g. 0001_1000). "
+                         "Used by parallel matrix jobs — each job owns one range.")
     args = ap.parse_args()
 
     if args.migrate:
@@ -684,4 +723,5 @@ if __name__ == "__main__":
     else:
         build(update_only=args.update,
               specific_date=date.fromisoformat(args.date) if args.date else None,
-              max_minutes=args.max_minutes)
+              max_minutes=args.max_minutes,
+              range_label=getattr(args, 'range', None))
