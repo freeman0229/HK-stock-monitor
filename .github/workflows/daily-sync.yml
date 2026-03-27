@@ -284,8 +284,8 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SFC weekly: $(date +'%Y-%m-%d')" && git push)
 
-  # ── Turnover + short rebuild from scratch (manual) ───────────────────────────
-  # Overwrites all existing data. Fetches every trading day from 2026-02-02.
+  # ── Turnover + short full rebuild (manual) ───────────────────────────────────
+  # Re-fetches every trading day from START_DATE. Use --rebuild to overwrite existing.
   # turnover_{YYYY}.json: name_en, name_zh, prev_close, close, vol, tv
   # short_{YYYY}.json:    name, sv (股數SH), st (金額$)
   turnover-build:
@@ -304,10 +304,10 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Rebuild turnover library (all stocks, all columns)
-        run: python build_turnover.py
+        run: python build_turnover.py --rebuild
 
       - name: Rebuild short selling library (all stocks, all columns)
-        run: python build_short.py
+        run: python build_short.py --rebuild
 
       - name: Commit
         run: |
@@ -319,9 +319,8 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "Turnover+short rebuild: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-
   # ── Short selling full rebuild (manual) ──────────────────────────────────────
-  # Fetches next trading day's file for each date to get short data for that date.
+  # Re-fetches every date from START_DATE using next trading day's file.
   # short_{YYYY}.json: name, sv (股數SH), st (金額$)
   short-build:
     name: Short selling library full rebuild (2026-02-02 to today)
@@ -339,7 +338,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Rebuild short selling library (all stocks, all columns)
-        run: python build_short.py
+        run: python build_short.py --rebuild
 
       - name: Commit
         run: |
