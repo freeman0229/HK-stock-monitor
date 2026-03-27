@@ -301,8 +301,9 @@ jobs:
 
   # ── Turnover + short backfill (manual) ───────────────────────────────────────
   # Fetches ALL stocks (codes 1-9999) for every missing or partial date.
-  # Stores full columns: name_en, name_zh, close, vol, tv, high, low (turnover)
-  #                      name, sv, st                                  (short)
+  # Stores full columns:
+  #   turnover_YYYY.json — name_en, name_zh, tv, vol, high, low, close
+  #   short_YYYY.json    — name, sv (股數SH), st (金額$)
   turnover-build:
     name: Turnover + short library backfill (all stocks, all columns)
     runs-on: ubuntu-latest
@@ -319,10 +320,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Backfill all missing/partial dates (turnover + short, all columns)
-        run: python hkex_backfill.py --force
-
-      - name: Add name fields to any existing records that lack them
-        run: python hkex_backfill.py --migrate-names
+        run: python build_turnover.py
 
       - name: Commit
         run: |
