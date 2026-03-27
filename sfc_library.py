@@ -15,11 +15,11 @@ Storage:   sfc_{YYYY}.json — one per year
 Structure:
 {
   "meta": {"year": 2026, "schema": "v2", "last_updated": "...",
-           "total_weeks": N, "total_records": M, "pct_available": false},
+           "total_weeks": N, "total_records": M},
   "by_date": {
     "2026-03-14": {
       "__total__": {"sh": 9876543210, "hkd": 987654321000.0},
-      "00700": {"sh": 123456789, "hkd": 45678901234.0, "pct": 1.23, "name": "TENCENT"},
+      "00700": {"sh": 123456789, "hkd": 45678901234.0, "name": "TENCENT"},
       ...
     }
   }
@@ -27,8 +27,10 @@ Structure:
 
 sh   = aggregated reportable short position (shares)
 hkd  = aggregated reportable short position (HKD)
-pct  = % of issued shares that are reported short
 name = English stock name from SFC file
+
+Note: SFC files have never included a pct column. pct is computed
+      at runtime in main.py using SDW total shares as denominator.
 
 Old compact schema (written by earlier versions — handled transparently):
   {n, s, v, p}  →  {name, sh, hkd, pct}
@@ -67,17 +69,22 @@ SFC_PAGE_EN = (
     "Aggregated-reportable-short-positions-of-specified-shares"
 )
 
+# CSV URL pattern (current format — date embedded in path AND filename)
+# e.g. https://www.sfc.hk/-/media/EN/pdf/spr/2026/03/20/Short_Position_Reporting_Aggregated_Data_20260320.csv
+_CSV_URL_TEMPLATE = (
+    "https://www.sfc.hk/-/media/EN/pdf/spr/"
+    "{year}/{month:02d}/{day:02d}/"
+    "Short_Position_Reporting_Aggregated_Data_{date}.csv"
+)
+
+# Legacy Excel patterns (pre-CSV era, kept for historical backfill)
 _EXCEL_URL_PATTERNS = [
-    # Modern xlsx (2020-present)
     "https://www.sfc.hk/TC/data/short-position/AggregatedShortPos_{date}.xlsx",
     "https://www.sfc.hk/TC/data/short-position/aggregated/AggregatedShortPos_{date}.xlsx",
     "https://www.sfc.hk/en/data/short-position/AggregatedShortPos_{date}.xlsx",
     "https://www.sfc.hk/en/data/short-position/aggregated/AggregatedShortPos_{date}.xlsx",
-    # Legacy xls (2018–2019, pre-xlsx migration)
     "https://www.sfc.hk/TC/data/short-position/AggregatedShortPos_{date}.xls",
-    "https://www.sfc.hk/TC/data/short-position/aggregated/AggregatedShortPos_{date}.xls",
     "https://www.sfc.hk/en/data/short-position/AggregatedShortPos_{date}.xls",
-    "https://www.sfc.hk/en/data/short-position/aggregated/AggregatedShortPos_{date}.xls",
 ]
 
 HEADERS = {
@@ -173,12 +180,6 @@ def save_year(year: int, lib: dict):
         "last_updated":  date.today().isoformat(),
         "total_weeks":   total_weeks,
         "total_records": total_records,
-        "pct_available": any(
-            rec.get("pct") is not None
-            for w in by_date.values()
-            for k, rec in w.items()
-            if k != "__total__"
-        ),
     }
     with open(lib_path(year), "w", encoding="utf-8") as f:
         json.dump(lib, f, ensure_ascii=False, separators=(",", ":"))
@@ -206,7 +207,7 @@ def _scrape_excel_links() -> list[str]:
             soup = BeautifulSoup(r.text, "html.parser")
             for a in soup.find_all("a", href=True):
                 href = a["href"]
-                if re.search(r"\.(xlsx|xls|csv)(\?|$)", href, re.I):
+                if re.search(r"\.(xlsx|xls|csv)(\?|#|$)", href, re.I):
                     if href.startswith("http"):
                         links.append(href)
                     elif href.startswith("/"):
@@ -227,40 +228,156 @@ def _is_valid_excel(data: bytes) -> bool:
     """Return True if data is a valid xlsx (ZIP) or xls (OLE2) file."""
     return len(data) > 4 and data[:4] in (_XLSX_MAGIC, _XLS_MAGIC)
 
-def _download_excel(report_date: date) -> bytes | None:
+def _download_file(report_date: date) -> tuple[bytes, str] | tuple[None, None]:
     """
-    Attempt to download an SFC Excel file via direct URL patterns only.
-    Page scraping is handled separately by build() Step 1 — do NOT scrape here,
-    as that would trigger one full page scrape per missing date (very slow).
+    Attempt to download an SFC file via direct URL patterns.
+    Tries CSV (current format) first, then legacy Excel patterns.
+    Returns (bytes, "csv"|"xlsx"|"xls") or (None, None).
+    Page scraping is handled separately by build() Step 1.
     """
     ds_nodash  = report_date.strftime("%Y%m%d")
-    cache_file = os.path.join(CACHE_DIR, f"sfc_{ds_nodash}.xlsx")
 
-    if os.path.exists(cache_file):
-        with open(cache_file, "rb") as f:
-            data = f.read()
-        if _is_valid_excel(data):
-            return data
-        # Cached file is corrupt (HTML error page, partial download, etc.) — delete and re-fetch
-        log.warning("Corrupt cache for %s (not a valid xlsx) — deleting and re-downloading",
-                    report_date.isoformat())
-        os.remove(cache_file)
+    # Check cache — CSV first, then xlsx
+    for ext in ("csv", "xlsx"):
+        cache_file = os.path.join(CACHE_DIR, f"sfc_{ds_nodash}.{ext}")
+        if os.path.exists(cache_file):
+            with open(cache_file, "rb") as f:
+                data = f.read()
+            if ext == "csv" and len(data) > 100:
+                return data, "csv"
+            if ext == "xlsx" and _is_valid_excel(data):
+                fmt = "xlsx" if data[:4] == _XLSX_MAGIC else "xls"
+                return data, fmt
+            log.warning("Corrupt cache for %s (%s) — deleting", report_date.isoformat(), ext)
+            os.remove(cache_file)
 
+    # Try CSV URL first (current SFC format)
+    csv_url = _CSV_URL_TEMPLATE.format(
+        year=report_date.year, month=report_date.month,
+        day=report_date.day,   date=ds_nodash)
+    try:
+        r = requests.get(csv_url, headers=HEADERS, timeout=30)
+        if r.status_code == 200 and len(r.content) > 100:
+            cache_file = os.path.join(CACHE_DIR, f"sfc_{ds_nodash}.csv")
+            with open(cache_file, "wb") as f:
+                f.write(r.content)
+            log.info("Downloaded CSV %s (%d bytes)", ds_nodash, len(r.content))
+            return r.content, "csv"
+    except Exception:
+        pass
+
+    # Fall back to legacy Excel URL patterns
     for pat in _EXCEL_URL_PATTERNS:
         url = pat.format(date=ds_nodash)
         try:
             r = requests.get(url, headers=HEADERS, timeout=30)
             if r.status_code == 200 and _is_valid_excel(r.content):
+                fmt = "xlsx" if r.content[:4] == _XLSX_MAGIC else "xls"
+                cache_file = os.path.join(CACHE_DIR, f"sfc_{ds_nodash}.xlsx")
                 with open(cache_file, "wb") as f:
                     f.write(r.content)
-                log.info("Downloaded %s (%d bytes) from %s", ds_nodash, len(r.content), url)
-                return r.content
-            elif r.status_code == 200 and len(r.content) > 1000:
-                log.debug("Response for %s from %s is not a valid xlsx — skipping", ds_nodash, url)
+                log.info("Downloaded %s %s (%d bytes)", fmt, ds_nodash, len(r.content))
+                return r.content, fmt
         except Exception:
             pass
 
-    return None
+    return None, None
+
+def _parse_csv(data: bytes, report_date: date) -> dict | None:
+    """
+    Parse SFC aggregated short position CSV file (current format).
+
+    Expected columns (flexible detection):
+      Stock Code, Stock Name, Short Position (Shares), Short Position (HK$)
+
+    Returns {code5: {sh, hkd, name}, "__total__": {sh, hkd}} or None.
+    pct is NOT stored — SFC files never included it; computed at runtime via SDW.
+    """
+    import csv as _csv
+
+    try:
+        text = data.decode("utf-8-sig", errors="replace")  # strip BOM if present
+    except Exception as e:
+        log.error("CSV decode failed for %s: %s", report_date.isoformat(), e)
+        return None
+
+    reader = list(_csv.reader(text.splitlines()))
+    if not reader:
+        log.error("Empty CSV for %s", report_date.isoformat())
+        return None
+
+    # Locate header row
+    col_code = col_name = col_sh = col_hkd = None
+    header_idx = None
+
+    for i, row in enumerate(reader):
+        cells = [c.lower().strip() for c in row]
+        if not cells:
+            continue
+        # Look for a row that contains both a code-like and share-like column
+        if any("code" in c or "\u4ee3\u865f" in c for c in cells) and \
+           any("share" in c or "position" in c or "\u80a1" in c for c in cells):
+            header_idx = i
+            for j, c in enumerate(cells):
+                if ("code" in c or "\u4ee3\u865f" in c) and col_code is None:
+                    col_code = j
+                elif ("name" in c or "\u540d\u7a31" in c) and col_name is None:
+                    col_name = j
+                elif ("hk$" in c or "hkd" in c or "\u6e2f\u5143" in c or
+                      "value" in c or "amount" in c) and col_hkd is None:
+                    col_hkd = j
+                elif ("share" in c or "position" in c or
+                      "\u80a1\u6578" in c) and col_hkd != j and col_sh is None:
+                    col_sh = j
+            break
+
+    if header_idx is None or col_code is None:
+        log.error("Cannot find header row in CSV for %s", report_date.isoformat())
+        return None
+
+    log.info("CSV header at row %d: code=%s name=%s sh=%s hkd=%s",
+             header_idx, col_code, col_name, col_sh, col_hkd)
+
+    def _n(v) -> float:
+        try:
+            return float(str(v).replace(",", "").replace(" ", "").strip())
+        except Exception:
+            return 0.0
+
+    result    = {}
+    total_sh  = 0.0
+    total_hkd = 0.0
+
+    for row in reader[header_idx + 1:]:
+        if not row or len(row) <= col_code:
+            continue
+        raw_code = str(row[col_code]).strip().lstrip("0")
+        if not raw_code.isdigit():
+            continue
+        code_int = int(raw_code)
+        if code_int < 1 or code_int > 9999:
+            continue
+        code5 = str(code_int).zfill(5)
+
+        sh   = _n(row[col_sh])  if col_sh  is not None and len(row) > col_sh  else 0.0
+        hkd  = _n(row[col_hkd]) if col_hkd is not None and len(row) > col_hkd else 0.0
+        name = str(row[col_name]).strip() if col_name is not None and len(row) > col_name else ""
+
+        if sh <= 0 and hkd <= 0:
+            continue
+
+        result[code5] = {"sh": int(sh), "hkd": round(hkd, 2), "name": name}
+        total_sh  += sh
+        total_hkd += hkd
+
+    if not result:
+        log.warning("No valid rows parsed from CSV for %s", report_date.isoformat())
+        return None
+
+    result["__total__"] = {"sh": int(total_sh), "hkd": round(total_hkd, 2)}
+    log.info("Parsed %d stocks for %s (total HKD %.2fbn)",
+             len(result) - 1, report_date.isoformat(), total_hkd / 1e9)
+    return result
 
 def _parse_excel(data: bytes, report_date: date) -> dict | None:
     """
@@ -391,14 +508,12 @@ def _parse_excel(data: bytes, report_date: date) -> dict | None:
 
         sh   = to_num(row[col_sh])  if col_sh  is not None else 0.0
         hkd  = to_num(row[col_hkd]) if col_hkd is not None else 0.0
-        pct  = to_num(row[col_pct]) if col_pct is not None else 0.0
         name = str(row[col_name]).strip() if col_name is not None and row[col_name] else ""
 
         if sh <= 0 and hkd <= 0:
             continue
 
-        result[code5] = {"sh": int(sh), "hkd": round(hkd, 2),
-                         "pct": round(pct, 4), "name": name}
+        result[code5] = {"sh": int(sh), "hkd": round(hkd, 2), "name": name}
         total_sh  += sh
         total_hkd += hkd
 
@@ -429,7 +544,7 @@ def reparse(specific_date: date = None):
     else:
         dates = []
         for fname in sorted(os.listdir(CACHE_DIR)):
-            m = re.match(r"sfc_(\d{8})\.xlsx$", fname, re.IGNORECASE)
+            m = re.match(r"sfc_(\d{8})\.(xlsx|csv)$", fname, re.IGNORECASE)
             if not m:
                 continue
             ds = m.group(1)
@@ -447,13 +562,13 @@ def reparse(specific_date: date = None):
             continue
         with open(cache_file, "rb") as f:
             raw = f.read()
-        if not _is_valid_excel(raw):
-            log.warning("Reparse: corrupt cache for %s (not a valid xlsx) — deleting; "
-                        "re-run build() to re-download", d.isoformat())
+        is_csv = cache_file.endswith(".csv")
+        if not is_csv and not _is_valid_excel(raw):
+            log.warning("Reparse: corrupt cache for %s — deleting", d.isoformat())
             os.remove(cache_file)
             purged += 1
             continue
-        records = _parse_excel(raw, d)
+        records = _parse_csv(raw, d) if is_csv else _parse_excel(raw, d)
         if not records:
             log.warning("Re-parse failed for %s", d.isoformat())
             parse_fail += 1
@@ -479,7 +594,6 @@ def _extract_date_from_url(url: str) -> date | None:
     except (ValueError, TypeError):
         return None
 
-
 def _fetch_from_scraped_links(stored: set) -> int:
     """
     Scrape the SFC page, download any Excel link whose report date
@@ -503,12 +617,17 @@ def _fetch_from_scraped_links(stored: set) -> int:
         log.info("New report date on page: %s", report_date.isoformat())
         try:
             r = requests.get(link, headers=HEADERS, timeout=30)
-            if r.status_code != 200 or not _is_valid_excel(r.content):
+            if r.status_code != 200 or not r.content:
                 continue
-            cache_file = os.path.join(CACHE_DIR, f"sfc_{report_date.strftime('%Y%m%d')}.xlsx")
+            content = r.content
+            is_csv  = link.lower().endswith(".csv") or link.lower().endswith(".csv?")
+            if not is_csv and not _is_valid_excel(content):
+                continue
+            ext        = "csv" if is_csv else ("xlsx" if content[:4] == _XLSX_MAGIC else "xls")
+            cache_file = os.path.join(CACHE_DIR, f"sfc_{report_date.strftime('%Y%m%d')}.{ext}")
             with open(cache_file, "wb") as cf:
-                cf.write(r.content)
-            records = _parse_excel(r.content, report_date)
+                cf.write(content)
+            records = _parse_csv(content, report_date) if is_csv else _parse_excel(content, report_date)
             if not records:
                 continue
             lib = load_year(report_date.year)
@@ -522,7 +641,6 @@ def _fetch_from_scraped_links(stored: set) -> int:
             log.warning("Failed to process %s: %s", link, e)
 
     return fetched
-
 
 def build(specific_date: date = None):
     """
@@ -542,11 +660,11 @@ def build(specific_date: date = None):
 
     if specific_date:
         # Targeted fetch — skip page scrape, go straight to direct URL
-        raw = _download_excel(specific_date)
+        raw, fmt = _download_file(specific_date)
         if not raw:
-            log.warning("No Excel found for %s", specific_date.isoformat())
+            log.warning("No file found for %s", specific_date.isoformat())
             return
-        records = _parse_excel(raw, specific_date)
+        records = _parse_csv(raw, specific_date) if fmt == "csv" else _parse_excel(raw, specific_date)
         if not records:
             log.warning("Parse failed for %s", specific_date.isoformat())
             return
@@ -571,10 +689,10 @@ def build(specific_date: date = None):
 
     fetched = 0
     for d in dates_to_try:
-        raw = _download_excel(d)
+        raw, fmt = _download_file(d)
         if not raw:
             continue  # 404 is normal for non-report days
-        records = _parse_excel(raw, d)
+        records = _parse_csv(raw, d) if fmt == "csv" else _parse_excel(raw, d)
         if not records:
             continue
         lib = load_year(d.year)
