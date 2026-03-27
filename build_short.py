@@ -174,7 +174,7 @@ def fetch(d: date) -> str | None:
 # Skip lines whose name field is a known header/total word.
 
 _SHORT_LINE = re.compile(
-    r"^[*%\s]{0,4}(\d{1,4})\s+"   # g1  代號  (1–4 digits; * % prefix stripped)
+    r"^[*%\s]{0,8}(\d{1,4})\s+"   # g1  代號  (1–4 digits; * % prefix stripped; up to 7 leading spaces)
     r"(.{2,40}?)\s{2,}"            # g2  股票名稱  (ends at 2+ spaces)
     r"([\d,]+)\s+"                 # g3  股數(SH) → sv
     r"([\d,]+)\s*$"                # g4  金額($)  → st
@@ -252,24 +252,6 @@ def parse(body: str) -> dict:
     return out
 
 
-# ── Save ──────────────────────────────────────────────────────────────────────
-
-def save_day(d: date, records: dict, dry_run: bool = False):
-    if not records:
-        log.warning("No short records for %s — skipping", d)
-        return
-    ds = d.isoformat()
-    log.info("%s  %d stocks  total SV: %s shares",
-             ds, len(records), f"{sum(r['sv'] for r in records.values()):,}")
-    if dry_run:
-        log.info("  [dry-run] not written")
-        return
-    year = d.year
-    lib  = _load(year)
-    lib["by_date"][ds] = records
-    _save(year, lib)
-
-
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def build(start: date, end: date, dry_run: bool = False):
@@ -285,12 +267,17 @@ def build(start: date, end: date, dry_run: bool = False):
 
     Note: short for the most recent trading day is not yet available
     until the following day's file is published. This is expected.
+
+    Batches all writes by year — one file write per year, not per date.
     """
     short_dates = all_trading_days(start, end)
     log.info("Short build: %d dates  %s → %s  dry_run=%s",
              len(short_dates), start, end, dry_run)
 
+    # Accumulate all records in memory, keyed by year → {date_str: records}
+    by_year: dict[int, dict] = {}
     ok = failed = 0
+
     for short_date in short_dates:
         fetch_date = next_trading_day(short_date)
         log.info("Short for %s — fetching %s …", short_date, fetch_date)
@@ -308,9 +295,25 @@ def build(start: date, end: date, dry_run: bool = False):
             failed += 1
             time.sleep(SLEEP_SEC)
             continue
-        save_day(short_date, records, dry_run=dry_run)
+
+        ds   = short_date.isoformat()
+        year = short_date.year
+        log.info("%s  %d stocks  total SV: %s shares",
+                 ds, len(records), f"{sum(r['sv'] for r in records.values()):,}")
+        if not dry_run:
+            by_year.setdefault(year, {})[ds] = records
         ok += 1
         time.sleep(SLEEP_SEC)
+
+    # Write once per year
+    if not dry_run:
+        for year, new_dates in by_year.items():
+            lib = _load(year)
+            lib["by_date"].update(new_dates)
+            _save(year, lib)
+    else:
+        log.info("[dry-run] would write %d year file(s)",
+                 len({d.year for d in short_dates}))
 
     log.info("Done. Saved=%d  Failed=%d", ok, failed)
 

@@ -150,10 +150,10 @@ def fetch(d: date) -> str | None:
 # TRADING SUSPENDED / 暫停買賣 lines have no numeric data — skipped before regex.
 
 _PAT = re.compile(
-    r"^[*%\s]{0,4}(\d{1,4})\s+"           # g1  代號  (1–4 digits; * % prefix stripped)
+    r"^[*%\s]{0,8}(\d{1,4})\s+"           # g1  代號  (1–4 digits; * % prefix stripped; up to 7 leading spaces)
     r"(\S[^\u3000\n]{1,25}?)\s{2,}"       # g2  NAME OF STOCK (ends at 2+ spaces)
     r"(.{1,35}?)\s*"                       # g3  股票名稱
-    r"(?:HKD|USD|CNY|EUR|GBP)\s+"         # CUR (skip)
+    r"(?:HKD|USD|CNY|RMB|EUR|GBP|AUD|JPY|SGD)\s+"  # CUR (skip; RMB used for H-share dual-currency counters)
     r"([\d,.]+)\s+"                        # g4  前收市 / PRV
     r"[\d,.NA-]+\s+"                       # BID  (skip)
     r"[\d,.NA-]+\s+"                       # ASK  (skip)
@@ -222,36 +222,23 @@ def parse(body: str) -> dict:
     return out
 
 
-# ── Save ──────────────────────────────────────────────────────────────────────
-
-def save_day(d: date, records: dict, dry_run: bool = False):
-    if not records:
-        log.warning("No records for %s — skipping", d)
-        return
-    ds = d.isoformat()
-    log.info("%s  %d stocks  TV: HKD %s",
-             ds, len(records), f"{sum(r['tv'] for r in records.values()):,.0f}")
-    if dry_run:
-        log.info("  [dry-run] not written")
-        return
-    year = d.year
-    lib  = _load(year)
-    lib["by_date"][ds] = records
-    _save(year, lib)
-
-
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def build(start: date, end: date, dry_run: bool = False):
     """
     For each trading day D in [start, end]:
       Fetch d{D}c.htm → parse top section → save turnover for D.
+
+    Batches all writes by year — one file write per year, not per date.
     """
     days = all_trading_days(start, end)
     log.info("Turnover build: %d dates  %s → %s  dry_run=%s",
              len(days), start, end, dry_run)
 
+    # Accumulate in memory, keyed by year → {date_str: records}
+    by_year: dict[int, dict] = {}
     ok = failed = 0
+
     for d in days:
         log.info("Fetching %s …", d)
         body = fetch(d)
@@ -265,9 +252,24 @@ def build(start: date, end: date, dry_run: bool = False):
             failed += 1
             time.sleep(SLEEP_SEC)
             continue
-        save_day(d, records, dry_run=dry_run)
+        ds   = d.isoformat()
+        year = d.year
+        log.info("%s  %d stocks  TV: HKD %s",
+                 ds, len(records), f"{sum(r['tv'] for r in records.values()):,.0f}")
+        if not dry_run:
+            by_year.setdefault(year, {})[ds] = records
         ok += 1
         time.sleep(SLEEP_SEC)
+
+    # Write once per year
+    if not dry_run:
+        for year, new_dates in by_year.items():
+            lib = _load(year)
+            lib["by_date"].update(new_dates)
+            _save(year, lib)
+    else:
+        log.info("[dry-run] would write %d year file(s)",
+                 len({d.year for d in days}))
 
     log.info("Done. Saved=%d  Failed=%d", ok, failed)
 
