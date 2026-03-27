@@ -24,7 +24,8 @@ try:
 except ImportError:
     _SFC_AVAILABLE = False
 try:
-    from ccass_sdw_library import get_latest_total_sh as sdw_get_total_sh
+    from ccass_sdw_library import get_latest_total_sh as sdw_get_total_sh, \
+                              get_total_sh_bulk   as sdw_get_total_sh_bulk
     _SDW_AVAILABLE = True
 except ImportError:
     _SDW_AVAILABLE = False
@@ -690,6 +691,10 @@ def run_analysis():
 
     # ── 5. CCASS deltas for the full universe ─────────────────────────────────
     _tv_recent = tv_load_recent(35, today_ds)
+
+    # Pre-load SDW total_sh for all stocks in one pass (7 range files → {code5: total_sh})
+    # Used for 換手率 = 5-day vol sum / total_sh
+    _sdw_total_sh_map = sdw_get_total_sh_bulk(today_ds) if _SDW_AVAILABLE else {}
     df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, today_ds,
                                     today_pct_map=ccass_pct_map)
     ccass_delta_map      = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
@@ -870,6 +875,11 @@ def run_analysis():
         days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
         vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
 
+        # 換手率 = sum of last 5 trading days' 成交股數 / 總數 (CCASS-custodied shares) × 100
+        vol_5d       = sum(vol_hist24[:5])
+        _ts          = _sdw_total_sh_map.get(code.zfill(5), 0)
+        turnover_5d  = round(vol_5d / _ts * 100, 4) if _ts > 0 and vol_5d > 0 else 0.0
+
         # net_buy_vol = traded volume minus short-sold volume (non-short demand proxy)
         # Use _tv_recent (already loaded) and short history to build 24-day net_buy series
         net_buy_vol_today = max(0, today_vol - short_vol_today)
@@ -940,6 +950,7 @@ def run_analysis():
             "short_st":       int(short_st_map.get(code, 0)),
             "days_to_cover":  days_to_cover,
             "vol_ratio":      vol_ratio,
+            "turnover_5d":    turnover_5d,
             "net_buy_vol":    int(net_buy_vol_today),
             "net_buy_ratio":  net_buy_ratio,
             "sfc_sh":         sfc_map.get(code, {}).get("sfc_sh",         0),

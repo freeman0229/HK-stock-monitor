@@ -638,6 +638,29 @@ def get_latest_total_sh(stock_code: str, before: str = None) -> int:
                 return total_sh
     return 0
 
+def get_total_sh_bulk(ds: str) -> dict:
+    """
+    Return {code5: total_sh} for all stocks with SDW data on YYYY-MM-DD date ds.
+    Loads all 7 range files in one pass — use this instead of per-stock
+    get_total_sh() calls to avoid opening a file per stock (O(N) → O(7)).
+    """
+    result = {}
+    year   = int(ds[:4])
+    for label, _, _ in RANGES:
+        p = lib_path(year, label)
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8") as f:
+            by_date = json.load(f).get("by_date", {})
+        day = by_date.get(ds, {})
+        for code5, raw in day.items():
+            v = _to_v2(raw)
+            ts = v.get("total_sh", 0)
+            if ts > 0:
+                result[code5] = ts
+    return result
+
+
 def get_holders_history(stock_code: str, n: int, before: str) -> list:
     """
     Last n weekly snapshots before `before` (YYYY-MM-DD), newest-first.
