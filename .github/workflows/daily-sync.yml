@@ -15,18 +15,18 @@ on:
         type: choice
         options:
           - daily
-          - sfc-check        # SFC nightly fetch (22:00 HKT)
+          - sfc-check
           - sfc-weekly
           - di-weekly
           - both-weekly
-          - ccass-build      # full CCASS build from 2025-03-23 (run multiple times)
-          - sc-top10-build   # full Stock Connect top10 build (run multiple times)
-          - sdw-build        # full SDW backfill — 7 parallel range jobs, 53 dispatches
-          - sdw-weekly       # manual trigger for weekly SDW update
-          - sfc-build        # full SFC backfill from 2018-01-01 (run multiple times)
-          - turnover-build   # backfill turnover+short libraries (all stocks, all columns)
+          - ccass-build
+          - sc-top10-build
+          - sdw-build
+          - sdw-weekly
+          - sfc-build
+          - turnover-build   # rebuild turnover library from scratch
+          - short-build      # rebuild short selling library from scratch
 
-# Cancel any in-progress run of the same workflow when a new one is triggered.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -50,8 +50,11 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
-      - name: Backfill any missing or bad turnover dates
+      - name: Fetch today's turnover data
         run: python build_turnover.py
+
+      - name: Fetch today's short selling data
+        run: python build_short.py
 
       - name: Update Stock Connect top10 (today + repair incomplete history)
         run: python sc_top10_library.py --update
@@ -94,24 +97,20 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-
       - name: Restore SFC cache
         uses: actions/cache@v4
         with:
           path: sfc_cache
           key: sfc-cache-${{ github.run_id }}
           restore-keys: sfc-cache-
-
       - name: Fetch any new SFC reports
         run: python sfc_library.py
-
       - name: Save SFC cache
         uses: actions/cache/save@v4
         if: always()
         with:
           path: sfc_cache
           key: sfc-cache-${{ github.run_id }}
-
       - name: Commit
         run: |
           git config --global user.name "Bot"
@@ -120,7 +119,7 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SFC check: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── CCASS full build (manual, resume-able) ───────────────────────────────────
+  # ── CCASS full build (manual) ────────────────────────────────────────────────
   ccass-build:
     name: CCASS full build (2025-03-23 to today)
     runs-on: ubuntu-latest
@@ -135,7 +134,7 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - name: Build CCASS library (resumes from last saved date, backfills missing names)
+      - name: Build CCASS library
         run: python ccass_library.py --fix-names
       - name: Commit progress
         run: |
@@ -145,7 +144,7 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "CCASS build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── Stock Connect top10 full build (manual, resume-able) ─────────────────────
+  # ── Stock Connect top10 full build (manual) ───────────────────────────────────
   sc-top10-build:
     name: Stock Connect top10 full build (2025-09-01 to today)
     runs-on: ubuntu-latest
@@ -166,9 +165,9 @@ jobs:
           path: sc_cache
           key: sc-top10-cache-${{ github.run_id }}
           restore-keys: sc-top10-cache-
-      - name: Clear stale sc_cache (stored parsed JSON, not raw JS)
+      - name: Clear stale sc_cache
         run: python sc_top10_library.py --clear-cache
-      - name: Build Stock Connect top10 library (resumes from last saved date)
+      - name: Build Stock Connect top10 library
         run: python sc_top10_library.py
       - name: Commit progress
         run: |
@@ -178,7 +177,7 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SC top10 build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SDW full backfill — 7 parallel range jobs (manual dispatch) ─────────────
+  # ── SDW full backfill (manual, 7 parallel ranges) ────────────────────────────
   sdw-build:
     name: SDW backfill — range ${{ matrix.range }}
     runs-on: ubuntu-latest
@@ -190,14 +189,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        range:
-          - 0001_1000
-          - 1001_2000
-          - 2001_3000
-          - 3001_4000
-          - 4001_7000
-          - 7001_9999
-          - 10000plus
+        range: [0001_1000, 1001_2000, 2001_3000, 3001_4000, 4001_7000, 7001_9999, 10000plus]
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -210,9 +202,9 @@ jobs:
             echo "ERROR: No sfc_20*.json files. Run sfc-build first."
             exit 1
           fi
-      - name: Migrate old single-file SDW data (safe to re-run)
+      - name: Migrate old single-file SDW data
         run: python ccass_sdw_library.py --migrate
-      - name: Build SDW range ${{ matrix.range }} (resumes from last stored date)
+      - name: Build SDW range ${{ matrix.range }}
         run: python ccass_sdw_library.py --range ${{ matrix.range }}
       - name: Commit
         run: |
@@ -222,7 +214,7 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SDW ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SDW weekly — Thu+Fri to capture each new Friday's data ───────────────────
+  # ── SDW weekly (Thu+Fri 22:00 HKT) ───────────────────────────────────────────
   sdw-weekly:
     name: SDW weekly — range ${{ matrix.range }}
     runs-on: ubuntu-latest
@@ -235,14 +227,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        range:
-          - 0001_1000
-          - 1001_2000
-          - 2001_3000
-          - 3001_4000
-          - 4001_7000
-          - 7001_9999
-          - 10000plus
+        range: [0001_1000, 1001_2000, 2001_3000, 3001_4000, 4001_7000, 7001_9999, 10000plus]
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -259,9 +244,9 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SDW weekly ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SFC weekly (Saturday 10:00 HKT) ─────────────────────────────────────────
+  # ── SFC weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
   sfc-weekly:
-    name: SFC short position library (manual / Saturday reparse)
+    name: SFC short position library
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -299,15 +284,14 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SFC weekly: $(date +'%Y-%m-%d')" && git push)
 
-  # ── Turnover + short backfill (manual) ───────────────────────────────────────
-  # Fetches ALL stocks (codes 1-9999) for every missing or partial date.
-  # Stores full columns:
-  #   turnover_YYYY.json — name_en, name_zh, tv, vol, high, low, close
-  #   short_YYYY.json    — name, sv (股數SH), st (金額$)
+  # ── Turnover + short rebuild from scratch (manual) ───────────────────────────
+  # Overwrites all existing data. Fetches every trading day from 2026-02-02.
+  # turnover_{YYYY}.json: name_en, name_zh, prev_close, close, vol, tv
+  # short_{YYYY}.json:    name, sv (股數SH), st (金額$)
   turnover-build:
-    name: Turnover + short library backfill (all stocks, all columns)
+    name: Turnover + short full rebuild (2026-02-02 to today)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: write
     if: |
@@ -319,20 +303,55 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
-      - name: Backfill all missing/partial dates (turnover + short, all columns)
+      - name: Rebuild turnover library (all stocks, all columns)
         run: python build_turnover.py
+
+      - name: Rebuild short selling library (all stocks, all columns)
+        run: python build_short.py
 
       - name: Commit
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
-          for f in turnover_20*.json short_20*.json name_map.json; do
+          for f in turnover_20*.json short_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || \
-            (git commit -m "Turnover+short build: $(date +'%Y-%m-%d %H:%M')" && git push)
+            (git commit -m "Turnover+short rebuild: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SFC full backfill (manual) ───────────────────────────────────────────────
+
+  # ── Short selling full rebuild (manual) ──────────────────────────────────────
+  # Fetches next trading day's file for each date to get short data for that date.
+  # short_{YYYY}.json: name, sv (股數SH), st (金額$)
+  short-build:
+    name: Short selling library full rebuild (2026-02-02 to today)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'short-build'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+
+      - name: Rebuild short selling library (all stocks, all columns)
+        run: python build_short.py
+
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in short_20*.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          git diff --staged --quiet || \
+            (git commit -m "Short rebuild: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── SFC full backfill (manual) ────────────────────────────────────────────────
   sfc-build:
     name: SFC full backfill (2018-01-01 to today)
     runs-on: ubuntu-latest
@@ -347,17 +366,17 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - name: Restore SFC Excel cache (avoids re-downloading on each re-run)
+      - name: Restore SFC Excel cache
         uses: actions/cache@v4
         with:
           path: sfc_cache
           key: sfc-cache-${{ github.run_id }}
           restore-keys: sfc-cache-
-      - name: Full SFC backfill (resumes from last stored date)
+      - name: Full SFC backfill
         run: python sfc_library.py
-      - name: Re-parse all cached Excel files (fixes schema)
+      - name: Re-parse all cached Excel files
         run: python sfc_library.py --reparse
-      - name: Save SFC Excel cache (so next re-run skips re-downloading)
+      - name: Save SFC Excel cache
         uses: actions/cache/save@v4
         if: always()
         with:
@@ -371,7 +390,7 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SFC build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── DI weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
+  # ── DI weekly (Saturday 10:00 HKT) ───────────────────────────────────────────
   di-weekly:
     name: DI substantial shareholder library
     runs-on: ubuntu-latest
