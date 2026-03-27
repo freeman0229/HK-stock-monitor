@@ -68,7 +68,7 @@ HEADERS  = {
 }
 
 START_DATE     = date(2025, 3, 23)   # first Friday = 2025-03-28
-SLEEP_SEC      = 1.5
+SLEEP_SEC      = 0
 SCHEMA_VERSION = 2
 
 # ── Code ranges ───────────────────────────────────────────────────────────────
@@ -279,7 +279,7 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
         sess.headers.update(HEADERS)
 
         # GET to retrieve fresh ASP.NET viewstate tokens
-        r1 = sess.get(SDW_URL, timeout=15)
+        r1 = sess.get(SDW_URL, timeout=8)
         r1.raise_for_status()
         soup1 = BeautifulSoup(r1.text, "html.parser")
 

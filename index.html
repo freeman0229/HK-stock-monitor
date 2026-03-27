@@ -591,19 +591,13 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="tick-item"><span class="tn">恒生指數</span><span class="tv" id="ti-HSI">--</span><span class="tv" id="ti-HSI-chg" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">國企指數</span><span class="tv" id="ti-HSCE">--</span><span class="tv" id="ti-HSCE-chg" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">恒生科技</span><span class="tv" id="ti-HSTECH">--</span><span class="tv" id="ti-HSTECH-chg" style="font-size:11px;margin-left:3px"></span></div>
-    <div class="tick-item"><span class="tn">滬深300</span><span class="tv" id="ti-CSI300">--</span><span class="tv" id="ti-CSI300-chg" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">上證綜指</span><span class="tv" id="ti-SSE">--</span><span class="tv" id="ti-SSE-chg" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">深證成指</span><span class="tv" id="ti-SZSE">--</span><span class="tv" id="ti-SZSE-chg" style="font-size:11px;margin-left:3px"></span></div>
-    <div class="tick-item"><span class="tn">北水淨流入</span><span class="tv" id="tick-sb">--</span></div>
-    <div class="tick-item"><span class="tn">沽空比率</span><span class="tv" id="tick-short">--</span></div>
     <div class="tick-item"><span class="tn">恒生指數</span><span class="tv" id="ti-HSI-2">--</span><span class="tv" id="ti-HSI-chg-2" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">國企指數</span><span class="tv" id="ti-HSCE-2">--</span><span class="tv" id="ti-HSCE-chg-2" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">恒生科技</span><span class="tv" id="ti-HSTECH-2">--</span><span class="tv" id="ti-HSTECH-chg-2" style="font-size:11px;margin-left:3px"></span></div>
-    <div class="tick-item"><span class="tn">滬深300</span><span class="tv" id="ti-CSI300-2">--</span><span class="tv" id="ti-CSI300-chg-2" style="font-size:11px;margin-left:3px"></span></div>
-    <div class="tick-item"><span class="tn">上證綜指</span><span class="tv" id="ti-SSE-2">--</span><span class="tv" id="ti-SSE-chg-2" style="font-size:11px;margin-left:3px"></span></div>
+    <div class="tick-item"><span class="tn">上證綜指</span><span class="tv" id="ti-SSE-2">--</span><span class="tv" id="ti-SSE-chg" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">深證成指</span><span class="tv" id="ti-SZSE-2">--</span><span class="tv" id="ti-SZSE-chg-2" style="font-size:11px;margin-left:3px"></span></div>
-    <div class="tick-item"><span class="tn">北水淨流入</span><span class="tv" id="tick-sb2">--</span></div>
-    <div class="tick-item"><span class="tn">沽空比率</span><span class="tv" id="tick-short2">--</span></div>
   </div>
 </div>
 
@@ -2974,14 +2968,16 @@ function renderCaiTable() {
   });
 })();
 
-// ── Yahoo Finance index fetcher ───────────────────────────────────────────
+// ── Tencent Finance index fetcher (via Cloudflare Worker proxy) ──────────────
+// Worker proxies qt.gtimg.cn and adds CORS headers.
+// Symbols: s_r_ prefix = real-time HK indices; s_ prefix = CN indices.
+const WORKER_URL = 'https://marketindex.tardigradeanalytics.workers.dev/';
 const INDICES = [
-  { key: 'HSI',    symbol: '%5EHSI',       label: '恒生指數'  },
-  { key: 'HSCE',   symbol: '%5EHSCE',      label: '國企指數'  },
-  { key: 'HSTECH', symbol: '%5EHSTECH',    label: '恒生科技'  },
-  { key: 'CSI300', symbol: '000300.SS',    label: '滬深300'   },
-  { key: 'SSE',    symbol: '000001.SS',    label: '上證綜指'  },
-  { key: 'SZSE',   symbol: '399001.SZ',    label: '深證成指'  },
+  { key: 'HSI',    symbol: 's_r_hkHSI',    label: '恒生指數'  },
+  { key: 'HSCE',   symbol: 's_r_hkHSCEI',  label: '國企指數'  },
+  { key: 'HSTECH', symbol: 's_r_hkHSTECH', label: '恒生科技'  },
+  { key: 'SSE',    symbol: 's_sh000001',    label: '上證綜指'  },
+  { key: 'SZSE',   symbol: 's_sz399001',    label: '深證成指'  },
 ];
 
 function setTickerIndex(key, price, chgPct) {
@@ -3002,37 +2998,40 @@ function setTickerIndex(key, price, chgPct) {
   });
 }
 
-async function fetchOneIndex(symbol) {
-  // Yahoo Finance blocks direct browser fetch (CORS). Use a public proxy.
-  // allorigins.win returns {contents: "<json string>"} — parse the inner JSON.
-  const yahoo = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=2d`;
-  const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(yahoo)}`;
-  const r = await fetch(proxy, { cache: 'no-store' });
-  if (!r.ok) throw new Error(r.status);
-  const wrapper = await r.json();
-  const d    = JSON.parse(wrapper.contents);
-  const meta = d.chart.result[0].meta;
-  const price = meta.regularMarketPrice;
-  const prev  = meta.chartPreviousClose || meta.previousClose;
-  const chgPct = prev ? ((price - prev) / prev * 100) : 0;
-  return { price, chgPct };
-}
-
 async function updateTicker() {
-  for (const idx of INDICES) {
-    try {
-      const { price, chgPct } = await fetchOneIndex(idx.symbol);
-      setTickerIndex(idx.key, price, chgPct);
-    } catch(e) {
-      console.warn('Yahoo fetch failed for', idx.key, e);
-    }
-    await new Promise(r => setTimeout(r, 200)); // small delay between requests
+  // Fetch all 5 indices in a single request to minimise Worker invocations
+  const symbols = INDICES.map(i => i.symbol).join(',');
+  try {
+    const r = await fetch(`${WORKER_URL}?q=${symbols}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    // Response is GBK-encoded text; decode as latin-1 (ASCII range is identical)
+    const text = await r.text();
+    // Each line: v_s_r_hkHSI="31~恒生指数~HSI~24951.88~94.64~0.38~...";
+    // Fields (0-based): [1]=name [3]=price [4]=change [5]=chgPct
+    text.split('\n').forEach(line => {
+      const m = line.match(/^v_s(?:_r)?_(\w+)="([^"]+)"/);
+      if (!m) return;
+      const raw    = m[2].split('~');
+      const price  = parseFloat(raw[3]);
+      const chgPct = parseFloat(raw[5]);
+      if (!price || isNaN(chgPct)) return;
+      // Match back to our key by symbol suffix
+      const sym = m[1].toLowerCase();
+      const idx = INDICES.find(i =>
+        i.symbol.toLowerCase().endsWith(sym) ||
+        i.symbol.toLowerCase() === 's_' + sym ||
+        i.symbol.toLowerCase() === 's_r_' + sym
+      );
+      if (idx) setTickerIndex(idx.key, price, chgPct);
+    });
+  } catch(e) {
+    console.warn('Ticker fetch failed:', e);
   }
 }
 
-// Fetch on load, then refresh every 60 seconds
+// Fetch on load, then refresh every hour
 updateTicker();
-setInterval(updateTicker, 60000);
+setInterval(updateTicker, 3600000);
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 document.getElementById('hdr-time').textContent = new Date().toLocaleString('zh-HK');
