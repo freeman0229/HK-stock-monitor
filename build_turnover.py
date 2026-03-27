@@ -1,43 +1,32 @@
 """
-build_turnover.py — HKEX Daily Quotation Backfill
-==================================================
-Fetches full-market daily quotation data for every trading day from
-START_DATE to today, storing all listed stocks with non-zero turnover.
+build_turnover.py — HKEX Daily Quotation → Turnover Library
+=============================================================
+Source : https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
+Section: #quotations  (top of file, Big5-encoded <pre> block)
 
-Sources:
-  Today   : https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
-  Archive : https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
+Source columns (12 total):
+  [*/%] CODE  NAME OF STOCK  股票名稱  CUR  PRV  BID  ASK  HIGH  LOW  CLOSING  SHARES TRADED  TURNOVER ($)
+        代號                           貨幣  前收市                              收市    成交股數          成交金額
 
-Both use Pattern B (Big5-encoded pre-formatted text):
-  代號  NAME OF STOCK  股票名稱  CURR  PRV  BID  ASK  HIGH  LOW  收市  成交股數  成交金額
+Stored per stock per day in turnover_{YYYY}.json:
+  name_en    ← NAME OF STOCK   (English)
+  name_zh    ← 股票名稱         (Chinese)
+  prev_close ← 前收市 / PRV
+  close      ← 收市 / CLOSING
+  vol        ← 成交股數 / SHARES TRADED
+  tv         ← 成交金額 / TURNOVER ($)
 
-Columns stored per stock per day in turnover_{YYYY}.json:
-  name_en — NAME OF STOCK  (English name)
-  name_zh — 股票名稱        (Chinese name)
-  tv      — 成交金額 (HKD turnover)
-  vol     — 成交股數 (shares traded)        ← confirmed source column
-  high    — 最高 (intraday high)
-  low     — 最低 (intraday low)
-  close   — 收市 (closing price)
-
-Short selling section (bottom of same file, previous day):
-  代號  股票名稱  股數(SH)  金額($)
-  Stored in short_{YYYY}.json:
-  name  — 股票名稱
-  sv    — 股數(SH)   (short sell shares)   ← confirmed source column
-  st    — 金額($)    (short sell amount)
-
-Also updates name_map.json with English and Chinese names.
-
-MIN_RECORDS = 200: on any real trading day the full-market file contains 500+ stocks
-with non-zero turnover. Days with fewer than 200 records were saved by main.py's
-limited save (top ~60 stocks only) and are treated as incomplete.
+Rules:
+  • Codes 1–9999 only. * or % prefix before code is stripped.
+  • TRADING SUSPENDED lines are skipped.
+  • If code appears more than once, keep the higher-vol record.
+  • Overwrites existing records for each date (true rebuild).
 
 Usage:
-  python build_turnover.py              # fetch all missing / bad dates
-  python build_turnover.py --dry-run    # show what would be fetched, no changes
-  python build_turnover.py --date 260320  # force-refetch one date (YYMMDD)
-  python build_turnover.py --from 260201  # override start date (YYMMDD)
+  python build_turnover.py               # rebuild START_DATE to today
+  python build_turnover.py --dry-run     # preview without writing
+  python build_turnover.py --date 260326 # single date (YYMMDD)
+  python build_turnover.py --from 260201 # override start date (YYMMDD)
 """
 
 import os, re, json, time, logging, argparse
@@ -45,445 +34,261 @@ from datetime import date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
-from short_library import save_day as short_save_day
 
 try:
-    import holidays as hol_lib
-    _HK_HOLIDAYS = hol_lib.HongKong()
-    _USE_HOL_LIB = True
+    import holidays as _hol
+    _HK_HOLIDAYS = _hol.HongKong()
+    _USE_HOL = True
 except ImportError:
-    _USE_HOL_LIB = False
+    _USE_HOL = False
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("build_turnover.log", encoding="utf-8"),
+    ],
+)
 log = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-START_DATE  = date(2026, 2, 2)
-SLEEP_SEC   = 1.5
-
-MIN_RECORDS_TODAY   = 200
-MIN_RECORDS_ARCHIVE = 30
+START_DATE = date(2026, 2, 2)
+SLEEP_SEC  = 1.5
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
     "Referer":    "https://www.hkex.com.hk/",
 }
 
-NAME_MAP_FILE = "name_map.json"
-
-_URL_DAYQUOT = "https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{yymmdd}c.htm"
-
-# ── HK Public Holidays ────────────────────────────────────────────────────────
-
 _HK_HOL_HARDCODED = {
-    "2025-01-01",
-    "2025-01-29", "2025-01-30", "2025-01-31",
-    "2025-04-04", "2025-04-05", "2025-04-07",
-    "2025-05-01", "2025-05-05",
-    "2025-06-02",
-    "2025-07-01",
-    "2025-09-30", "2025-10-01", "2025-10-29",
-    "2025-12-25", "2025-12-26",
+    "2025-01-01","2025-01-29","2025-01-30","2025-01-31",
+    "2025-04-04","2025-04-05","2025-04-07",
+    "2025-05-01","2025-05-05","2025-06-02","2025-07-01",
+    "2025-09-30","2025-10-01","2025-10-29","2025-12-25","2025-12-26",
     "2026-01-01",
-    "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",
-    "2026-04-03", "2026-04-04", "2026-04-05", "2026-04-06",
-    "2026-05-01", "2026-05-25",
-    "2026-06-19",
-    "2026-07-01",
-    "2026-09-07",
-    "2026-10-01", "2026-10-26",
-    "2026-12-25", "2026-12-26",
+    "2026-02-17","2026-02-18","2026-02-19","2026-02-20",
+    "2026-04-03","2026-04-04","2026-04-05","2026-04-06",
+    "2026-05-01","2026-05-25","2026-06-19","2026-07-01",
+    "2026-09-07","2026-10-01","2026-10-26","2026-12-25","2026-12-26",
 }
 
-def last_trading_day(d: date) -> date:
-    while not is_trading_day(d):
-        d -= timedelta(days=1)
-    return d
-
-def _is_hk_holiday(d: date) -> bool:
-    if _USE_HOL_LIB:
-        return d in _HK_HOLIDAYS
-    return d.isoformat() in _HK_HOL_HARDCODED
-
 def is_trading_day(d: date) -> bool:
-    return d.weekday() < 5 and not _is_hk_holiday(d)
+    if d.weekday() >= 5:
+        return False
+    if _USE_HOL:
+        return d not in _HK_HOLIDAYS
+    return d.isoformat() not in _HK_HOL_HARDCODED
 
 def all_trading_days(start: date, end: date) -> list:
-    result, d = [], start
+    out, d = [], start
     while d <= end:
         if is_trading_day(d):
-            result.append(d)
+            out.append(d)
         d += timedelta(days=1)
-    return result
+    return out
+
 
 # ── Library I/O ───────────────────────────────────────────────────────────────
 
-def lib_path(year: int) -> str:
+def _lib_path(year: int) -> str:
     return f"turnover_{year}.json"
 
-def load_year(year: int) -> dict:
-    p = lib_path(year)
+def _load(year: int) -> dict:
+    p = _lib_path(year)
     if os.path.exists(p):
         with open(p, encoding="utf-8") as f:
             return json.load(f)
     return {"meta": {}, "by_date": {}}
 
-def save_year(year: int, lib: dict):
+def _save(year: int, lib: dict):
     lib["meta"] = {
         "year":         year,
         "last_updated": date.today().isoformat(),
         "total_days":   len(lib["by_date"]),
     }
-    with open(lib_path(year), "w", encoding="utf-8") as f:
+    with open(_lib_path(year), "w", encoding="utf-8") as f:
         json.dump(lib, f, ensure_ascii=False, separators=(",", ":"))
-    mb = os.path.getsize(lib_path(year)) / 1e6
-    log.info("Saved %s: %d days, %.2f MB", lib_path(year), len(lib["by_date"]), mb)
+    mb = os.path.getsize(_lib_path(year)) / 1e6
+    log.info("Saved %s: %d days  %.2f MB", _lib_path(year), len(lib["by_date"]), mb)
 
-def load_name_map() -> dict:
-    if os.path.exists(NAME_MAP_FILE):
-        with open(NAME_MAP_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def save_name_map(nm: dict):
-    with open(NAME_MAP_FILE, "w", encoding="utf-8") as f:
-        json.dump(nm, f, ensure_ascii=False, separators=(",", ":"))
-
-# ── Status check ──────────────────────────────────────────────────────────────
-
-def day_status(ds: str, lib: dict, is_today: bool = False) -> str:
-    day = lib.get("by_date", {}).get(ds)
-    if not day:
-        return "missing"
-    threshold = MIN_RECORDS_TODAY if is_today else MIN_RECORDS_ARCHIVE
-    if len(day) < threshold:
-        return "partial"
-    return "ok"
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
-def _decode(content: bytes) -> str:
-    try:
-        text = content.decode("big5", errors="replace")
-        if any("\u4e00" <= c <= "\u9fff" for c in text[:5000]):
-            return text
-    except Exception:
-        pass
-    return content.decode("latin-1", errors="replace")
-
-def fetch_raw(d: date) -> str | None:
-    url = _URL_DAYQUOT.format(yymmdd=d.strftime("%y%m%d"))
+def fetch(d: date) -> str | None:
+    """Fetch d{YYMMDD}c.htm and return Big5-decoded <pre> text, or None."""
+    url = (f"https://www.hkex.com.hk/chi/stat/smstat/dayquot/"
+           f"d{d.strftime('%y%m%d')}c.htm")
     try:
         resp = requests.get(url, headers=HEADERS, timeout=30)
         if resp.status_code == 404:
-            log.warning("404 for %s — not yet published or non-trading day", d)
+            log.warning("404 — %s not yet published or non-trading day", d)
             return None
         resp.raise_for_status()
-        text = _decode(resp.content)
-        pre  = BeautifulSoup(text, "html.parser").find("pre")
+        try:
+            text = resp.content.decode("big5", errors="replace")
+            if not any("\u4e00" <= c <= "\u9fff" for c in text[:5000]):
+                raise ValueError
+        except Exception:
+            text = resp.content.decode("latin-1", errors="replace")
+            log.warning("latin-1 fallback for %s", d)
+        pre = BeautifulSoup(text, "html.parser").find("pre")
         return pre.get_text() if pre else text
-    except requests.HTTPError as e:
-        log.warning("HTTP %s for %s (%s)", e.response.status_code, d, url)
-        return None
     except Exception as e:
-        log.error("fetch_raw failed for %s: %s", d, e)
+        log.error("Fetch failed %s: %s", d, e)
         return None
 
 
-# ── Pattern B parser ──────────────────────────────────────────────────────────
+# ── Parse ─────────────────────────────────────────────────────────────────────
 #
-# Columns (12 total):
-#   代號   NAME OF STOCK   股票名稱   CURR   PRV   BID   ASK   HIGH   LOW   收市   成交股數   成交金額
-#   g1     g2              g3         skip   skip  skip  skip  g4     g5    g6     g7         g8
+# Source column order (12 columns):
+#   [*/%] CODE  NAME_EN  NAME_ZH  CUR  PRV  BID  ASK  HIGH  LOW  CLOSING  SHARES  TURNOVER
+#   g1           g2       g3       skip g4   skip skip skip  skip g5       g6      g7
 #
-# g7 = 成交股數 → vol   (shares traded)     ← confirmed source column
-# g8 = 成交金額 → tv    (HKD turnover)      ← confirmed source column
+# * or % may appear before CODE — stripped by the pattern.
+# TRADING SUSPENDED / 暫停買賣 lines have no numeric data — skipped before regex.
 
 _PAT = re.compile(
-    r"^[\*\s]{0,5}(\d{1,5})\s+"          # g1: 代號
-    r"(\S[^\u3000\n]{1,22}?)\s{2,}"      # g2: NAME OF STOCK (English)
-    r"(.{1,30}?)\s*"                      # g3: 股票名稱 (Chinese)
-    r"(?:HKD|USD|CNY|EUR|GBP)\s+"        # currency (skip)
-    r"[\d,.NA-]+\s+"                      # PRV    (skip)
-    r"[\d,.NA-]+\s+"                      # BID    (skip)
-    r"[\d,.NA-]+\s+"                      # ASK    (skip)
-    r"([\d,.NA-]+)\s+"                    # g4: HIGH (最高)
-    r"([\d,.NA-]+)\s+"                    # g5: LOW  (最低)
-    r"([\d,.NA-]+)\s+"                    # g6: 收市 (close)
-    r"([\d,]{5,})\s+"                     # g7: 成交股數 → vol
-    r"([\d,]{8,})\s*$"                    # g8: 成交金額 → tv
+    r"^[*%\s]{0,4}(\d{1,4})\s+"           # g1  代號  (1–4 digits; * % prefix stripped)
+    r"(\S[^\u3000\n]{1,25}?)\s{2,}"       # g2  NAME OF STOCK (ends at 2+ spaces)
+    r"(.{1,35}?)\s*"                       # g3  股票名稱
+    r"(?:HKD|USD|CNY|EUR|GBP)\s+"         # CUR (skip)
+    r"([\d,.]+)\s+"                        # g4  前收市 / PRV
+    r"[\d,.NA-]+\s+"                       # BID  (skip)
+    r"[\d,.NA-]+\s+"                       # ASK  (skip)
+    r"[\d,.NA-]+\s+"                       # HIGH (skip)
+    r"[\d,.NA-]+\s+"                       # LOW  (skip)
+    r"([\d,.]+)\s+"                        # g5  收市 / CLOSING
+    r"([\d,]+)\s+"                         # g6  成交股數 → vol
+    r"([\d,]+)\s*$"                        # g7  成交金額 → tv
 )
 
+def _num(s: str) -> float:
+    try:
+        return float(s.replace(",", "").strip())
+    except ValueError:
+        return 0.0
 
-# ── Short selling section parser (bottom of d{YYMMDD}c.htm) ──────────────────
-#
-# Column header line contains: 股數 (u+80a1 u+6578) AND "SH"
-# Data columns: 代號  股票名稱  股數(SH)  金額($)
-#               g1    g2        g3        g4
-#
-# g3 = 股數(SH) → sv   (short sell shares)   ← confirmed source column
-# g4 = 金額($)  → st   (short sell amount)
+def _has_cjk(s: str) -> bool:
+    return any("\u4e00" <= c <= "\u9fff" for c in s)
 
-_SHORT_PAT = re.compile(
-    r"^\s{0,8}(\d{1,6})\s+"   # g1: 代號
-    r"(.+?)\s{2,}"             # g2: 股票名稱
-    r"([\d,]+)\s+"             # g3: 股數(SH) → sv
-    r"([\d,]+)\s*$"            # g4: 金額($)  → st
-)
-_SHORT_SKIP = frozenset({
-    "\u80a1\u7968\u4ee3\u865f", "\u6c96\u7a7a\u6210\u4ea4\u91cf",
-    "\u5408\u8a08", "TOTAL", "CODE", "NAME OF STOCK",
-    "\u4ee3\u865f", "\u80a1\u7968\u540d\u7a31",
-    "\u80a1\u6578", "\u91d1\u984d",
-})
 
-def parse_short_section(body: str) -> dict:
+def parse(body: str) -> dict:
     """
-    Parse the short selling section at the bottom of d{YYMMDD}c.htm.
-    Section is detected by the column header line containing 股數 + SH.
-    Returns {code5: {"sv": int, "st": float, "name": str}}.
+    Parse the quotation section of d{YYMMDD}c.htm.
+    Returns {code5: record} for codes 1–9999 with vol > 0.
+    TRADING SUSPENDED lines are silently skipped.
 
-    Columns:
-      代號  股票名稱  股數(SH)→sv  金額($)→st
+    Record schema:
+        name_en    (str)    NAME OF STOCK
+        name_zh    (str)    股票名稱
+        prev_close (float)  前收市
+        close      (float)  收市
+        vol        (int)    成交股數
+        tv         (int)    成交金額
     """
-    records  = {}
-    in_short = False
+    out = {}
     for line in body.splitlines():
-        stripped = line.strip()
-        if not in_short:
-            # Detect column header: line containing 股數 (u+80a1u+6578) AND "SH"
-            if "\u80a1\u6578" in stripped and "SH" in stripped:
-                in_short = True
+        # Skip suspended lines — they have no numeric vol/tv
+        if "SUSPENDED" in line or "\u66ab\u505c" in line:
             continue
-        m = _SHORT_PAT.match(line)
-        if not m:
-            continue
-        code_int = int(m.group(1))
-        if code_int < 1 or code_int > 9999:
-            continue
-        code = str(code_int).zfill(5)
-        name = m.group(2).strip()
-        if name in _SHORT_SKIP or not name:
-            continue
-        sv = int(m.group(3).replace(",", ""))    # 股數(SH) → sv
-        st = float(m.group(4).replace(",", ""))  # 金額($)  → st
-        if sv <= 0:
-            continue
-        if code not in records or sv > records[code]["sv"]:
-            records[code] = {"sv": sv, "st": st, "name": name}
-    return records
-
-
-def _to_float(s: str) -> float:
-    s = s.replace(",", "").strip()
-    return float(s) if s not in ("NA", "--", "-", "", "N/A") else 0.0
-
-def _is_valid_cjk(s: str) -> bool:
-    if not s:
-        return False
-    cjk     = sum(1 for c in s if "\u4e00" <= c <= "\u9fff" or "\u3400" <= c <= "\u4dbf")
-    garbage = s.count("\ufffd") + s.count("?")
-    return cjk >= 1 and garbage < 3
-
-def parse_dayquot(body: str) -> tuple:
-    """
-    Parse Pattern B pre-formatted text.
-    Returns (records, name_updates, short_records).
-
-    records      — list of dicts with all fields, sorted by tv desc
-                   includes name_en, name_zh, tv, vol, high, low, close
-    name_updates — {code: {"en": str, "zh": str}} for name_map.json
-    short_records— {code5: {sv, st, name}} for previous trading day
-    """
-    best: dict = {}
-    for line in body.splitlines():
         m = _PAT.match(line)
         if not m:
             continue
         code_int = int(m.group(1))
-        if code_int > 9999:
+        if not (1 <= code_int <= 9999):
             continue
-        code    = str(code_int).zfill(5)
-        name_en = m.group(2).strip()
-        name_zh = re.sub(r"[\u3000\uff20\uff64\s]+$", "", m.group(3)).strip()
-        if not _is_valid_cjk(name_zh):
-            name_zh = name_en
-        high  = _to_float(m.group(4))
-        low   = _to_float(m.group(5))
-        close = _to_float(m.group(6))
-        vol   = int(m.group(7).replace(",", ""))   # 成交股數 → vol
-        tv    = int(m.group(8).replace(",", ""))   # 成交金額 → tv
-        if tv <= 0:
+        code        = str(code_int).zfill(5)
+        name_en     = m.group(2).strip()
+        name_zh_raw = re.sub(r"[\u3000\uff20\uff64\s]+$", "", m.group(3)).strip()
+        name_zh     = name_zh_raw if _has_cjk(name_zh_raw) else name_en
+        prev_close  = _num(m.group(4))
+        close       = _num(m.group(5))
+        vol         = int(m.group(6).replace(",", ""))
+        tv          = int(m.group(7).replace(",", ""))
+        if vol <= 0:
             continue
-        if code not in best or tv > best[code]["tv"]:
-            best[code] = {
-                "code":    code,
-                "name_en": name_en,   # NAME OF STOCK
-                "name_zh": name_zh,   # 股票名稱
-                "tv":      tv,        # 成交金額
-                "vol":     vol,       # 成交股數
-                "high":    high,      # 最高
-                "low":     low,       # 最低
-                "close":   close,     # 收市
+        # Keep higher-vol record if code appears twice
+        if code not in out or vol > out[code]["vol"]:
+            out[code] = {
+                "name_en":    name_en,
+                "name_zh":    name_zh,
+                "prev_close": prev_close,
+                "close":      close,
+                "vol":        vol,
+                "tv":         tv,
             }
-
-    records = sorted(best.values(), key=lambda x: x["tv"], reverse=True)
-    name_updates = {
-        r["code"]: {"en": r["name_en"], "zh": r["name_zh"]}
-        for r in records
-        if r["name_zh"] and r["name_zh"] != r["name_en"]
-    }
-    short_records = parse_short_section(body)
-    return records, name_updates, short_records
+    return out
 
 
-# ── Save one day ──────────────────────────────────────────────────────────────
+# ── Save ──────────────────────────────────────────────────────────────────────
 
-def save_day(d: date, records: list, name_updates: dict,
-             short_records: dict | None = None, dry_run: bool = False):
-    """
-    Save one day's turnover data into turnover_{YYYY}.json.
-    Stores ALL source columns: name_en, name_zh, tv, vol, high, low, close.
-
-    Also saves previous trading day's short selling data into short_{YYYY}.json
-    with columns: name (股票名稱), sv (股數SH), st (金額$).
-    """
+def save_day(d: date, records: dict, dry_run: bool = False):
     if not records:
-        log.warning("No records to save for %s — skipping", d)
+        log.warning("No records for %s — skipping", d)
         return
-    ds       = d.isoformat()
-    year     = d.year
-    total_tv = sum(r["tv"] for r in records)
-    log.info("%s  %d stocks  HKD %s", ds, len(records), f"{total_tv:,.0f}")
+    ds = d.isoformat()
+    log.info("%s  %d stocks  TV: HKD %s",
+             ds, len(records), f"{sum(r['tv'] for r in records.values()):,.0f}")
     if dry_run:
-        log.info("  [dry-run] would save %d records", len(records))
+        log.info("  [dry-run] not written")
         return
-
-    lib = load_year(year)
-    # Store ALL columns — name_en and name_zh now included
-    lib["by_date"][ds] = {
-        r["code"]: {
-            "name_en": r["name_en"],   # NAME OF STOCK
-            "name_zh": r["name_zh"],   # 股票名稱
-            "tv":      r["tv"],        # 成交金額
-            "vol":     r["vol"],       # 成交股數
-            "high":    r["high"],      # 最高
-            "low":     r["low"],       # 最低
-            "close":   r["close"],     # 收市
-        }
-        for r in records
-    }
-    save_year(year, lib)
-
-    # Save previous trading day's short selling data
-    # short_records fields: name (股票名稱), sv (股數SH), st (金額$)
-    if short_records:
-        prev_td = last_trading_day(d - timedelta(days=1))
-        short_save_day(prev_td, short_records)
-        log.info("  short sell saved for %s: %d stocks",
-                 prev_td.isoformat(), len(short_records))
-
-    # Update name_map — never overwrite verified entries
-    nm      = load_name_map()
-    changed = False
-    for code, names in name_updates.items():
-        if code not in nm or not nm[code].get("verified"):
-            nm[code] = names
-            changed  = True
-    if changed:
-        save_name_map(nm)
-        log.info("  name_map updated (%d codes)", len(name_updates))
+    year = d.year
+    lib  = _load(year)
+    lib["by_date"][ds] = records
+    _save(year, lib)
 
 
-# ── Main build logic ──────────────────────────────────────────────────────────
+# ── Build ─────────────────────────────────────────────────────────────────────
 
-def build(start: date, end: date,
-          force_date: date | None = None, dry_run: bool = False):
-    years_needed = set(range(start.year, end.year + 1))
-    libs = {y: load_year(y) for y in years_needed}
+def build(start: date, end: date, dry_run: bool = False):
+    """
+    For each trading day D in [start, end]:
+      Fetch d{D}c.htm → parse top section → save turnover for D.
+    """
+    days = all_trading_days(start, end)
+    log.info("Turnover build: %d dates  %s → %s  dry_run=%s",
+             len(days), start, end, dry_run)
 
-    days_to_check = [force_date] if force_date else all_trading_days(start, end)
-
-    fetch_queue = []
-    skipped     = 0
-    for d in days_to_check:
-        ds       = d.isoformat()
-        lib      = libs.get(d.year, {"by_date": {}})
-        is_today = (d == date.today())
-        status   = day_status(ds, lib, is_today=is_today)
-        if status == "ok" and not force_date:
-            skipped += 1
-            continue
-        fetch_queue.append((d, status))
-
-    log.info("Build plan: %d to fetch, %d already ok (skipped)",
-             len(fetch_queue), skipped)
-    for d, st in fetch_queue:
-        log.info("  → %s  [%s]", d.isoformat(), st)
-
-    if not fetch_queue:
-        log.info("Nothing to do — all dates complete.")
-        return
-    if dry_run:
-        log.info("[dry-run] No changes made.")
-        return
-
-    fetched = failed = 0
-    for d, status in fetch_queue:
-        log.info("Fetching %s  (%s)…", d.isoformat(), status)
-        body = fetch_raw(d)
+    ok = failed = 0
+    for d in days:
+        log.info("Fetching %s …", d)
+        body = fetch(d)
         if not body:
-            log.warning("  Empty response — skipping %s", d)
             failed += 1
             time.sleep(SLEEP_SEC)
             continue
-        records, name_updates, short_records = parse_dayquot(body)
+        records = parse(body)
         if not records:
-            log.warning("  0 records parsed for %s — skipping", d)
+            log.warning("%s: 0 records parsed", d)
             failed += 1
             time.sleep(SLEEP_SEC)
             continue
-        is_today  = (d == date.today())
-        threshold = MIN_RECORDS_TODAY if is_today else MIN_RECORDS_ARCHIVE
-        if len(records) < threshold:
-            log.warning(
-                "  Only %d records for %s (need >= %d for %s) — skipping.",
-                len(records), d, threshold,
-                "today's full-market file" if is_today else "archive file"
-            )
-            failed += 1
-            time.sleep(SLEEP_SEC)
-            continue
-        save_day(d, records, name_updates,
-                 short_records=short_records, dry_run=False)
-        fetched += 1
+        save_day(d, records, dry_run=dry_run)
+        ok += 1
         time.sleep(SLEEP_SEC)
 
-    log.info("Done: %d fetched, %d failed/skipped", fetched, failed)
+    log.info("Done. Saved=%d  Failed=%d", ok, failed)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="HKEX turnover backfill")
+    ap = argparse.ArgumentParser(description="HKEX turnover library builder")
     ap.add_argument("--dry-run", action="store_true",
-                    help="Print what would be fetched without making changes")
+                    help="Preview without writing")
     ap.add_argument("--date",    metavar="YYMMDD",
-                    help="Force-refetch one specific date, e.g. 260320")
+                    help="Rebuild a single date, e.g. 260326")
     ap.add_argument("--from",    dest="from_date", metavar="YYMMDD",
-                    help="Override start date (default: 260202)")
+                    help="Override start date, e.g. 260201")
     args = ap.parse_args()
 
-    today = date.today()
+    def _d(s): return date(2000 + int(s[:2]), int(s[2:4]), int(s[4:]))
 
     if args.date:
-        ds    = args.date.strip()
-        force = date(2000 + int(ds[:2]), int(ds[2:4]), int(ds[4:6]))
-        build(force, force, force_date=force, dry_run=args.dry_run)
+        d = _d(args.date)
+        build(d, d, dry_run=args.dry_run)
     else:
-        start = START_DATE
-        if args.from_date:
-            ds    = args.from_date.strip()
-            start = date(2000 + int(ds[:2]), int(ds[2:4]), int(ds[4:6]))
-        build(start, today, dry_run=args.dry_run)
+        start = _d(args.from_date) if args.from_date else START_DATE
+        build(start, date.today(), dry_run=args.dry_run)
