@@ -147,8 +147,13 @@ def fetch(d: date) -> str | None:
         except Exception:
             text = resp.content.decode("latin-1", errors="replace")
             log.warning("latin-1 fallback for %s", d)
-        pre = BeautifulSoup(text, "html.parser").find("pre")
-        return pre.get_text() if pre else text
+        # The file has TWO <pre> blocks: [0] quotation section, [1] short section.
+        # find("pre") only returns the first — we need ALL of them joined.
+        soup = BeautifulSoup(text, "html.parser")
+        pres = soup.find_all("pre")
+        if pres:
+            return "\n".join(p.get_text() for p in pres)
+        return text
     except Exception as e:
         log.error("Fetch failed %s: %s", d, e)
         return None
