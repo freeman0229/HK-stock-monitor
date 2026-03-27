@@ -117,7 +117,13 @@ def _save(year: int, lib: dict):
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
 def fetch(d: date) -> str | None:
-    """Fetch d{YYMMDD}c.htm and return Big5-decoded <pre> text, or None."""
+    """Fetch d{YYMMDD}c.htm and return Big5-decoded <pre> text, or None.
+
+    The HKEX quotation file splits data across MULTIPLE <pre> blocks
+    (one per page of ~150 stocks each).  find("pre") only gets the first
+    page.  We join ALL blocks — the turnover regex (_PAT) won't match
+    short-section lines (different column count, no currency code).
+    """
     url = (f"https://www.hkex.com.hk/chi/stat/smstat/dayquot/"
            f"d{d.strftime('%y%m%d')}c.htm")
     try:
@@ -133,8 +139,13 @@ def fetch(d: date) -> str | None:
         except Exception:
             text = resp.content.decode("latin-1", errors="replace")
             log.warning("latin-1 fallback for %s", d)
-        pre = BeautifulSoup(text, "html.parser").find("pre")
-        return pre.get_text() if pre else text
+        # Join ALL <pre> blocks — quotation data spans multiple pages
+        soup = BeautifulSoup(text, "html.parser")
+        pres = soup.find_all("pre")
+        if pres:
+            log.debug("%s: %d <pre> blocks found", d, len(pres))
+            return "\n".join(p.get_text() for p in pres)
+        return text
     except Exception as e:
         log.error("Fetch failed %s: %s", d, e)
         return None
