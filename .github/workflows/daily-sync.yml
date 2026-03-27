@@ -25,7 +25,6 @@ on:
           - sdw-weekly       # manual trigger for weekly SDW update
           - sfc-build        # full SFC backfill from 2018-01-01 (run multiple times)
           - turnover-build   # backfill turnover library from 2026-02-02 (adds high/low/close)
-          - short-build      # backfill short selling library from 2026-03-20
 
 # Cancel any in-progress run of the same workflow when a new one is triggered.
 # This prevents multiple github-pages artifacts accumulating across runs,
@@ -55,9 +54,6 @@ jobs:
 
       - name: Backfill any missing or bad turnover dates
         run: python build_turnover.py
-
-      - name: Backfill any missing short selling dates
-        run: python build_short.py
 
       - name: Update Stock Connect top10 (today + repair incomplete history)
         run: python sc_top10_library.py --update
@@ -310,34 +306,6 @@ jobs:
             (git commit -m "SFC weekly: $(date +'%Y-%m-%d')" && git push)
 
   # ── Short selling backfill (manual — fetches missing dates from 2026-03-20) ─
-  short-build:
-    name: Short selling library backfill (2026-03-20 to today)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: write
-    if: |
-      github.event_name == 'workflow_dispatch' && inputs.job == 'short-build'
-
-    steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
-        with: { python-version: '3.11', cache: 'pip' }
-      - run: pip install -r requirements.txt
-      - name: Backfill missing dates and fix records without names
-        run: |
-          python build_short.py --fix-names
-          python build_short.py
-      - name: Commit
-        run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          for f in short_20*.json; do
-            [ -f "$f" ] && git add "$f"
-          done
-          git diff --staged --quiet || \
-            (git commit -m "Short build: $(date +'%Y-%m-%d %H:%M')" && git push)
-
   # ── Turnover backfill (manual — fetches missing/bad dates, adds high/low/close) ─
   turnover-build:
     name: Turnover library backfill (2026-02-02 to today)
