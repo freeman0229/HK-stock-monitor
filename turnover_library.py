@@ -71,15 +71,25 @@ def all_stored_dates() -> set:
 
 def save_day(d: datetime, records: dict):
     """
-    Save one day's turnover/volume into the library.
+    Merge one day's records into the library (does NOT overwrite).
     records: {code: {"tv": int, "vol": int, "close": float}}
+
+    Uses merge so that build_turnover.py's full-market data (2100+ stocks)
+    is not wiped when main.py saves its smaller ~57-stock set.
+    main.py fields take precedence for the stocks it covers.
     """
     if not records:
         return
     ds   = d.strftime("%Y-%m-%d")
     year = d.year
     lib  = load_year(year)
-    lib["by_date"][ds] = records
+    existing = lib["by_date"].get(ds, {})
+    for code, rec in records.items():
+        if code in existing and isinstance(existing[code], dict):
+            existing[code].update(rec)
+        else:
+            existing[code] = rec
+    lib["by_date"][ds] = existing
     save_year(year, lib)
 
 
