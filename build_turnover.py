@@ -5,7 +5,7 @@ Fetches full-market daily quotation data for every trading day from
 START_DATE to today, storing all listed stocks with non-zero turnover.
 
 Sources:
-  Today   : https://www.hkex.com.hk/chi/stat/smstat/dayquot/qtn_c.asp
+  Today   : https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
   Archive : https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
 
 Both use Pattern B (Big5-encoded pre-formatted text):
@@ -37,6 +37,7 @@ from datetime import date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
+from short_library import save_day as short_save_day
 
 try:
     import holidays as hol_lib
@@ -53,7 +54,7 @@ log = logging.getLogger(__name__)
 START_DATE  = date(2026, 2, 2)
 SLEEP_SEC   = 1.5
 
-# Full-market threshold (today: qtn_c.asp returns 500–800 stocks)
+# Full-market threshold (today: d{YYMMDD}c.htm returns 500–800 stocks)
 MIN_RECORDS_TODAY = 200
 # Archive threshold (d{YYMMDD}c.htm returns only top ~60 stocks by turnover — that is the
 # complete content of the archive file, not a parse failure)
@@ -68,11 +69,10 @@ NAME_MAP_FILE = "name_map.json"
 
 # ── URLs ──────────────────────────────────────────────────────────────────────
 
-# Live full-market quotation (today only, Big5, <pre> text)
-_URL_TODAY = "https://www.hkex.com.hk/chi/stat/smstat/dayquot/qtn_c.asp"
-
-# Archive full-market quotation (historical dates, Big5, <pre> text)
-_URL_ARCHIVE = "https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{yymmdd}c.htm"
+# Daily quotation + short selling file (same URL for today and archive).
+# TOP:    today's quotation  (代號 NAME 股票名稱 CURR PRV BID ASK HIGH LOW 收市 成交股數 成交金額)
+# BOTTOM: prev day's short   (代號 股票名稱 股數(SH) 金額($))
+_URL_DAYQUOT = "https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{yymmdd}c.htm"
 
 # ── HK Public Holidays ────────────────────────────────────────────────────────
 
@@ -95,6 +95,12 @@ _HK_HOL_HARDCODED = {
     "2026-10-01", "2026-10-26",
     "2026-12-25", "2026-12-26",
 }
+
+def last_trading_day(d: date) -> date:
+    """Return d if it is a trading day, otherwise the most recent prior trading day."""
+    while not is_trading_day(d):
+        d -= timedelta(days=1)
+    return d
 
 def _is_hk_holiday(d: date) -> bool:
     if _USE_HOL_LIB:
@@ -151,7 +157,7 @@ def day_status(ds: str, lib: dict, is_today: bool = False) -> str:
     """
     'missing'   — date not stored
     'partial'   — stored but record count below threshold for this source:
-                  today (qtn_c.asp): needs >= MIN_RECORDS_TODAY (200)
+                  today (d{YYMMDD}c.htm): needs >= MIN_RECORDS_TODAY (200)
                   archive: needs >= MIN_RECORDS_ARCHIVE (30)
     'ok'        — complete
     """
@@ -177,22 +183,15 @@ def _decode(content: bytes) -> str:
 
 def fetch_raw(d: date) -> str | None:
     """
-    Download and decode the quotation file for date d.
-    Today → qtn_c.asp (live full-market file)
-    Historical → d{YYMMDD}c.htm (archive)
-    Returns <pre> body text or None.
+    Download and decode d{YYMMDD}c.htm for date d.
+    Contains top (quotation) and bottom (previous day short selling) sections.
+    Returns full <pre> body text, or None on failure.
     """
-    is_today = (d == date.today())
-
-    if is_today:
-        url = _URL_TODAY
-    else:
-        url = _URL_ARCHIVE.format(yymmdd=d.strftime("%y%m%d"))
-
+    url = _URL_DAYQUOT.format(yymmdd=d.strftime("%y%m%d"))
     try:
         resp = requests.get(url, headers=HEADERS, timeout=30)
         if resp.status_code == 404:
-            log.warning("404 for %s — not published yet or non-trading day", d)
+            log.warning("404 for %s — not yet published or non-trading day", d)
             return None
         resp.raise_for_status()
         text = _decode(resp.content)
@@ -204,6 +203,7 @@ def fetch_raw(d: date) -> str | None:
     except Exception as e:
         log.error("fetch_raw failed for %s: %s", d, e)
         return None
+
 
 # ── Pattern B parser ──────────────────────────────────────────────────────────
 #
@@ -225,6 +225,55 @@ _PAT = re.compile(
     r"([\d,]{5,})\s+"                     # g7: 成交股數 (volume)
     r"([\d,]{8,})\s*$"                    # g8: 成交金額 (turnover HKD)
 )
+
+# ── Short selling section parser (bottom of d{YYMMDD}c.htm) ─────────────────
+# Previous trading day columns: 代號  股票名稱  股數(SH)  金額($)
+
+_SHORT_PAT = re.compile(
+    r"^\s{0,8}(\d{1,6})\s+"   # g1: 代號
+    r"(.+?)\s{2,}"              # g2: 股票名稱
+    r"([\d,]+)\s+"             # g3: 股數(SH)
+    r"([\d,]+)\s*$"            # g4: 金額($)
+)
+_SHORT_SKIP = frozenset({
+    "\u80a1\u7968\u4ee3\u865f", "\u6c96\u7a7a\u6210\u4ea4\u91cf",
+    "\u5408\u8a08", "TOTAL", "CODE", "NAME OF STOCK",
+    "\u4ee3\u865f", "\u80a1\u7968\u540d\u7a31",
+    "\u80a1\u6578", "\u91d1\u984d",
+})
+
+def parse_short_section(body: str) -> dict:
+    """
+    Parse the short selling section at the bottom of d{YYMMDD}c.htm.
+    This section contains the PREVIOUS trading day's short selling data.
+    Returns {code5: {"sv": int, "st": float, "name": str}}.
+    """
+    records  = {}
+    in_short = False
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not in_short:
+            # Section header contains "股數" and "SH"
+            if "\u80a1\u6578" in stripped and "SH" in stripped:
+                in_short = True
+            continue
+        m = _SHORT_PAT.match(line)
+        if not m:
+            continue
+        code_int = int(m.group(1))
+        if code_int < 1 or code_int > 9999:
+            continue
+        code = str(code_int).zfill(5)
+        name = m.group(2).strip()
+        if name in _SHORT_SKIP or not name:
+            continue
+        sv = int(m.group(3).replace(",", ""))
+        st = float(m.group(4).replace(",", ""))
+        if sv <= 0:
+            continue
+        if code not in records or sv > records[code]["sv"]:
+            records[code] = {"sv": sv, "st": st, "name": name}
+    return records
 
 def _to_float(s: str) -> float:
     s = s.replace(",", "").strip()
@@ -283,11 +332,19 @@ def parse_dayquot(body: str) -> tuple:
         for r in records
         if r["name_zh"] and r["name_zh"] != r["name_en"]
     }
-    return records, name_updates
+    short_records = parse_short_section(body)
+    return records, name_updates, short_records
 
 # ── Save one day ──────────────────────────────────────────────────────────────
 
-def save_day(d: date, records: list, name_updates: dict, dry_run: bool = False):
+def save_day(d: date, records: list, name_updates: dict,
+             short_records: dict | None = None, dry_run: bool = False):
+    """
+    Save one day's turnover data and (if provided) the previous trading day's
+    short selling data parsed from the bottom section of the same file.
+
+    short_records — {code5: {sv, st, name}} for the previous trading day.
+    """
     if not records:
         log.warning("No records to save for %s — skipping", d)
         return
@@ -311,6 +368,13 @@ def save_day(d: date, records: list, name_updates: dict, dry_run: bool = False):
         for r in records
     }
     save_year(year, lib)
+
+    # Save the previous trading day's short selling data from the bottom section
+    if short_records:
+        prev_td = last_trading_day(d - timedelta(days=1))
+        short_save_day(prev_td, short_records)
+        log.info("  short sell saved for %s: %d stocks",
+                 prev_td.isoformat(), len(short_records))
 
     # Update name_map — never overwrite verified entries
     nm      = load_name_map()
@@ -369,7 +433,7 @@ def build(start: date, end: date,
             failed += 1
             time.sleep(SLEEP_SEC)
             continue
-        records, name_updates = parse_dayquot(body)
+        records, name_updates, short_records = parse_dayquot(body)
         if not records:
             log.warning("  0 records parsed for %s — skipping", d)
             failed += 1
@@ -387,7 +451,7 @@ def build(start: date, end: date,
             failed += 1
             time.sleep(SLEEP_SEC)
             continue
-        save_day(d, records, name_updates, dry_run=False)
+        save_day(d, records, name_updates, short_records=short_records, dry_run=False)
         fetched += 1
         time.sleep(SLEEP_SEC)
 

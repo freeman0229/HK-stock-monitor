@@ -174,7 +174,7 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
     """
     Fetches HKEX full-market daily quotation (Pattern B, Big5).
 
-    Today  : https://www.hkex.com.hk/chi/stat/smstat/dayquot/qtn_c.asp
+    Today  : https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
              (live full-market file, 500–800 stocks)
     Archive: https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
 
@@ -184,13 +184,11 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
     """
     date     = date or datetime.now()
     date_str = date.strftime("%y%m%d")
-    is_today = date.date() == datetime.now().date()
-
-    # Use live full-market file for today; archive for historical dates
-    if is_today:
-        url = "https://www.hkex.com.hk/chi/stat/smstat/dayquot/qtn_c.asp"
-    else:
-        url = f"https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{date_str}c.htm"
+    # d{YYMMDD}c.htm is the same URL for all dates including today.
+    # It contains both today's quotation (top) and yesterday's short selling (bottom).
+    # The short bottom section is handled by build_turnover.py; here we only parse
+    # the top (quotation) section.
+    url = f"https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{date_str}c.htm"
 
     try:
         resp = requests.get(url, headers=HEADERS, timeout=30)
@@ -293,174 +291,47 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
         log.error("get_daily_quotation failed (%s): %s", date_str, e)
         return EMPTY_QUOTE
 
-# ── Source 2: Short selling ───────────────────────────────────────────────────
-# URL priority: modern page (table HTML) → legacy static file (Big5 pre-text)
-_SS_URL_MODERN = (
-    "https://www.hkex.com.hk/Market-Data/Statistics/Securities-Market/"
-    "Short-Selling-Turnover-Today?sc_lang=zh-HK"
-)
-_SS_URL_LEGACY = (
-    "https://www.hkex.com.hk/chi/stat/smstat/ssturnover/ncms/ashtmain_c.htm"
-)
+# ── Source 2: Short selling — loaded from short_library ─────────────────────────
+# Short selling data is parsed from the bottom of d{YYMMDD}c.htm by build_turnover.py.
+# Each file contains the PREVIOUS trading day's short data, so the library entry
+# for a given date was stored when the NEXT day's file was fetched.
 EMPTY_SHORT = pd.DataFrame(columns=["stock_code", "name", "short_volume", "short_turnover"])
 
-# Pre-formatted text pattern: CODE  CHI_NAME  SHARES  AMOUNT
-_SS_PRE_PAT  = re.compile(
-    r'^\s{0,8}(\d{1,6})\s{1,4}'
-    r'(.+?)\s{2,}'
-    r'([\d,]+)\s+'
-    r'([\d,]+)\s*$'
-)
-_SS_SKIP = frozenset({
-    "股票代號","沽空成交量","合計","TOTAL","CODE","NAME OF STOCK","代號","股票名稱"
-})
-
-def _is_valid_cjk_name(s: str) -> bool:
-    return bool(s) and any('\u4e00' <= c <= '\u9fff' for c in s)
-
-def _parse_ss_table(raw: bytes) -> list[dict]:
-    """Parse the modern HKEX HTML table (UTF-8). Returns list of row dicts."""
-    text = raw.decode("utf-8", errors="replace")
-    soup = BeautifulSoup(text, "html.parser")
-    # Find table containing 代號/CODE and 股數/VOLUME
-    target = None
-    for table in soup.find_all("table"):
-        tc = table.get_text()
-        if ("代號" in tc or "CODE" in tc) and ("股數" in tc or "VOLUME" in tc):
-            target = table
-            break
-    if not target:
-        return []
-    # Detect column positions from header row
-    col_code = col_name = col_sv = col_st = None
-    header_row = target.find("tr")
-    if header_row:
-        for i, cell in enumerate(header_row.find_all(["th", "td"])):
-            h = cell.get_text(strip=True)
-            if "代號" in h or h.upper() in ("CODE", "STOCK CODE"):
-                col_code = i
-            elif "名稱" in h or "NAME" in h.upper():
-                col_name = i
-            elif "股數" in h or "VOLUME" in h.upper() or "SHARES" in h.upper():
-                col_sv = i
-            elif "金額" in h or "AMOUNT" in h.upper() or "TURNOVER" in h.upper():
-                col_st = i
-    if col_code is None: col_code = 0
-    if col_name is None: col_name = 1
-    if col_sv   is None: col_sv   = 2
-    if col_st   is None: col_st   = 3
-    rows = []
-    seen = set()
-    for tr in target.find_all("tr")[1:]:
-        cells = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
-        if len(cells) <= max(col_code, col_name, col_sv, col_st):
-            continue
-        raw_code = cells[col_code].strip().lstrip("0")
-        if not raw_code.isdigit():
-            continue
-        code_int = int(raw_code)
-        if code_int < 1 or code_int > 9999:
-            continue
-        code = str(code_int).zfill(5)
-        if code in seen:
-            continue
-        seen.add(code)
-        name = cells[col_name].strip()
-        try:
-            sv = float(cells[col_sv].replace(",", ""))
-            st = float(cells[col_st].replace(",", ""))
-        except (ValueError, AttributeError):
-            continue
-        if sv <= 0 and st <= 0:
-            continue
-        rows.append({"stock_code": code,
-                     "name":         name if _is_valid_cjk_name(name) else "",
-                     "short_volume": sv,
-                     "short_turnover": st})
-    return rows
-
-def _parse_ss_pre(raw: bytes, encoding: str) -> list[dict]:
-    """Parse Big5/latin-1 <pre>-formatted short sell file."""
-    try:
-        text = raw.decode(encoding, errors="replace")
-    except Exception:
-        text = raw.decode("latin-1", errors="replace")
-    pre  = BeautifulSoup(text, "html.parser").find("pre")
-    body = pre.get_text() if pre else text
-    rows = []
-    seen = set()
-    for line in body.splitlines():
-        m = _SS_PRE_PAT.match(line)
-        if not m:
-            continue
-        code_int = int(m.group(1))
-        if code_int < 1 or code_int > 9999:
-            continue
-        code = str(code_int).zfill(5)
-        name = m.group(2).strip()
-        if name in _SS_SKIP or not name or code in seen:
-            continue
-        seen.add(code)
-        sv = to_num(m.group(3))
-        st = to_num(m.group(4))
-        if sv <= 0 and st <= 0:
-            continue
-        rows.append({"stock_code": code, "name": name,
-                     "short_volume": sv, "short_turnover": st})
-    return rows
-
-def get_short_sell_today() -> pd.DataFrame:
+def get_short_sell_today(trading_day: datetime) -> pd.DataFrame:
     """
-    Fetch today's short selling data.
-    Priority: modern HKEX page (HTML table) → legacy Big5 static file.
-    Returns DataFrame with columns: stock_code, name, short_volume, short_turnover.
+    Load short selling data from the library for trading_day.
+    Falls back to the most recent prior day if today's data is not yet
+    available (current day short is stored after the next day's file is fetched).
     """
-    # ── Try modern page (HTML table, UTF-8) ───────────────────────────────────
-    try:
-        r = requests.get(_SS_URL_MODERN, headers=HEADERS, timeout=30)
-        if r.status_code == 200 and len(r.content) > 2000:
-            text = r.content.decode("utf-8", errors="replace")
-            if "代號" in text or "股票名稱" in text or (
-                    "Short" in text and "<table" in text.lower()):
-                rows = _parse_ss_table(r.content)
-                if len(rows) >= 10:
-                    log.info("Short sell today: %d records (modern page)", len(rows))
-                    return pd.DataFrame(rows)
-                log.debug("Modern page table had only %d rows — falling back", len(rows))
-    except Exception as e:
-        log.debug("Modern short sell URL failed: %s", e)
+    from short_library import load_year as _sl_load
+    target = trading_day.date()
+    for _ in range(10):
+        ds  = target.isoformat()
+        day = _sl_load(target.year).get("by_date", {}).get(ds)
+        if day:
+            rows = [
+                {"stock_code":     code,
+                 "name":           v.get("name", ""),
+                 "short_volume":   v.get("sv", 0),
+                 "short_turnover": v.get("st", 0.0)}
+                for code, v in day.items()
+                if isinstance(v, dict) and v.get("sv", 0) > 0
+            ]
+            if rows:
+                if ds != trading_day.strftime("%Y-%m-%d"):
+                    log.info("Short sell: using %s (today not yet available)", ds)
+                else:
+                    log.info("Short sell: %d stocks from %s", len(rows), ds)
+                return pd.DataFrame(rows)
+        target = last_trading_day(target - timedelta(days=1))
+    log.warning("Short sell: no data found near %s",
+                trading_day.strftime("%Y-%m-%d"))
+    return EMPTY_SHORT
 
-    # ── Fall back to legacy static file (Big5) ────────────────────────────────
-    try:
-        r = requests.get(_SS_URL_LEGACY, headers=HEADERS, timeout=30)
-        r.raise_for_status()
-        rows = _parse_ss_pre(r.content, "big5")
-        df   = pd.DataFrame(rows) if rows else EMPTY_SHORT
-        log.info("Short sell today: %d records (legacy file)", len(df))
-        return df
-    except Exception as e:
-        log.error("get_short_sell_today failed: %s", e)
-        return EMPTY_SHORT
 
 def save_short_sell(date: datetime, df: pd.DataFrame):
-    if df.empty:
-        return
-    records = {r.stock_code: {
-        "sv":   int(r.short_volume),
-        "st":   float(r.short_turnover),
-        "name": r.name,
-    } for r in df.itertuples()}
-    short_save_day(date, records)
-    log.info("Saved short sell: %s (%d)", date.strftime("%Y-%m-%d"), len(records))
-
-def get_short_avg_ratio(stock_codes: list, days: int, daily_tv: dict,
-                        before: str) -> pd.DataFrame:
-    rows = []
-    for c in stock_codes:
-        v = get_short_ratio_history(c, days, before, daily_tv)
-        rows.append({"stock_code": c,
-                     "short_avg": round(sum(v) / len(v), 2) if v else 0.0})
-    return pd.DataFrame(rows)
+    """No-op — short data is now saved by build_turnover.py, not main.py."""
+    pass
 
 # ── Source 3: CCASS southbound ────────────────────────────────────────────────
 CCASS_URL   = "https://www3.hkexnews.hk/sdw/search/mutualmarket_c.aspx"
@@ -738,8 +609,8 @@ def run_analysis():
     }
 
     # ── 2. Short selling (full market: 800+ stocks) ───────────────────────────
-    df_short = get_short_sell_today()
-    save_short_sell(trading_day, df_short)
+    df_short = get_short_sell_today(trading_day)
+    # save_short_sell is a no-op — data is saved by build_turnover.py
     short_map     = {}   # code → short_ratio % (needs traded vol from quotation)
     short_vol_map = {}   # code → short volume (shares)
     short_st_map  = {}   # code → short turnover (HKD)
@@ -980,6 +851,23 @@ def run_analysis():
         days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
         vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
 
+        # net_buy_vol = traded volume minus short-sold volume (non-short demand proxy)
+        # Use _tv_recent (already loaded) and short history to build 24-day net_buy series
+        net_buy_vol_today = max(0, today_vol - short_vol_today)
+        sh_hist24         = get_short_history(code, 24, today_ds)
+        sh_sv_by_date     = {e["date"]: e["sv"] for e in sh_hist24}
+        nbv_hist = []
+        for yyyymmdd in sorted(_tv_recent.keys(), reverse=True)[:24]:
+            ds_iso = f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
+            rec    = _tv_recent[yyyymmdd].get(code.zfill(5), {})
+            v      = rec.get("vol", 0) if isinstance(rec, dict) else 0
+            sv     = sh_sv_by_date.get(ds_iso, 0)
+            nbv    = max(0, v - sv)
+            if nbv > 0:
+                nbv_hist.append(nbv)
+        avg_nbv24     = sum(nbv_hist) / len(nbv_hist) if nbv_hist else 0
+        net_buy_ratio = round(net_buy_vol_today / avg_nbv24, 2) if avg_nbv24 > 0 else 0.0
+
         tv_hist24  = get_tv_history(code, 24, today_ds)
         tv_avg24   = sum(tv_hist24) / len(tv_hist24) if tv_hist24 else 0.0
         tv_ratio   = round(turnover / tv_avg24, 2)  if tv_avg24 > 0 else 0.0
@@ -1033,6 +921,8 @@ def run_analysis():
             "short_st":       int(short_st_map.get(code, 0)),
             "days_to_cover":  days_to_cover,
             "vol_ratio":      vol_ratio,
+            "net_buy_vol":    int(net_buy_vol_today),
+            "net_buy_ratio":  net_buy_ratio,
             "sfc_sh":         sfc_map.get(code, {}).get("sfc_sh",         0),
             "sfc_hkd":        sfc_map.get(code, {}).get("sfc_hkd",        0.0),
             "sfc_pct":        sfc_map.get(code, {}).get("sfc_pct",        0.0),
