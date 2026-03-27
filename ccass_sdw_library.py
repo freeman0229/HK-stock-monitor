@@ -68,7 +68,7 @@ HEADERS  = {
 }
 
 START_DATE     = date(2025, 3, 23)   # first Friday = 2025-03-28
-SLEEP_SEC      = 0
+SLEEP_SEC      = 0.3   # minimum polite delay — 0 caused HKEX rate-limiting
 SCHEMA_VERSION = 2
 
 # ── Code ranges ───────────────────────────────────────────────────────────────
@@ -509,8 +509,10 @@ def build(update_only: bool = False, specific_date: date = None,
         todo = [c for c in universe if c not in already]
         log.info("  %d stocks to fetch (%d already stored)", len(todo), len(already))
 
-        fetched = 0
-        timed_out = False
+        fetched       = 0
+        timed_out     = False
+        consec_errors = 0   # consecutive failures — triggers backoff
+
         for ci, code in enumerate(todo, 1):
             if deadline and time.monotonic() >= deadline:
                 log.info("  Time limit reached mid-date at stock [%d/%d] — saving progress",
@@ -522,7 +524,18 @@ def build(update_only: bool = False, specific_date: date = None,
             if entry:
                 rl = code_range(code)
                 range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
-                fetched += 1
+                fetched      += 1
+                consec_errors = 0
+            else:
+                consec_errors += 1
+                # Backoff when server rate-limits: every 3 consecutive errors
+                # add a pause (5s, 10s, 15s … capped at 30s)
+                if consec_errors % 3 == 0:
+                    backoff = min(30, 5 * (consec_errors // 3))
+                    log.warning("  %d consecutive errors — backing off %ds",
+                                consec_errors, backoff)
+                    time.sleep(backoff)
+
             time.sleep(SLEEP_SEC)
 
             # Checkpoint: save all ranges every 50 stocks
