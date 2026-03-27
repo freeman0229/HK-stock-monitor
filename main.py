@@ -880,6 +880,14 @@ def run_analysis():
         _ts          = _sdw_total_sh_map.get(code.zfill(5), 0)
         turnover_5d  = round(vol_5d / _ts * 100, 4) if _ts > 0 and vol_5d > 0 else 0.0
 
+        # turnover_ratio = this week's 換手率 vs 4-week rolling average
+        # weeks 1-3 use the same vol_hist24 already loaded — no extra I/O
+        _prior_weeks  = [vol_hist24[i:i+5] for i in range(5, 20, 5)]
+        _valid_weeks  = [sum(w) for w in _prior_weeks if len(w) == 5]
+        _avg_wk_vol   = sum(_valid_weeks) / len(_valid_weeks) if _valid_weeks else 0
+        _avg_to_4w    = _avg_wk_vol / _ts * 100 if _ts > 0 and _avg_wk_vol > 0 else 0.0
+        turnover_ratio = round(turnover_5d / _avg_to_4w, 2) if _avg_to_4w > 0 else 0.0
+
         # net_buy_vol = traded volume minus short-sold volume (non-short demand proxy)
         # Use _tv_recent (already loaded) and short history to build 24-day net_buy series
         net_buy_vol_today = max(0, today_vol - short_vol_today)
@@ -951,6 +959,7 @@ def run_analysis():
             "days_to_cover":  days_to_cover,
             "vol_ratio":      vol_ratio,
             "turnover_5d":    turnover_5d,
+            "turnover_ratio": turnover_ratio,
             "net_buy_vol":    int(net_buy_vol_today),
             "net_buy_ratio":  net_buy_ratio,
             "sfc_sh":         sfc_map.get(code, {}).get("sfc_sh",         0),

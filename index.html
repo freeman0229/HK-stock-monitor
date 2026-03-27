@@ -789,12 +789,13 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th class="num-r mob-hide" data-col="short_avg">均值%</th>
           <th class="num-r mob-hide" data-col="days_to_cover">回補天數</th>
           <th class="num-r mob-hide" data-col="turnover">成交額(萬)</th>
+          <th class="num-r mob-hide" data-col="turnover_5d" title="5日成交量 ÷ CCASS總數 × 100；高亮 = 換手率高於4週均值104%">換手率%</th>
           <th>沽空趨勢</th>
           <th data-col="insight">信號</th>
         </tr>
       </thead>
       <tbody id="body-short">
-        <tr><td colspan="9"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
+        <tr><td colspan="10"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
       </tbody>
     </table>
   </div>
@@ -1130,6 +1131,8 @@ function generateMockData() {
       rank: i+1, rank_new: Math.random()>0.85, rank_change: Math.round((Math.random()-0.5)*10),
       ...s, turnover: tv,
       short_ratio: sr, short_avg: sa,
+      turnover_5d: parseFloat((0.5 + Math.random() * 4).toFixed(2)),
+      turnover_ratio: parseFloat((0.7 + Math.random() * 0.9).toFixed(2)),
       sb_buy: mockSbBuy, sb_sell: mockSbSell, sb_net: sbn,
       // sb_total derived from turnover * sbPct so the participation bar is realistic
       sb_total: i < SB_TOP ? Math.round(tv * mockSbPct / 100) : 0,
@@ -2152,6 +2155,7 @@ function renderShort() {
       <td class="num-r mob-hide">${fmtPct(s.short_avg)}</td>
       <td class="num-r mob-hide ${dtcClass}">${dtcTxt}</td>
       <td class="num-r mob-hide">${fmtM(s.turnover)}</td>
+      <td class="num-r mob-hide ${(s.turnover_ratio > 1.04) ? 'up-txt' : 'na-txt'}">${s.turnover_5d > 0 ? s.turnover_5d.toFixed(2) + '%' : '—'}</td>
       <td class="${diffClass}">${trend}</td>
       <td>${insightBadge(s.insight)}</td>
     </tr>`;
