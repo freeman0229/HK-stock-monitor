@@ -8,7 +8,7 @@ from stock_ref import get_zh_name, get_industry, get_type, STOCKS
 from ccass_library import (get_pct_history, get_sh_history,
                             save_day as ccass_save_day,
                             all_stored_dates as ccass_all_stored_dates)
-from short_library import save_day as short_save_day, get_short_history, get_short_ratio_history
+from short_library import get_short_history, get_short_ratio_history
 from turnover_library import (save_day as tv_save_day, get_tv_history,
                                get_vol_history, get_close_history, get_close,
                                load_recent as tv_load_recent, get_tv)
@@ -304,7 +304,8 @@ def get_short_sell_today(trading_day: datetime) -> pd.DataFrame:
     available (current day short is stored after the next day's file is fetched).
     """
     from short_library import load_year as _sl_load
-    target = trading_day.date()
+    # Work with date objects; convert to datetime only when calling last_trading_day
+    target = trading_day.date() if hasattr(trading_day, 'date') else trading_day
     for _ in range(10):
         ds  = target.isoformat()
         day = _sl_load(target.year).get("by_date", {}).get(ds)
@@ -323,7 +324,11 @@ def get_short_sell_today(trading_day: datetime) -> pd.DataFrame:
                 else:
                     log.info("Short sell: %d stocks from %s", len(rows), ds)
                 return pd.DataFrame(rows)
-        target = last_trading_day(target - timedelta(days=1))
+        # Step back one trading day using date arithmetic (no datetime needed)
+        prev = target - timedelta(days=1)
+        while prev.weekday() >= 5 or datetime(prev.year, prev.month, prev.day) in HK_HOLIDAYS:
+            prev -= timedelta(days=1)
+        target = prev
     log.warning("Short sell: no data found near %s",
                 trading_day.strftime("%Y-%m-%d"))
     return EMPTY_SHORT
@@ -513,7 +518,7 @@ SFC_THRESHOLDS = {
     "general":  (    1.0,    -1.0 ),   # Same as stable
 }
 
-def classify_insight(code, stock_type, short_ratio, short_avg,
+def classify_insight(stock_type, short_ratio, short_avg,
                      turnover, tv_avg5,
                      pct_delta=0.0,
                      days_to_cover=0.0, vol_ratio=0.0,
@@ -546,6 +551,20 @@ def classify_insight(code, stock_type, short_ratio, short_avg,
     return None
 
 # ── Main analysis ─────────────────────────────────────────────────────────────
+def get_short_avg_ratio(stock_codes: list, days: int, daily_tv: dict,
+                        before: str) -> pd.DataFrame:
+    """
+    Compute mean short ratio over last `days` sessions for each stock.
+    Ratio = short_vol / traded_vol * 100, using daily_tv for volume lookup.
+    Returns DataFrame with columns: stock_code, short_avg.
+    """
+    rows = []
+    for c in stock_codes:
+        v = get_short_ratio_history(c, days, before, daily_tv)
+        rows.append({"stock_code": c,
+                     "short_avg": round(sum(v) / len(v), 2) if v else 0.0})
+    return pd.DataFrame(rows)
+
 def run_analysis():
     today       = datetime.now()
     trading_day = last_trading_day(today)
@@ -883,7 +902,7 @@ def run_analysis():
         # Signals need price history — suppress for stocks with no turnover history
         has_history = len(tv_hist24) >= 5 and len(vol_hist24) >= 5
         insight = classify_insight(
-            code, stock_type, short_ratio, short_avg,
+            stock_type, short_ratio, short_avg,
             turnover, tv_avg5,
             pct_delta=pct_delta,
             days_to_cover=days_to_cover if has_history else 0.0,

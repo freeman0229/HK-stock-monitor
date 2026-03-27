@@ -1005,14 +1005,10 @@ const sign = n => n > 0 ? '+' : '';
 
 function insightBadge(s) {
   if (!s) return '<span class="na-txt">—</span>';
-  // Handle combined signals like "🚨 北水流出｜異常高沽空"
-  return s.split('｜').map(part => {
-    part = part.trim();
-    const up = ['🔥','🐉','⭐','🎯','📊'].some(e => part.startsWith(e));
-    const dn = ['⚠️','⚠','🚨','📉','❄'].some(e => part.startsWith(e));
-    const cls = up ? 'ins-buy' : (dn ? 'ins-sell' : 'ins-warn');
-    return `<span class="insight ${cls}">${part}</span>`;
-  }).join(' ');
+  const up = ['🔥','🐉','⭐','🎯','📊'].some(e => s.startsWith(e));
+  const dn = ['⚠️','⚠','🚨','📉','❄'].some(e => s.startsWith(e));
+  const cls = up ? 'ins-buy' : (dn ? 'ins-sell' : 'ins-warn');
+  return `<span class="insight ${cls}">${s}</span>`;
 }
 
 const fmtConsec = s => {
