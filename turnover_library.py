@@ -1,24 +1,27 @@
 """
 turnover_library.py — HKEX Daily Turnover & Volume Library
 ===========================================================
-Stores daily turnover (HKD) and volume (shares) for all stocks
-from the HKEX daily quotation file.
+Read-only API used by main.py.  All writes are owned by build_turnover.py.
 
 Library files: turnover_{YYYY}.json — one per year
 
-Structure:
+JSON structure (written by build_turnover.py):
 {
   "meta": {"year": 2026, "last_updated": "...", "total_days": N},
   "by_date": {
     "2026-03-19": {
-      "00700": {"tv": 26800000000, "vol": 62450000, "close": 481.60},
+      "00700": {"name_en": "TENCENT", "name_zh": "騰訊控股",
+                "prev_close": 478.0, "close": 481.6,
+                "vol": 62450000, "tv": 26800000000},
       ...
     }
   }
 }
 
-API for main.py:
-  from turnover_library import save_day, get_tv, get_tv_history, all_stored_dates
+Main API:
+  from turnover_library import (load_year, get_tv, get_tv_history,
+                                 get_vol_history, get_close_history,
+                                 load_recent, get_close)
 """
 
 import os, json, logging
@@ -28,7 +31,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 START_DATE = date(2018, 3, 1)
-
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
@@ -66,7 +68,6 @@ def all_stored_dates() -> set:
                 stored.update(json.load(f).get("by_date", {}).keys())
     return stored
 
-
 # ── API for main.py ───────────────────────────────────────────────────────────
 
 def save_day(d: datetime, records: dict):
@@ -92,7 +93,6 @@ def save_day(d: datetime, records: dict):
     lib["by_date"][ds] = existing
     save_year(year, lib)
 
-
 def get_tv(code: str, ds_yyyymmdd: str) -> float:
     """
     Return turnover for a stock on a given date (YYYYMMDD format).
@@ -108,7 +108,6 @@ def get_tv(code: str, ds_yyyymmdd: str) -> float:
     if isinstance(rec, dict):
         return float(rec.get("tv", 0))
     return float(rec)
-
 
 def get_vol_history(code: str, n: int, before: str) -> list:
     """
@@ -134,7 +133,6 @@ def get_vol_history(code: str, n: int, before: str) -> list:
                 return result
     return result
 
-
 def get_tv_history(code: str, n: int, before: str) -> list:
     """
     Return last n turnover values (HKD) for a stock before date `before`
@@ -158,8 +156,6 @@ def get_tv_history(code: str, n: int, before: str) -> list:
             if len(result) >= n:
                 return result
     return result
-
-
 
 def get_close_history(code: str, n: int, before: str) -> list:
     """
@@ -186,11 +182,8 @@ def get_close_history(code: str, n: int, before: str) -> list:
                 return result
     return result
 
-
-
 # Preferred alias for chart construction — same as get_close_history
 get_price_history = get_close_history
-
 
 def get_close(code: str, ds_yyyymmdd: str) -> float:
     """
@@ -207,7 +200,6 @@ def get_close(code: str, ds_yyyymmdd: str) -> float:
     if isinstance(rec, dict):
         return float(rec.get("close", 0.0))
     return 0.0
-
 
 def load_recent(n_days: int, before: str) -> dict:
     """

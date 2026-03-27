@@ -5,18 +5,14 @@ import holidays
 from bs4 import BeautifulSoup
 from datetime import date, datetime, timedelta
 from stock_ref import get_zh_name, get_industry, get_type, STOCKS
-from ccass_library import (get_pct_history, get_sh_history,
-                            save_day as ccass_save_day,
-                            all_stored_dates as ccass_all_stored_dates)
-from short_library import get_short_history, get_short_ratio_history
-from turnover_library import (save_day as tv_save_day, get_tv_history,
-                               get_vol_history, get_close_history, get_close,
+from ccass_library import get_pct_history, get_sh_history
+from short_library import (get_short_history, get_short_ratio_history,
+                            load_year as sl_load_year)
+from turnover_library import (load_year as tv_load_year,
+                               get_tv_history, get_vol_history,
+                               get_close_history, get_close,
                                load_recent as tv_load_recent, get_tv)
-from sc_top10_library import (get_top10, get_top10_history,
-                               fetch_day as sc_fetch_day,
-                               save_year as sc_save_year,
-                               load_year as sc_load_year,
-                               lib_path as sc_lib_path)
+from sc_top10_library import get_top10, get_top10_history
 try:
     from sfc_library import get_short_position as sfc_get_position, \
     all_report_fridays as sfc_fridays, get_position_history as sfc_get_history
@@ -121,7 +117,6 @@ def save_store(path: str, data: dict):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
 
-
 def send_telegram(msg: str):
     if not TELEGRAM_TOKEN or not CHAT_ID:
         return
@@ -167,131 +162,6 @@ def _seed_name_map_from_ref():
         save_store(NAME_MAP_FILE, store)
         log.info("Seeded name_map with %d verified entries from stock_ref", len(STOCKS))
 
-# ── Source 1: Daily quotation ─────────────────────────────────────────────────
-EMPTY_QUOTE = pd.DataFrame(columns=["stock_code", "name", "name_chi",
-                                     "turnover", "shares", "high", "low", "close"])
-
-def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
-    """
-    Fetches HKEX full-market daily quotation (Pattern B, Big5).
-
-    Today  : https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
-             (live full-market file, 500–800 stocks)
-    Archive: https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
-
-    Pattern B — 12 columns:
-      代號  NAME OF STOCK  股票名稱  CURR  PRV  BID  ASK  HIGH  LOW  收市  成交股數  成交金額
-      g1    g2             g3              skip×3       g4   g5   g6   g7       g8
-    """
-    date     = date or datetime.now()
-    date_str = date.strftime("%y%m%d")
-    # d{YYMMDD}c.htm is the same URL for all dates including today.
-    # It contains both today's quotation (top) and yesterday's short selling (bottom).
-    # The short bottom section is handled by build_turnover.py; here we only parse
-    # the top (quotation) section.
-    url = f"https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{date_str}c.htm"
-
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-
-        try:
-            text    = resp.content.decode("big5", errors="replace")
-            has_chi = any('\u4e00' <= c <= '\u9fff' for c in text[:5000])
-            if not has_chi:
-                raise ValueError
-        except Exception:
-            text = resp.content.decode("latin-1", errors="replace")
-            log.warning("Daily quotation: latin-1 fallback for %s", date_str)
-
-        pre  = BeautifulSoup(text, "html.parser").find("pre")
-        body = pre.get_text() if pre else text
-
-        # Pattern B: 代號 NAME 股票名稱 CURR PRV BID ASK HIGH LOW 收市 成交股數 成交金額
-        PAT = re.compile(
-            r'^[\*\s]{0,5}(\d{1,5})\s+'              # g1: 代號
-            r'(\S[^\u3000\n]{1,22}?)\s{2,}'          # g2: NAME OF STOCK (English)
-            r'(.{1,30}?)\s*'                          # g3: 股票名稱 (Chinese)
-            r'(?:HKD|USD|CNY|EUR|GBP)\s+'            # currency (skip)
-            r'[\d,.NA-]+\s+'                          # PRV   (skip)
-            r'[\d,.NA-]+\s+'                          # BID   (skip)
-            r'[\d,.NA-]+\s+'                          # ASK   (skip)
-            r'([\d,.NA-]+)\s+'                        # g4: HIGH
-            r'([\d,.NA-]+)\s+'                        # g5: LOW
-            r'([\d,.NA-]+)\s+'                        # g6: 收市 (close)
-            r'([\d,]{5,})\s+'                         # g7: 成交股數 (volume)
-            r'([\d,]{8,})\s*$'                        # g8: 成交金額 (turnover HKD)
-        )
-
-        def _price(s: str) -> float:
-            s = s.replace(",", "").strip()
-            return float(s) if s not in ("NA", "--", "-", "", "N/A") else 0.0
-
-        best     = {}
-        name_map = {}
-
-        for line in body.splitlines():
-            m = PAT.match(line)
-            if not m:
-                continue
-            code_int = int(m.group(1))
-            if code_int > 9999:
-                continue
-            code     = str(code_int).zfill(5)
-            name_eng = m.group(2).strip()
-            name_chi = re.sub(r'[\u3000\uff20\uff64\s]+$', '', m.group(3)).strip()
-            high     = _price(m.group(4))
-            low      = _price(m.group(5))
-            close    = _price(m.group(6))
-            volume   = float(m.group(7).replace(',', ''))
-            turnover = float(m.group(8).replace(',', ''))
-
-            if not _is_valid_chinese(name_chi):
-                name_chi = name_eng
-            if turnover <= 0:
-                continue
-            # Keep highest-turnover record if code appears twice
-            if code not in best or turnover > best[code]["turnover"]:
-                zh = get_zh_name(code) or (name_chi if _is_valid_chinese(name_chi) else name_eng)
-                best[code] = {
-                    "stock_code": code,
-                    "name":       name_eng,
-                    "name_chi":   zh,
-                    "turnover":   turnover,
-                    "shares":     volume,
-                    "high":       high,
-                    "low":        low,
-                    "close":      close,
-                }
-                if not get_zh_name(code):
-                    name_map[code] = {"en": name_eng, "zh": zh}
-
-        records = list(best.values())
-
-        if not records:
-            log.warning("Daily quotation: 0 records for %s", date_str)
-            return EMPTY_QUOTE
-
-        _update_name_map(name_map)
-        df = pd.DataFrame(records)
-        df = df[df["turnover"] > 0].sort_values("turnover", ascending=False).reset_index(drop=True)
-        log.info("Daily quotation: %d records for %s (top: %s %s)",
-                 len(df), date_str, df.iloc[0]["stock_code"], df.iloc[0]["name"])
-        return df
-
-    except requests.HTTPError as e:
-        if e.response.status_code == 404:
-            prev = last_trading_day(date - timedelta(days=1))
-            if prev != date:
-                log.warning("Daily quotation 404 for %s, trying %s",
-                            date_str, prev.strftime("%y%m%d"))
-                return get_daily_quotation(prev)
-        log.warning("Daily quotation not available for %s: %s", date_str, e)
-        return EMPTY_QUOTE
-    except Exception as e:
-        log.error("get_daily_quotation failed (%s): %s", date_str, e)
-        return EMPTY_QUOTE
-
 # ── Source 2: Short selling — loaded from short_library ─────────────────────────
 # Short selling data is parsed from the bottom of d{YYMMDD}c.htm by build_turnover.py.
 # Each file contains the PREVIOUS trading day's short data, so the library entry
@@ -304,12 +174,11 @@ def get_short_sell_today(trading_day: datetime) -> pd.DataFrame:
     Falls back to the most recent prior day if today's data is not yet
     available (current day short is stored after the next day's file is fetched).
     """
-    from short_library import load_year as _sl_load
     # Work with date objects; convert to datetime only when calling last_trading_day
     target = trading_day.date() if hasattr(trading_day, 'date') else trading_day
     for _ in range(10):
         ds  = target.isoformat()
-        day = _sl_load(target.year).get("by_date", {}).get(ds)
+        day = sl_load_year(target.year).get("by_date", {}).get(ds)
         if day:
             rows = [
                 {"stock_code":     code,
@@ -333,7 +202,6 @@ def get_short_sell_today(trading_day: datetime) -> pd.DataFrame:
     log.warning("Short sell: no data found near %s",
                 trading_day.strftime("%Y-%m-%d"))
     return EMPTY_SHORT
-
 
 def save_short_sell(date: datetime, df: pd.DataFrame):
     """No-op — short data is now saved by build_turnover.py, not main.py."""
@@ -398,7 +266,6 @@ def get_ccass_southbound(date: datetime = None) -> pd.DataFrame:
         log.error("get_ccass_southbound failed (%s): %s", date_str, e)
         return EMPTY_CCASS
 
-
 def get_ccass_delta_and_avg(stock_codes: list, today_map: dict,
                             today_ds: str, days: int = 25,
                             today_pct_map: dict = None) -> pd.DataFrame:
@@ -460,15 +327,8 @@ def get_ccass_delta_and_avg(stock_codes: list, today_map: dict,
 RANK_HISTORY_FILE = "rank_history.json"
 
 def save_daily_turnover(date: datetime, df: pd.DataFrame):
-    if df.empty:
-        return
-    tv_save_day(date, {r.stock_code: {
-        "tv":    int(r.turnover),
-        "vol":   int(r.shares),
-        "high":  float(r.high)  if hasattr(r, "high")  and r.high  else 0.0,
-        "low":   float(r.low)   if hasattr(r, "low")   and r.low   else 0.0,
-        "close": float(r.close) if hasattr(r, "close") and r.close else 0.0,
-    } for r in df.itertuples()})
+    """No-op — turnover data is written by build_turnover.py, not main.py."""
+    pass
 
 def save_rank_history(date: datetime, results: list):
     store = load_store(RANK_HISTORY_FILE)
@@ -574,59 +434,48 @@ def run_analysis():
 
     _seed_name_map_from_ref()
 
-    # ── 1. Daily quotation (~60 most-traded stocks) ───────────────────────────
-    # This file gives us tv, vol, high, low, close for top stocks only.
-    # It is NOT the full market — do not use it as the stock universe.
-    df_quote = get_daily_quotation(trading_day)
-    if df_quote.empty:
-        log.warning("Daily quotation unavailable for %s — attempting cache fallback", today_ds)
-        _fallback_tv = tv_load_recent(1, today_ds)
-        if _fallback_tv:
-            _fallback_ds  = max(_fallback_tv.keys())
-            _fallback_day = _fallback_tv[_fallback_ds]
-            _nm           = load_store(NAME_MAP_FILE)
-            _fb_rows      = []
-            for _code, _vals in _fallback_day.items():
-                if isinstance(_vals, dict) and _vals.get("tv", 0) > 0:
-                    _nm_entry = _nm.get(_code, {})
-                    _fb_rows.append({
-                        "stock_code": _code,
-                        "name":       _nm_entry.get("en", _code),
-                        "name_chi":   _nm_entry.get("zh", _code),
-                        "turnover":   _vals["tv"],
-                        "shares":     _vals.get("vol", 0),
-                        "high":       _vals.get("high",  0.0),
-                        "low":        _vals.get("low",   0.0),
-                        "close":      _vals.get("close", 0.0),
-                    })
-            if _fb_rows:
-                df_quote = (pd.DataFrame(_fb_rows)
-                              .sort_values("turnover", ascending=False)
-                              .reset_index(drop=True))
-                log.warning("Cache fallback: using %s data (%d stocks)", _fallback_ds, len(df_quote))
-                send_telegram(
-                    f"⚠️ 港股看板：{today_ds} 日報表未能獲取，"
-                    f"以 {_fallback_ds} 緩存數據繼續分析（排名僅供參考）。"
-                )
-        if df_quote.empty:
-            msg = "⚠️ 港股看板：今日日報表未能獲取，且無緩存數據，分析中止。"
+    # ── 1. Daily quotation — read from turnover library (build_turnover.py owns writes) ──
+    _nm      = load_store(NAME_MAP_FILE)
+    _lib_day = tv_load_year(trading_day.year).get("by_date", {}).get(today_ds, {})
+
+    if not _lib_day:
+        # Fallback: use most recent day already in library
+        _fallback = tv_load_recent(1, today_ds)
+        if _fallback:
+            _fallback_ds = max(_fallback.keys())
+            _lib_day     = _fallback[_fallback_ds]
+            log.warning("Turnover library: %s not found — using %s as fallback",
+                        today_ds, _fallback_ds)
+            send_telegram(
+                f"⚠️ 港股看板：{today_ds} 成交數據未找到，"
+                f"以 {_fallback_ds} 緩存數據繼續分析（排名僅供參考）。"
+            )
+        else:
+            msg = ("⚠️ 港股看板：成交數據庫無數據，分析中止。"
+                   "請先執行 build_turnover.py。")
             log.error(msg); send_telegram(msg); return
 
-    save_daily_turnover(trading_day, df_quote)
-
-    # Quotation lookup: code → {tv, vol, high, low, close}
-    quote_map = {
-        r.stock_code: {
-            "tv":    int(r.turnover),
-            "vol":   int(r.shares),
-            "high":  float(r.high)  if hasattr(r, "high")  and r.high  else 0.0,
-            "low":   float(r.low)   if hasattr(r, "low")   and r.low   else 0.0,
-            "close": float(r.close) if hasattr(r, "close") and r.close else 0.0,
-            "name":       r.name,
-            "name_chi":   getattr(r, "name_chi", r.name),
+    # Build quote_map from library data; update name_map with any new names
+    quote_map    = {}
+    _name_updates = {}
+    for _code, _rec in _lib_day.items():
+        if not isinstance(_rec, dict) or _rec.get("tv", 0) <= 0:
+            continue
+        _nm_entry = _nm.get(_code, {})
+        _name_en  = _rec.get("name_en") or _nm_entry.get("en") or _code
+        _name_zh  = _rec.get("name_zh") or _nm_entry.get("zh") or _name_en
+        quote_map[_code] = {
+            "tv":       int(_rec["tv"]),
+            "vol":      int(_rec.get("vol", 0)),
+            "close":    float(_rec.get("close", 0.0)),
+            "name":     _name_en,
+            "name_chi": _name_zh,
         }
-        for r in df_quote.itertuples()
-    }
+        if _code not in _nm:
+            _name_updates[_code] = {"en": _name_en, "zh": _name_zh}
+    if _name_updates:
+        _update_name_map(_name_updates)
+    log.info("Turnover library: %d stocks for %s", len(quote_map), today_ds)
 
     # ── 2. Short selling (full market: 800+ stocks) ───────────────────────────
     df_short = get_short_sell_today(trading_day)
@@ -648,14 +497,12 @@ def run_analysis():
     t2_date = ccass_trade_date(trading_day)
     log.info("T-2 trade date (CCASS settlement): %s", t2_date.strftime("%Y%m%d"))
 
-    df_ccass        = get_ccass_southbound(trading_day)
-    ccass_save_date = trading_day
+    df_ccass = get_ccass_southbound(trading_day)
     if df_ccass.empty:
         prev_td  = last_trading_day(trading_day - timedelta(days=1))
         log.info("CCASS empty for %s, trying %s",
                  trading_day.strftime("%Y-%m-%d"), prev_td.strftime("%Y-%m-%d"))
-        df_ccass        = get_ccass_southbound(prev_td)
-        ccass_save_date = prev_td
+        df_ccass = get_ccass_southbound(prev_td)
 
     ccass_sh_map  = {}
     ccass_pct_map = {}
@@ -664,11 +511,6 @@ def run_analysis():
         ccass_sh_map   = dict(zip(df_ccass["stock_code"], df_ccass["shareholding"]))
         ccass_pct_map  = dict(zip(df_ccass["stock_code"], df_ccass["pct_listed"]))
         ccass_name_map = dict(zip(df_ccass["stock_code"], df_ccass["name"]))
-        ccass_save_day(ccass_save_date, {r.stock_code: {
-            "sh":   r.shareholding,
-            "pct":  r.pct_listed,
-            "name": r.name,
-        } for r in df_ccass.itertuples()})
 
     # ── 4. Full stock universe ────────────────────────────────────────────────
     # Union of: short sell (800+), CCASS (917), quotation (500+)
@@ -773,21 +615,8 @@ def run_analysis():
         sb_map = {}
 
     if not sb_map:
-        log.info("Southbound top10: not in library for %s — attempting live fetch", today_ds)
-        live_rec   = sc_fetch_day(trading_day.date() if isinstance(trading_day, datetime)
-                                  else date.fromisoformat(today_ds))
-        live_count = len(live_rec.get("top10", [])) if live_rec else 0
-        if live_rec and live_count >= _MIN_SB:
-            year = trading_day.year
-            lib  = sc_load_year(year)
-            lib["by_date"][today_ds] = live_rec
-            sc_save_year(year, lib)
-            sb_map = _build_sb_map(live_rec.get("top10", []))
-            log.info("Southbound top10: live fetch — %d stocks for %s", len(sb_map), today_ds)
-        else:
-            log.info("Southbound top10: live fetch returned %d stocks (< %d)", live_count, _MIN_SB)
-
-    if not sb_map:
+        # sc_top10_library.py --update runs before main.py in the workflow.
+        # If today is still missing, fall back to yesterday's library data.
         prev_td = last_trading_day(trading_day - timedelta(days=1))
         prev_ds = prev_td.strftime("%Y-%m-%d")
         sb_map  = _build_sb_map(get_top10(prev_ds))
@@ -795,7 +624,7 @@ def run_analysis():
             sb_date_used = prev_ds
             log.info("Southbound top10: using previous day %s (%d stocks)", prev_ds, len(sb_map))
         else:
-            log.warning("Southbound top10: no data for today or yesterday")
+            log.warning("Southbound top10: no data — run sc_top10_library.py --update")
 
     log.info("Southbound top10: %d stocks for %s", len(sb_map), sb_date_used)
 
@@ -912,7 +741,6 @@ def run_analysis():
         pct_avg24_lvl = round(sum(pct_hist24) / len(pct_hist24), 4) if pct_hist24 else 0.0
         pct_dev    = round(pct_listed - pct_avg24_lvl, 4) if pct_avg24_lvl > 0 else 0.0
 
-
         stock_type = classify_stock(code, name_eng)
         _, ind_zh  = get_industry(code)
 
@@ -1022,7 +850,6 @@ def run_analysis():
                     f" | CCASS {'+' if s['pct_delta']>=0 else ''}{s['pct_delta']}pp"
                 )
         send_telegram("\n".join(lines))
-
 
 if __name__ == "__main__":
     run_analysis()

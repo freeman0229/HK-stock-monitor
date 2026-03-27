@@ -27,10 +27,12 @@ Stored per stock per day in short_{YYYY}.json:
 Rules:
   • Codes 1–9999 only. * or % prefix before code is stripped.
   • If code appears more than once, keep the higher-sv record.
-  • Overwrites existing records for each date (true rebuild).
+  • Incremental by default — skips dates already in library.
+  • If code appears more than once, keep the higher-sv record.
 
 Usage:
-  python build_short.py               # rebuild START_DATE to today
+  python build_short.py               # fetch only missing dates (normal daily use)
+  python build_short.py --rebuild     # re-fetch all dates from scratch
   python build_short.py --dry-run     # preview without writing
   python build_short.py --date 260326 # short for 260326 (fetches 260327)
   python build_short.py --from 260201 # override start date (YYMMDD)
@@ -103,7 +105,6 @@ def next_trading_day(d: date) -> date:
         d += timedelta(days=1)
     return d
 
-
 # ── Library I/O ───────────────────────────────────────────────────────────────
 
 def _lib_path(year: int) -> str:
@@ -126,7 +127,6 @@ def _save(year: int, lib: dict):
         json.dump(lib, f, ensure_ascii=False, separators=(",", ":"))
     mb = os.path.getsize(_lib_path(year)) / 1e6
     log.info("Saved %s: %d days  %.2f MB", _lib_path(year), len(lib["by_date"]), mb)
-
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
@@ -158,7 +158,6 @@ def fetch(d: date) -> str | None:
         log.error("Fetch failed %s: %s", d, e)
         return None
 
-
 # ── Parse ─────────────────────────────────────────────────────────────────────
 #
 # Section detection:
@@ -188,7 +187,6 @@ _SKIP_NAMES = {
     "\u80a1\u6578",              # 股數
     "\u91d1\u984d",              # 金額
 }
-
 
 def parse(body: str) -> dict:
     """
@@ -251,8 +249,7 @@ def parse(body: str) -> dict:
         )
     return out
 
-
-# ── Build ─────────────────────────────────────────────────────────────────────
+# ── Incremental skip ─────────────────────────────────────────────────────────
 
 def _existing_dates() -> set:
     """Return all date strings already saved across all short_{YYYY}.json files."""
@@ -265,7 +262,6 @@ def _existing_dates() -> set:
             except Exception:
                 pass
     return existing
-
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
@@ -340,7 +336,6 @@ def build(start: date, end: date, dry_run: bool = False, rebuild: bool = False):
                  len({d.year for d in short_dates}))
 
     log.info("Done. Saved=%d  Failed=%d", ok, failed)
-
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 

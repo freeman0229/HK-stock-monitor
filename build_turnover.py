@@ -20,10 +20,12 @@ Rules:
   • Codes 1–9999 only. * or % prefix before code is stripped.
   • TRADING SUSPENDED lines are skipped.
   • If code appears more than once, keep the higher-vol record.
-  • Overwrites existing records for each date (true rebuild).
+  • Incremental by default — skips dates already in library.
+  • If code appears more than once, keep the higher-vol record.
 
 Usage:
-  python build_turnover.py               # rebuild START_DATE to today
+  python build_turnover.py               # fetch only missing dates (normal daily use)
+  python build_turnover.py --rebuild     # re-fetch all dates from scratch
   python build_turnover.py --dry-run     # preview without writing
   python build_turnover.py --date 260326 # single date (YYMMDD)
   python build_turnover.py --from 260201 # override start date (YYMMDD)
@@ -89,7 +91,6 @@ def all_trading_days(start: date, end: date) -> list:
         d += timedelta(days=1)
     return out
 
-
 # ── Library I/O ───────────────────────────────────────────────────────────────
 
 def _lib_path(year: int) -> str:
@@ -112,7 +113,6 @@ def _save(year: int, lib: dict):
         json.dump(lib, f, ensure_ascii=False, separators=(",", ":"))
     mb = os.path.getsize(_lib_path(year)) / 1e6
     log.info("Saved %s: %d days  %.2f MB", _lib_path(year), len(lib["by_date"]), mb)
-
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
@@ -150,7 +150,6 @@ def fetch(d: date) -> str | None:
         log.error("Fetch failed %s: %s", d, e)
         return None
 
-
 # ── Parse ─────────────────────────────────────────────────────────────────────
 #
 # Source column order (12 columns):
@@ -183,7 +182,6 @@ def _num(s: str) -> float:
 
 def _has_cjk(s: str) -> bool:
     return any("\u4e00" <= c <= "\u9fff" for c in s)
-
 
 def parse(body: str) -> dict:
     """
@@ -232,8 +230,7 @@ def parse(body: str) -> dict:
             }
     return out
 
-
-# ── Build ─────────────────────────────────────────────────────────────────────
+# ── Incremental skip ─────────────────────────────────────────────────────────
 
 def _existing_dates() -> set:
     """Return all date strings already saved across all turnover_{YYYY}.json files."""
@@ -246,7 +243,6 @@ def _existing_dates() -> set:
             except Exception:
                 pass
     return existing
-
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
@@ -312,7 +308,6 @@ def build(start: date, end: date, dry_run: bool = False, rebuild: bool = False):
                  len({d.year for d in days}))
 
     log.info("Done. Saved=%d  Failed=%d", ok, failed)
-
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
