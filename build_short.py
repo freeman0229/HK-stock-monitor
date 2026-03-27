@@ -254,16 +254,29 @@ def parse(body: str) -> dict:
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-def build(start: date, end: date, dry_run: bool = False):
+def _existing_dates() -> set:
+    """Return all date strings already saved across all short_{YYYY}.json files."""
+    existing = set()
+    for fname in os.listdir("."):
+        if fname.startswith("short_") and fname.endswith(".json"):
+            try:
+                with open(fname, encoding="utf-8") as f:
+                    existing.update(json.load(f).get("by_date", {}).keys())
+            except Exception:
+                pass
+    return existing
+
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+
+def build(start: date, end: date, dry_run: bool = False, rebuild: bool = False):
     """
     For each short date D in [start, end]:
       Fetch d{next_trading_day(D)}c.htm
       Parse bottom section → save short for D.
 
-    Rationale:
-      d{D}c.htm bottom section = short data for D-1.
-      So to get short for D, we need the NEXT day's file.
-      e.g. short for 2026-03-26 is in d260327c.htm.
+    By default skips dates already present in the library (incremental).
+    Pass rebuild=True to re-fetch everything regardless.
 
     Note: short for the most recent trading day is not yet available
     until the following day's file is published. This is expected.
@@ -271,8 +284,19 @@ def build(start: date, end: date, dry_run: bool = False):
     Batches all writes by year — one file write per year, not per date.
     """
     short_dates = all_trading_days(start, end)
-    log.info("Short build: %d dates  %s → %s  dry_run=%s",
-             len(short_dates), start, end, dry_run)
+
+    if not rebuild:
+        existing = _existing_dates()
+        short_dates = [d for d in short_dates if d.isoformat() not in existing]
+        log.info("Short build: %d new dates to fetch  (skipping %d already saved)  dry_run=%s",
+                 len(short_dates), len(all_trading_days(start, end)) - len(short_dates), dry_run)
+    else:
+        log.info("Short build (--rebuild): %d dates  %s → %s  dry_run=%s",
+                 len(short_dates), start, end, dry_run)
+
+    if not short_dates:
+        log.info("Nothing to do — all dates already in library.")
+        return
 
     # Accumulate all records in memory, keyed by year → {date_str: records}
     by_year: dict[int, dict] = {}
@@ -324,6 +348,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="HKEX short selling library builder")
     ap.add_argument("--dry-run", action="store_true",
                     help="Preview without writing")
+    ap.add_argument("--rebuild", action="store_true",
+                    help="Re-fetch all dates even if already in library")
     ap.add_argument("--date",    metavar="YYMMDD",
                     help="Short for this date, e.g. 260326 (fetches 260327's file)")
     ap.add_argument("--from",    dest="from_date", metavar="YYMMDD",
@@ -334,7 +360,7 @@ if __name__ == "__main__":
 
     if args.date:
         d = _d(args.date)
-        build(d, d, dry_run=args.dry_run)
+        build(d, d, dry_run=args.dry_run, rebuild=True)
     else:
         start = _d(args.from_date) if args.from_date else START_DATE
-        build(start, date.today(), dry_run=args.dry_run)
+        build(start, date.today(), dry_run=args.dry_run, rebuild=args.rebuild)

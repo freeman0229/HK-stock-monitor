@@ -235,16 +235,45 @@ def parse(body: str) -> dict:
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
-def build(start: date, end: date, dry_run: bool = False):
+def _existing_dates() -> set:
+    """Return all date strings already saved across all turnover_{YYYY}.json files."""
+    existing = set()
+    for fname in os.listdir("."):
+        if fname.startswith("turnover_") and fname.endswith(".json"):
+            try:
+                with open(fname, encoding="utf-8") as f:
+                    existing.update(json.load(f).get("by_date", {}).keys())
+            except Exception:
+                pass
+    return existing
+
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+
+def build(start: date, end: date, dry_run: bool = False, rebuild: bool = False):
     """
     For each trading day D in [start, end]:
       Fetch d{D}c.htm → parse top section → save turnover for D.
 
+    By default skips dates already present in the library (incremental).
+    Pass rebuild=True to re-fetch everything regardless.
+
     Batches all writes by year — one file write per year, not per date.
     """
     days = all_trading_days(start, end)
-    log.info("Turnover build: %d dates  %s → %s  dry_run=%s",
-             len(days), start, end, dry_run)
+
+    if not rebuild:
+        existing = _existing_dates()
+        days = [d for d in days if d.isoformat() not in existing]
+        log.info("Turnover build: %d new dates to fetch  (skipping %d already saved)  dry_run=%s",
+                 len(days), len(all_trading_days(start, end)) - len(days), dry_run)
+    else:
+        log.info("Turnover build (--rebuild): %d dates  %s → %s  dry_run=%s",
+                 len(days), start, end, dry_run)
+
+    if not days:
+        log.info("Nothing to do — all dates already in library.")
+        return
 
     # Accumulate in memory, keyed by year → {date_str: records}
     by_year: dict[int, dict] = {}
@@ -291,6 +320,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="HKEX turnover library builder")
     ap.add_argument("--dry-run", action="store_true",
                     help="Preview without writing")
+    ap.add_argument("--rebuild", action="store_true",
+                    help="Re-fetch all dates even if already in library")
     ap.add_argument("--date",    metavar="YYMMDD",
                     help="Rebuild a single date, e.g. 260326")
     ap.add_argument("--from",    dest="from_date", metavar="YYMMDD",
@@ -301,7 +332,7 @@ if __name__ == "__main__":
 
     if args.date:
         d = _d(args.date)
-        build(d, d, dry_run=args.dry_run)
+        build(d, d, dry_run=args.dry_run, rebuild=True)
     else:
         start = _d(args.from_date) if args.from_date else START_DATE
-        build(start, date.today(), dry_run=args.dry_run)
+        build(start, date.today(), dry_run=args.dry_run, rebuild=args.rebuild)
