@@ -24,11 +24,9 @@ on:
           - sdw-build        # full SDW backfill — 7 parallel range jobs, 53 dispatches
           - sdw-weekly       # manual trigger for weekly SDW update
           - sfc-build        # full SFC backfill from 2018-01-01 (run multiple times)
-          - turnover-build   # backfill turnover library from 2026-02-02 (adds high/low/close)
+          - turnover-build   # backfill turnover+short libraries (all stocks, all columns)
 
 # Cancel any in-progress run of the same workflow when a new one is triggered.
-# This prevents multiple github-pages artifacts accumulating across runs,
-# which causes deploy-pages@v4 to fail with "Multiple artifacts found".
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -181,9 +179,6 @@ jobs:
             (git commit -m "SC top10 build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
   # ── SDW full backfill — 7 parallel range jobs (manual dispatch) ─────────────
-  # Each dispatch runs all 7 range jobs in parallel, each completing one date's
-  # data for its own range of stock codes. One dispatch ≈ one full Friday of data.
-  # Run 53 times to backfill 2025-03-28 → today. Resumes from last stored date.
   sdw-build:
     name: SDW backfill — range ${{ matrix.range }}
     runs-on: ubuntu-latest
@@ -228,7 +223,6 @@ jobs:
             (git commit -m "SDW ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')" && git push)
 
   # ── SDW weekly — Thu+Fri to capture each new Friday's data ───────────────────
-  # Triggered by the 22:00 HKT Thu/Fri cron. All 7 ranges run in parallel.
   sdw-weekly:
     name: SDW weekly — range ${{ matrix.range }}
     runs-on: ubuntu-latest
@@ -265,7 +259,7 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SDW weekly ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SFC check (also runs daily at 22:00 HKT as part of daily job) ────────────
+  # ── SFC weekly (Saturday 10:00 HKT) ─────────────────────────────────────────
   sfc-weekly:
     name: SFC short position library (manual / Saturday reparse)
     runs-on: ubuntu-latest
@@ -305,10 +299,12 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SFC weekly: $(date +'%Y-%m-%d')" && git push)
 
-  # ── Short selling backfill (manual — fetches missing dates from 2026-03-20) ─
-  # ── Turnover backfill (manual — fetches missing/bad dates, adds high/low/close) ─
+  # ── Turnover + short backfill (manual) ───────────────────────────────────────
+  # Fetches ALL stocks (codes 1-9999) for every missing or partial date.
+  # Stores full columns: name_en, name_zh, close, vol, tv, high, low (turnover)
+  #                      name, sv, st                                  (short)
   turnover-build:
-    name: Turnover library backfill (2026-02-02 to today)
+    name: Turnover + short library backfill (all stocks, all columns)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -321,19 +317,24 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - name: Backfill turnover library (missing dates + bad data + add high/low/close)
-        run: python build_turnover.py
+
+      - name: Backfill all missing/partial dates (turnover + short, all columns)
+        run: python hkex_backfill.py --force
+
+      - name: Add name fields to any existing records that lack them
+        run: python hkex_backfill.py --migrate-names
+
       - name: Commit
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
-          for f in turnover_20*.json name_map.json; do
+          for f in turnover_20*.json short_20*.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || \
-            (git commit -m "Turnover build: $(date +'%Y-%m-%d %H:%M')" && git push)
+            (git commit -m "Turnover+short build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── DI weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
+  # ── SFC full backfill (manual) ───────────────────────────────────────────────
   sfc-build:
     name: SFC full backfill (2018-01-01 to today)
     runs-on: ubuntu-latest
@@ -372,7 +373,7 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SFC build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-
+  # ── DI weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
   di-weekly:
     name: DI substantial shareholder library
     runs-on: ubuntu-latest
