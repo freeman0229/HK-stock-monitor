@@ -147,7 +147,7 @@ body {
   margin-bottom: 16px;
 }
 #sb-summary {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
 }
 
 /* ── Visibility helpers ── */
@@ -174,7 +174,7 @@ body {
   .tab-btn { padding: 0 16px; font-size: 13px; flex-shrink: 0; }
   .panel { padding: 12px 10px; }
   .summary-bar { grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
-  #sb-summary  { grid-template-columns: repeat(2, 1fr); }
+  #sb-summary  { grid-template-columns: repeat(4, 1fr); }
   .sum-val { font-size: 20px; }
   .sum-card { padding: 10px 12px; }
   .sec-sub { display: none; }
@@ -612,7 +612,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <!-- ═══ Panel 1: 北水追蹤 ════════════════════════════════════════════════════ -->
 <div class="panel active" id="panel-bshui">
   <div class="summary-bar" id="sb-summary">
-    <div class="sum-card"><div class="sum-label">今日北水淨買入</div><div class="sum-val" id="sb-total-net">--</div><div class="sum-sub" id="sb-total-net-sub">滬深港通合計</div></div>
+    <div class="sum-card"><div class="sum-label">今日北水淨買入</div><div class="sum-val" id="sb-total-net">--</div><div class="sum-sub" id="sb-total-net-sub">--</div></div>
     <div class="sum-card"><div class="sum-label">今日北水淨買入 Top</div><div class="sum-val up" id="sb-top-buy">--</div><div class="sum-sub" id="sb-top-buy-name">--</div></div>
     <div class="sum-card"><div class="sum-label">今日北水淨賣出 Top</div><div class="sum-val dn" id="sb-top-sell">--</div><div class="sum-sub" id="sb-top-sell-name">--</div></div>
     <div class="sum-card"><div class="sum-label">北水持續淨買入</div><div class="sum-val gold" id="sb-consec">--</div><div class="sum-sub" id="sb-consec-name">--</div></div>
