@@ -1071,7 +1071,7 @@ function applyData(d, stale) {
   }
   const missingPct = allStocks.filter(s => s.pct_listed == null || s.pct_listed === 0).length;
   if (missingPct > allStocks.length * 0.5) {
-    console.warn(`[data check] ${missingPct}/${allStocks.length} stocks missing pct_listed — CCASS data may not have loaded.`);
+    console.warn(`[data check] ${missingPct}/${allStocks.length} stocks missing pct_listed — normal for non-southbound stocks.`);
   }
 
   renderAll();
@@ -1782,7 +1782,7 @@ async function drawSfcChart() {
   ctx.clearRect(0, 0, W, H);
 
   if (sfcMode === 'total') {
-    _sfcDrawTotal(ctx, W, H, dates);
+    _sfcDrawTotal(ctx, W, H, dates, canvas);
   } else {
     // Individual stock — needs async price load
     if (!sfcCurCode) {
@@ -1843,7 +1843,7 @@ function niceTicks(maxV, n) {
 }
 
 // ── Total market view ─────────────────────────────────────────────────────────
-function _sfcDrawTotal(ctx, W, H, dates) {
+function _sfcDrawTotal(ctx, W, H, dates, canvas) {
   const series = dates.map(ds => {
     const t = (sfcData[ds] || {}).__total__ || {};
     return { ds, hkd: t.hkd || 0, sh: t.sh || 0 };
@@ -2471,24 +2471,27 @@ const SDW_COLORS  = [
   '#0891b2','#b45309','#be185d','#64748b','#15803d',
 ];
 
-// ── Load ccass_sdw_YYYY.json (all years present on the server) ──────────────
+// ── Load ccass_sdw_{range}_{YYYY}.json (range-split format) ─────────────────
 async function loadSdwData() {
   const curYear   = new Date().getFullYear();
   const startYear = 2025;
+  const ranges    = ['0001_1000','1001_2000','2001_3000','3001_4000',
+                     '4001_7000','7001_9999','10000plus'];
   const merged    = {};
   let   fetched   = 0;
 
   for (let y = startYear; y <= curYear; y++) {
-    try {
-      const r = await fetch(`ccass_sdw_${y}.json`, { cache: 'no-cache' });
-      if (!r.ok) continue;
-      const lib = await r.json();
-      const byDate = lib.by_date || {};
-      for (const [ds, stocks] of Object.entries(byDate)) {
-        merged[ds] = Object.assign(merged[ds] || {}, stocks);
-      }
-      fetched++;
-    } catch(e) { /* year file absent — normal */ }
+    for (const rng of ranges) {
+      try {
+        const r = await fetch(`ccass_sdw_${rng}_${y}.json`, { cache: 'no-cache' });
+        if (!r.ok) continue;
+        const lib = await r.json();
+        for (const [ds, stocks] of Object.entries(lib.by_date || {})) {
+          merged[ds] = Object.assign(merged[ds] || {}, stocks);
+        }
+        fetched++;
+      } catch(e) { /* file absent — normal */ }
+    }
   }
 
   if (!fetched) return false;
