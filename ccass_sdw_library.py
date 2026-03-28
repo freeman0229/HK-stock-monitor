@@ -68,7 +68,7 @@ HEADERS  = {
 }
 
 START_DATE     = date(2025, 3, 23)   # first Friday = 2025-03-28
-SLEEP_SEC      = 0.3   # minimum polite delay — 0 caused HKEX rate-limiting
+SLEEP_SEC      = 2.0   # polite delay — HKEX rate-limits below ~2s; backoffs waste more time than the delay saves
 SCHEMA_VERSION = 2
 
 # ── Code ranges ───────────────────────────────────────────────────────────────
