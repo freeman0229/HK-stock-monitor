@@ -711,10 +711,15 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
 <!-- ═══ Panel 2: 累積沽空 ════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-short">
-  <div class="summary-bar">
+  <div class="summary-bar" style="grid-template-columns:repeat(3,1fr)">
     <div class="sum-card"><div class="sum-label">沽空比率最高</div><div class="sum-val up" id="sh-top-name">--</div><div class="sum-sub" id="sh-top-pct">--</div></div>
     <div class="sum-card"><div class="sum-label">高沽空預警</div><div class="sum-val up" id="sh-warn-cnt">--</div><div class="sum-sub" id="sh-warn-sub">比率超出上限</div></div>
     <div class="sum-card"><div class="sum-label">挾倉風險</div><div class="sum-val up" id="sh-squeeze-cnt">--</div><div class="sum-sub">DTC &gt; 5 且成交放大 &gt; 2×</div></div>
+  </div>
+  <div class="summary-bar" style="grid-template-columns:repeat(3,1fr);margin-top:0">
+    <div class="sum-card"><div class="sum-label">市場平均沽空</div><div class="sum-val" id="sh-avg">--</div><div class="sum-sub">全部股票均值</div></div>
+    <div class="sum-card"><div class="sum-label">最高回補天數</div><div class="sum-val gold" id="sh-dtc-top-name">--</div><div class="sum-sub" id="sh-dtc-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">沽空偏低</div><div class="sum-val dn" id="sh-low-cnt">--</div><div class="sum-sub">比率低於下限</div></div>
   </div>
 
   <!-- ── Risk map ── -->
@@ -876,14 +881,35 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div id="sdw-group-bars"></div>
     </div>
 
+    <!-- Detail section wrapper -->
+    <div id="sdw-detail-sec" style="display:none">
+      <div style="display:flex;align-items:baseline;gap:8px;margin:14px 0 4px;flex-wrap:wrap">
+        <span id="sdw-detail-title" style="font-size:13px;font-weight:600;color:var(--text)"></span>
+        <span id="sdw-detail-sub" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+    </div>
+
+    <!-- Stock price / turnover chart -->
+    <div style="display:flex;align-items:baseline;gap:8px;margin:14px 0 4px;flex-wrap:wrap">
+      <span id="sdw-chart-title" style="font-size:12px;font-weight:500;color:var(--muted)">持倉集中度趨勢</span>
+      <span id="sdw-chart-sub" style="font-size:11px;color:var(--muted)"></span>
+    </div>
+    <canvas id="sdwCanvas" style="width:100%;display:block;margin-bottom:12px"></canvas>
+
     <!-- Group history chart -->
-    <div style="font-size:12px;font-weight:500;color:var(--muted);margin:0 0 8px">持倉比例趨勢（週度）</div>
+    <div style="display:flex;align-items:baseline;gap:8px;margin:0 0 4px;flex-wrap:wrap">
+      <span style="font-size:12px;font-weight:500;color:var(--muted)">持倉比例趨勢（週度）</span>
+    </div>
     <canvas id="sdwGroupCanvas" style="width:100%;display:block"></canvas>
     <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);justify-content:center"></div>
 
     <!-- Top-5 table -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin:16px 0 7px">
-      <div style="font-size:12px;font-weight:500;color:var(--muted)" id="sdw-top5-label">前5大持倉人明細</div>
+      <div>
+        <div style="font-size:12px;font-weight:500;color:var(--muted)" id="sdw-top5-label">前5大持倉人明細</div>
+        <div style="font-size:11px;color:var(--muted)" id="sdw-tbl-title"></div>
+        <div style="font-size:11px;color:var(--label)" id="sdw-tbl-sub"></div>
+      </div>
       <select id="sdw-top5-n" onchange="renderSdwPanel()" style="font-size:11px;padding:3px 20px 3px 8px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--text);appearance:none;cursor:pointer">
         <option value="5" selected>前5位</option>
         <option value="10">前10位</option>
@@ -2845,7 +2871,7 @@ function drawSdwChart(code, selectedDs) {
   });
 
   // ── Legend ────────────────────────────────────────────────────────────────
-  const legend = document.getElementById('sdw-legend');
+  const legend = document.getElementById('sdw-group-legend');
   const items  = [
     { color: SDW_COLORS[0], label: '前10大合計%', dash: false },
     ...top5names.map((name, i) => ({
@@ -2952,7 +2978,7 @@ function renderDetailCard(code, ds, holders) {
   const _showAll = _topN === 0;
   const top5 = _showAll ? holders : holders.slice(0, _topN);
   const others = (_showAll ? 0 : holders.slice(_topN).reduce((a,h) => a + (h.pct||0), 0));
-  document.getElementById('sdw-top5-body').innerHTML =
+  document.getElementById('body-sdw').innerHTML =
     top5.map((h,i) => `<tr>
       <td style="color:var(--muted)">${i+1}</td>
       <td class="pid-cell">${h.pid}</td>
@@ -3415,4 +3441,10 @@ window.addEventListener('resize', () => {
   setTimeout(() => {
     if (document.querySelector('.tab-btn[data-tab="cai"]').classList.contains('active')) drawCai();
     if (document.querySelector('.tab-btn[data-tab="bshui"]').classList.contains('active')) renderBshui();
-    if (document.quer
+    if (document.querySelector('.tab-btn[data-tab="short"]').classList.contains('active')) drawShortRiskMap(allStocks);
+    if (document.querySelector('.tab-btn[data-tab="ccass"]').classList.contains('active')) renderSdwPanel();
+  }, 200);
+});
+</script>
+</body>
+</html>
