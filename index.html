@@ -1815,94 +1815,100 @@ function _sfcDrawTotal(ctx, W, H, dates) {
   const series = dates.map(ds => {
     const t = (sfcData[ds] || {}).__total__ || {};
     return { ds, hkd: t.hkd || 0, sh: t.sh || 0 };
+  }).filter(s => s.hkd > 0);
+  if (!series.length) return;
+
+  const P      = _sfcLayout(W, H);
+  const maxHKD = Math.max(...series.map(s => s.hkd)) * 1.1;
+  const maxSH  = Math.max(...series.map(s => s.sh))  || 1;
+
+  // Nice ticks for left axis (HKD)
+  function niceTicks(maxV, n) {
+    const mag = Math.pow(10, Math.floor(Math.log10(maxV / n)));
+    const step = [1,2,2.5,5,10].map(f=>f*mag).find(c => maxV/c <= n+1) || mag*10;
+    const t = []; for (let v=step; v<=maxV*1.05; v+=step) t.push(v); return t;
+  }
+  const hkdTicks = niceTicks(maxHKD, 5);
+  const shTicks  = niceTicks(maxSH, 4);
+
+  const n    = series.length;
+  const xAt  = i => P.left + (n > 1 ? i/(n-1) : 0.5) * P.cW;
+  const yHkd = v => P.top  + P.cH - (v / maxHKD) * P.cH;
+  const yBar = v => Math.max(1, (v / maxSH) * (P.cH * 0.45)); // bars max 45% chart height
+
+  // Grid (left axis)
+  ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
+  hkdTicks.forEach(t => {
+    const y = yHkd(t);
+    ctx.beginPath(); ctx.moveTo(P.left, y); ctx.lineTo(P.left + P.cW, y); ctx.stroke();
+    ctx.fillStyle = '#bbb'; ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(_sfcFmtHKD(t), P.left - 4, y);
   });
-
-  const P    = _sfcLayout(W, H);
-  const barH = Math.round(P.cH * 0.12);   // bottom 12% for share bars
-  const lineH = P.cH - barH - 4;
-
-  const maxHKD = Math.max(...series.map(s => s.hkd)) * 1.08 || 1;
-  const maxSH  = Math.max(...series.map(s => s.sh))  * 1.08 || 1;
-
-  // Y-axis ticks for HKD
-  const mag  = Math.pow(10, Math.floor(Math.log10(maxHKD)));
-  const step = Math.ceil(maxHKD / mag / 4) * mag;
-  const ticks = [];
-  for (let t = step; t <= maxHKD * 1.1; t += step) ticks.push(t);
-
-  _sfcGrid(ctx, { ...P, cH: lineH }, W, H, maxHKD, ticks, _sfcFmtHKD);
   _sfcXLabels(ctx, P, H, dates);
 
-  const n  = series.length;
-  const xAt = i => P.left + (n > 1 ? i/(n-1) : 0.5) * P.cW;
-  const yAt = v => P.top + lineH - (v / maxHKD) * lineH;
-
-  // ── Share bars (bottom strip) ───────────────────────────────────────────────
+  // Bars — capped at 45% of chart height
   const bw = Math.max(2, Math.min(12, P.cW / n * 0.6));
   series.forEach((s, i) => {
-    const bh  = (s.sh / maxSH) * barH;
-    const x   = xAt(i) - bw/2;
-    const y   = P.top + P.cH - bh;
-    ctx.fillStyle = 'rgba(192,37,45,0.3)';
-    ctx.fillRect(x, y, bw, bh);
+    const bh = yBar(s.sh);
+    ctx.fillStyle = 'rgba(192,37,45,0.28)';
+    ctx.fillRect(xAt(i) - bw/2, P.top + P.cH - bh, bw, bh);
   });
 
-  // ── Area fill ───────────────────────────────────────────────────────────────
+  // Right axis (share count)
+  ctx.fillStyle = '#bbb'; ctx.font = '10px sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  shTicks.forEach(t => {
+    const bh = yBar(t);
+    const y  = P.top + P.cH - bh;
+    ctx.fillText(_sfcFmtHKD(t), P.left + P.cW + 4, y);
+  });
+
+  // Area fill
   ctx.save();
-  const grad = ctx.createLinearGradient(0, P.top, 0, P.top + lineH);
-  grad.addColorStop(0,   'rgba(192,37,45,0.18)');
-  grad.addColorStop(1,   'rgba(192,37,45,0.02)');
+  const grad = ctx.createLinearGradient(0, P.top, 0, P.top + P.cH);
+  grad.addColorStop(0, 'rgba(192,37,45,0.18)'); grad.addColorStop(1, 'rgba(192,37,45,0.02)');
   ctx.beginPath();
-  series.forEach((s, i) => {
-    const x = xAt(i), y = yAt(s.hkd);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  ctx.lineTo(xAt(n-1), P.top + lineH);
-  ctx.lineTo(xAt(0),   P.top + lineH);
-  ctx.closePath();
-  ctx.fillStyle = grad;
-  ctx.fill();
-  ctx.restore();
+  series.forEach((s, i) => { const x=xAt(i),y=yHkd(s.hkd); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+  ctx.lineTo(xAt(n-1), P.top+P.cH); ctx.lineTo(xAt(0), P.top+P.cH); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill(); ctx.restore();
 
-  // ── HKD line ────────────────────────────────────────────────────────────────
-  ctx.save();
-  ctx.strokeStyle = '#c0252d'; ctx.lineWidth = 2; ctx.setLineDash([]);
+  // HKD line
+  ctx.save(); ctx.strokeStyle='#c0252d'; ctx.lineWidth=2;
   ctx.beginPath();
-  series.forEach((s, i) => {
-    const x = xAt(i), y = yAt(s.hkd);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-  ctx.restore();
+  series.forEach((s,i)=>{ const x=xAt(i),y=yHkd(s.hkd); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+  ctx.stroke(); ctx.restore();
 
-  // Latest value label
-  const last = series[series.length-1];
-  if (last) {
-    const x = xAt(n-1), y = yAt(last.hkd);
-    ctx.fillStyle = '#c0252d'; ctx.font = 'bold 11px sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText(_sfcFmtHKD(last.hkd), x + 4, y);
-  }
+  // Last value label
+  const last = series[n-1];
+  ctx.fillStyle='#c0252d'; ctx.font='bold 11px sans-serif';
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText(_sfcFmtHKD(last.hkd), xAt(n-1)+4, yHkd(last.hkd));
 
-  // Legend
+  // Left axis label
+  ctx.fillStyle='#aaa'; ctx.font='10px sans-serif';
+  ctx.save(); ctx.translate(11,P.top+P.cH/2); ctx.rotate(-Math.PI/2);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('累計沽空持倉 (HKD)', 0, 0); ctx.restore();
+
+  // Right axis label
+  ctx.save(); ctx.translate(W-8,P.top+P.cH/2); ctx.rotate(Math.PI/2);
+  ctx.fillStyle='#bbb'; ctx.font='10px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('持倉股數', 0, 0); ctx.restore();
+
   document.getElementById('sfc-legend').innerHTML = `
     <span style="display:flex;align-items:center;gap:5px">
-      <span style="width:22px;height:3px;background:#c0252d;display:inline-block;border-radius:2px"></span>市場累計沽空持倉（港元）
+      <span style="width:22px;height:3px;background:#c0252d;display:inline-block;border-radius:2px"></span>市場累計沽空持倉（港元，左軸）
     </span>
     <span style="display:flex;align-items:center;gap:5px">
-      <span style="width:10px;height:10px;background:rgba(192,37,45,0.3);display:inline-block;border-radius:2px"></span>持倉股數（底部柱）
+      <span style="width:10px;height:10px;background:rgba(192,37,45,0.28);display:inline-block;border-radius:2px"></span>持倉股數（右軸）
     </span>`;
 
-  // Axis label
-  ctx.fillStyle = '#aaa'; ctx.font = '10px sans-serif';
-  ctx.save(); ctx.translate(11, P.top + P.cH/2); ctx.rotate(-Math.PI/2);
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('累計沽空持倉 (HKD)', 0, 0);
-  ctx.restore();
-
-  // Tooltip
-  _sfcWireTip(canvas, series, xAt, yAt, P.cW / Math.max(n-1,1), (s) =>
-    `${s.ds}  累計沽空 ${_sfcFmtHKD(s.hkd)}  |  ${(s.sh/1e6).toFixed(0)}M 股`
+  // Hover tooltip — pass series with x coords
+  const pts = series.map((s,i) => ({ ...s, x: xAt(i), y: yHkd(s.hkd) }));
+  _sfcWireTip(canvas, pts, p=>p.x, p=>p.y, P.cW/Math.max(n-1,1), p =>
+    `<b>${p.ds}</b><br>累計沽空 ${_sfcFmtHKD(p.hkd)}<br>持倉股數 ${_sfcFmtHKD(p.sh)}`
   );
 }
 
@@ -1911,131 +1917,128 @@ function _sfcDrawStock(ctx, W, H, dates, code, priceMap) {
   const code5 = code.padStart(5, '0');
   const sinfo = allStocks.find(s => s.code === code) || {};
 
-  // SFC weekly series
-  const sfcSeries = dates.map(ds => {
-    const rec = (sfcData[ds] || {})[code5] || {};
-    return { ds, hkd: rec.hkd || 0, sh: rec.sh || 0, pct: rec.pct || 0 };
-  });
+  // Only include dates where this stock actually has SFC data (skip hkd=0 gaps)
+  const sfcSeries = dates
+    .map(ds => { const r=(sfcData[ds]||{})[code5]||{}; return {ds,hkd:r.hkd||0,sh:r.sh||0,pct:r.pct||0}; })
+    .filter(s => s.hkd > 0);
 
-  // Daily price series (all days in date range)
-  const rangeStart = dates[0];
-  const rangeEnd   = dates[dates.length-1];
-  const priceDates = Object.keys(priceMap).filter(d => d >= rangeStart && d <= rangeEnd).sort();
-  const priceData  = priceDates.map(d => ({ ds: d, ...priceMap[d] }));
+  if (!sfcSeries.length) {
+    ctx.fillStyle='#aaa'; ctx.font='13px sans-serif';
+    ctx.textAlign='center'; ctx.fillText('此股票在選定期間內無SFC沽空數據', W/2, H/2);
+    return;
+  }
 
-  const P    = _sfcLayout(W, H);
-  const barH = Math.round(P.cH * 0.14);
-  const lineH = P.cH - barH - 6;
+  const rangeStart = sfcSeries[0].ds;
+  const rangeEnd   = sfcSeries[sfcSeries.length-1].ds;
+  const priceDates = Object.keys(priceMap).filter(d=>d>=rangeStart&&d<=rangeEnd).sort();
+  const priceData  = priceDates.map(d=>({ds:d,...priceMap[d]}));
 
-  const maxHKD   = Math.max(...sfcSeries.map(s => s.hkd), 1) * 1.1;
-  const maxVol   = Math.max(...priceData.map(p => p.vol), 1) * 1.08;
-  const maxClose = Math.max(...priceData.map(p => p.close), 1) * 1.12;
-  const minClose = Math.min(...priceData.filter(p=>p.close>0).map(p => p.close), maxClose) * 0.92;
+  const P      = _sfcLayout(W, H);
+  const maxHKD = Math.max(...sfcSeries.map(s=>s.hkd), 1) * 1.12;
+  const validClose = priceData.filter(p=>p.close>0);
+  const maxClose = validClose.length ? Math.max(...validClose.map(p=>p.close)) * 1.08 : 1;
+  const minClose = validClose.length ? Math.min(...validClose.map(p=>p.close)) * 0.94 : 0;
+  const maxVol   = Math.max(...priceData.map(p=>p.vol||0), 1);
 
-  // x mapping: use full daily range
-  const allDates = priceDates.length ? priceDates : dates;
+  // Use price dates for x axis (daily), SFC mapped onto same scale
+  const allDates = priceDates.length ? priceDates : sfcSeries.map(s=>s.ds);
   const n = allDates.length;
-  const xAt  = ds => {
-    const i = allDates.indexOf(ds);
-    if (i < 0) return null;
-    return P.left + (n > 1 ? i/(n-1) : 0.5) * P.cW;
-  };
-  const yAt  = v => P.top + lineH - (Math.max(v,0) / maxHKD) * lineH;
-  const yPx  = v => P.top + lineH - ((v - minClose) / (maxClose - minClose)) * lineH;
+  const xAt  = ds => { const i=allDates.indexOf(ds); return i<0?null:P.left+(n>1?i/(n-1):0.5)*P.cW; };
+  const yHkd = v => P.top + P.cH - (v/maxHKD)*P.cH;
+  const yPx  = v => P.top + P.cH - ((v-minClose)/(maxClose-minClose||1))*P.cH;
+  const yBar = v => Math.max(1, (v/maxVol)*(P.cH*0.45));  // bars max 45%
 
-  // Grid (left axis: HKD)
-  const mag  = Math.pow(10, Math.floor(Math.log10(maxHKD)));
-  const step = Math.ceil(maxHKD / mag / 4) * mag;
-  const ticks = [];
-  for (let t = step; t <= maxHKD * 1.1; t += step) ticks.push(t);
-  _sfcGrid(ctx, { ...P, cH: lineH }, W, H, maxHKD, ticks, _sfcFmtHKD);
+  // Nice ticks
+  function niceTicks(maxV, n) {
+    const mag=Math.pow(10,Math.floor(Math.log10(maxV/n)));
+    const step=[1,2,2.5,5,10].map(f=>f*mag).find(c=>maxV/c<=n+1)||mag*10;
+    const t=[]; for(let v=step;v<=maxV*1.05;v+=step) t.push(v); return t;
+  }
 
-  // X labels (use SFC dates as markers)
-  _sfcXLabels(ctx, P, H, dates);
+  // Grid (left: HKD)
+  ctx.strokeStyle='#f0ede8'; ctx.lineWidth=1;
+  niceTicks(maxHKD, 5).forEach(t => {
+    const y=yHkd(t);
+    ctx.beginPath(); ctx.moveTo(P.left,y); ctx.lineTo(P.left+P.cW,y); ctx.stroke();
+    ctx.fillStyle='#bbb'; ctx.font='10px sans-serif';
+    ctx.textAlign='right'; ctx.textBaseline='middle';
+    ctx.fillText(_sfcFmtHKD(t), P.left-4, y);
+  });
+  _sfcXLabels(ctx, P, H, allDates);
 
-  // Volume bars (bottom strip, daily)
-  const bw = Math.max(1, Math.min(8, P.cW / Math.max(n,1) * 0.6));
+  // Volume bars (capped at 45% height)
+  const bw = Math.max(1, Math.min(8, P.cW/Math.max(n,1)*0.6));
   priceData.forEach(p => {
-    const x = xAt(p.ds);
-    if (x == null) return;
-    const bh = (p.vol / maxVol) * barH;
-    ctx.fillStyle = 'rgba(100,116,139,0.4)';
-    ctx.fillRect(x - bw/2, P.top + P.cH - bh, bw, bh);
+    const x=xAt(p.ds); if (x==null) return;
+    ctx.fillStyle='rgba(100,116,139,0.35)';
+    ctx.fillRect(x-bw/2, P.top+P.cH-yBar(p.vol||0), bw, yBar(p.vol||0));
   });
 
-  // SFC short position area + line (weekly)
+  // Right axis: close price
+  if (validClose.length) {
+    ctx.fillStyle='#b8860b'; ctx.font='10px sans-serif';
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    niceTicks(maxClose-minClose, 4).forEach(t => {
+      const v=minClose+t, y=yPx(v);
+      if (y>=P.top && y<=P.top+P.cH)
+        ctx.fillText(v.toFixed(2), P.left+P.cW+4, y);
+    });
+    // Close line
+    ctx.save(); ctx.strokeStyle='#b8860b'; ctx.lineWidth=1.5;
+    ctx.beginPath(); let started=false;
+    priceData.forEach(p=>{
+      if(!p.close){started=false;return;}
+      const x=xAt(p.ds),y=yPx(p.close);
+      if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);
+    });
+    ctx.stroke(); ctx.restore();
+  }
+
+  // SFC area + line (connect actual data points, skip gaps)
   ctx.save();
-  const grad = ctx.createLinearGradient(0, P.top, 0, P.top + lineH);
-  grad.addColorStop(0, 'rgba(192,37,45,0.18)');
-  grad.addColorStop(1, 'rgba(192,37,45,0.02)');
-  const sfcPts = sfcSeries.map(s => ({ x: xAt(s.ds), y: yAt(s.hkd), ...s })).filter(p => p.x != null);
-  if (sfcPts.length >= 2) {
+  const grad=ctx.createLinearGradient(0,P.top,0,P.top+P.cH);
+  grad.addColorStop(0,'rgba(192,37,45,0.18)'); grad.addColorStop(1,'rgba(192,37,45,0.02)');
+  const sfcPts=sfcSeries.map(s=>({...s,x:xAt(s.ds),y:yHkd(s.hkd)})).filter(p=>p.x!=null);
+  if (sfcPts.length>=2) {
     ctx.beginPath();
-    sfcPts.forEach((p,i) => i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
-    ctx.lineTo(sfcPts[sfcPts.length-1].x, P.top+lineH);
-    ctx.lineTo(sfcPts[0].x, P.top+lineH);
-    ctx.closePath();
-    ctx.fillStyle = grad; ctx.fill();
+    sfcPts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.lineTo(sfcPts[sfcPts.length-1].x,P.top+P.cH);
+    ctx.lineTo(sfcPts[0].x,P.top+P.cH);
+    ctx.closePath(); ctx.fillStyle=grad; ctx.fill();
     ctx.beginPath();
-    sfcPts.forEach((p,i) => i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
-    ctx.strokeStyle = '#c0252d'; ctx.lineWidth = 2; ctx.stroke();
-    // Dots on SFC weekly points
-    sfcPts.forEach(p => {
-      ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
-      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#c0252d'; ctx.lineWidth = 1.5;
+    sfcPts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.strokeStyle='#c0252d'; ctx.lineWidth=2; ctx.stroke();
+    sfcPts.forEach(p=>{
+      ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2);
+      ctx.fillStyle='#fff'; ctx.strokeStyle='#c0252d'; ctx.lineWidth=1.5;
       ctx.fill(); ctx.stroke();
     });
   }
   ctx.restore();
 
-  // Right Y-axis: close price
-  if (priceData.length) {
-    ctx.fillStyle = '#b8860b'; ctx.font = '10px sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    const prTicks = 4;
-    for (let i = 0; i <= prTicks; i++) {
-      const v = minClose + (maxClose - minClose) * (i/prTicks);
-      const y = P.top + lineH - ((v - minClose) / (maxClose - minClose)) * lineH;
-      ctx.fillText(v.toFixed(2), P.left + P.cW + 4, y);
-    }
-
-    // Close price line
-    ctx.save();
-    ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
-    ctx.beginPath();
-    let started = false;
-    priceData.forEach(p => {
-      if (p.close <= 0) { started = false; return; }
-      const x = xAt(p.ds), y = yPx(p.close);
-      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-    ctx.restore();
-  }
-
   // Title
-  const name = sinfo.name_chi || code5;
-  ctx.fillStyle = '#444'; ctx.font = 'bold 12px sans-serif';
-  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-  ctx.fillText(`${code5} ${name}`, P.left, 4);
+  ctx.fillStyle='#444'; ctx.font='bold 12px sans-serif';
+  ctx.textAlign='left'; ctx.textBaseline='top';
+  ctx.fillText(`${code5} ${sinfo.name_chi||code5}`, P.left, 4);
 
-  // Legend
   document.getElementById('sfc-legend').innerHTML = `
     <span style="display:flex;align-items:center;gap:5px">
       <span style="width:22px;height:3px;background:#c0252d;display:inline-block;border-radius:2px"></span>SFC 累計沽空持倉（港元，左軸）
     </span>
     <span style="display:flex;align-items:center;gap:5px">
-      <span style="width:22px;height:2px;background:#b8860b;display:inline-block;border-radius:2px;border-top:1px solid #b8860b"></span>收市價（右軸）
+      <span style="width:22px;height:2px;background:#b8860b;display:inline-block;border-radius:2px"></span>收市價（右軸）
     </span>
     <span style="display:flex;align-items:center;gap:5px">
-      <span style="width:10px;height:10px;background:rgba(100,116,139,0.5);display:inline-block;border-radius:1px"></span>成交量（底部柱）
+      <span style="width:10px;height:10px;background:rgba(100,116,139,0.4);display:inline-block;border-radius:1px"></span>成交量（底部柱）
     </span>`;
 
-  // Tooltip
-  _sfcWireTip(canvas, sfcPts, p => p.x, p => p.y, P.cW / Math.max(sfcPts.length-1,1), (p) => {
+  // Hover tooltip — wire on SFC weekly points only, show price if available
+  _sfcWireTip(canvas, sfcPts, p=>p.x, p=>p.y, P.cW/Math.max(sfcPts.length-1,1), p => {
     const pr = priceMap[p.ds];
-    return `${p.ds}  沽空 ${_sfcFmtHKD(p.hkd)}  |  ${p.pct.toFixed(2)}% 已發行股份` +
-           (pr && pr.close ? `  |  收市 $${pr.close.toFixed(2)}` : '');
+    return `<b>${p.ds}</b><br>` +
+      `SFC沽空 ${_sfcFmtHKD(p.hkd)}<br>` +
+      `佔已發行股份 ${p.pct>0?p.pct.toFixed(2)+'%':'—'}` +
+      (pr&&pr.close?`<br>收市價 $${pr.close.toFixed(2)}`:'');
   });
 }
 
