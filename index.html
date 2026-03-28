@@ -845,8 +845,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   </div>
 
   <!-- Panel header: title + stock dropdown -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-    <div class="sec-title" style="margin:0;font-size:15px">大戶持倉</div>
+  <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:14px">
     <div style="position:relative;display:inline-block">
       <input type="text" id="sdw-search" placeholder="輸入代號或名稱…" autocomplete="off"
         style="font-size:13px;padding:7px 28px 7px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--card);color:var(--text);min-width:200px">
@@ -873,8 +872,20 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div id="sdw-group-bars"></div>
     </div>
 
+    <!-- Group history chart -->
+    <div style="font-size:12px;font-weight:500;color:var(--muted);margin:0 0 8px">持倉比例趨勢（週度）</div>
+    <canvas id="sdwGroupCanvas" style="width:100%;display:block"></canvas>
+    <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);justify-content:center"></div>
+
     <!-- Top-5 table -->
-    <div style="font-size:12px;font-weight:500;color:var(--muted);margin-bottom:7px" id="sdw-top5-label">前5大持倉人明細</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:16px 0 7px">
+      <div style="font-size:12px;font-weight:500;color:var(--muted)" id="sdw-top5-label">前5大持倉人明細</div>
+      <select id="sdw-top5-n" onchange="renderSdwPanel()" style="font-size:11px;padding:3px 20px 3px 8px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--text);appearance:none;cursor:pointer">
+        <option value="5" selected>前5位</option>
+        <option value="10">前10位</option>
+        <option value="0">全部</option>
+      </select>
+    </div>
     <div class="tbl-wrap">
       <table id="tbl-sdw" class="detail-holder-tbl" style="width:100%;font-size:12px;border-collapse:collapse">
         <thead><tr>
@@ -890,11 +901,6 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         </tbody>
       </table>
     </div>
-
-    <!-- Group history chart -->
-    <div style="font-size:12px;font-weight:500;color:var(--muted);margin:16px 0 8px">持倉比例趨勢（週度）</div>
-    <canvas id="sdwGroupCanvas" style="width:100%;display:block"></canvas>
-    <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted)"></div>
 
     <!-- hidden: date select kept for renderSdwPanel compatibility -->
     <select id="sdw-date-sel" style="display:none"><option>載入中…</option></select>
@@ -1824,6 +1830,12 @@ function _sfcXLabels(ctx, P, H, dates) {
   });
 }
 
+function niceTicks(maxV, n) {
+  const mag = Math.pow(10, Math.floor(Math.log10(maxV / n)));
+  const step = [1,2,2.5,5,10].map(f=>f*mag).find(c => maxV/c <= n+1) || mag*10;
+  const t = []; for (let v=step; v<=maxV*1.05; v+=step) t.push(v); return t;
+}
+
 // ── Total market view ─────────────────────────────────────────────────────────
 function _sfcDrawTotal(ctx, W, H, dates) {
   const series = dates.map(ds => {
@@ -1836,12 +1848,6 @@ function _sfcDrawTotal(ctx, W, H, dates) {
   const maxHKD = Math.max(...series.map(s => s.hkd)) * 1.1;
   const maxSH  = Math.max(...series.map(s => s.sh))  || 1;
 
-  // Nice ticks for left axis (HKD)
-  function niceTicks(maxV, n) {
-    const mag = Math.pow(10, Math.floor(Math.log10(maxV / n)));
-    const step = [1,2,2.5,5,10].map(f=>f*mag).find(c => maxV/c <= n+1) || mag*10;
-    const t = []; for (let v=step; v<=maxV*1.05; v+=step) t.push(v); return t;
-  }
   const hkdTicks = niceTicks(maxHKD, 5);
   const shTicks  = niceTicks(maxSH, 4);
 
@@ -1962,12 +1968,6 @@ function _sfcDrawStock(ctx, W, H, dates, code, priceMap) {
   const yPx  = v => P.top + P.cH - ((v-minClose)/(maxClose-minClose||1))*P.cH;
   const yBar = v => Math.max(1, (v/maxVol)*(P.cH*0.45));  // bars max 45%
 
-  // Nice ticks
-  function niceTicks(maxV, n) {
-    const mag=Math.pow(10,Math.floor(Math.log10(maxV/n)));
-    const step=[1,2,2.5,5,10].map(f=>f*mag).find(c=>maxV/c<=n+1)||mag*10;
-    const t=[]; for(let v=step;v<=maxV*1.05;v+=step) t.push(v); return t;
-  }
 
   // Grid (left: HKD)
   ctx.strokeStyle='#f0ede8'; ctx.lineWidth=1;
@@ -2940,8 +2940,10 @@ function renderDetailCard(code, ds, holders) {
 
   // Top-5 table (no 組別 column)
   document.getElementById('sdw-top5-label').textContent = `前5大持倉人明細（${ds}）`;
-  const top5 = holders.slice(0, 5);
-  const others = holders.slice(5).reduce((a,h) => a + (h.pct||0), 0);
+  const _topN = parseInt((document.getElementById('sdw-top5-n')||{}).value||5) || 5;
+  const _showAll = _topN === 0;
+  const top5 = _showAll ? holders : holders.slice(0, _topN);
+  const others = (_showAll ? 0 : holders.slice(_topN).reduce((a,h) => a + (h.pct||0), 0));
   document.getElementById('sdw-top5-body').innerHTML =
     top5.map((h,i) => `<tr>
       <td style="color:var(--muted)">${i+1}</td>
