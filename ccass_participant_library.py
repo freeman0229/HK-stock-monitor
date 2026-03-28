@@ -5,7 +5,7 @@ Fetches and stores the list of CCASS Participants (Intermediaries)
 from HKEXnews. Two columns: Participant ID and Participant Name.
 
 Source:
-  https://www.hkexnews.hk/ccass_part_list.htm
+  https://www3.hkexnews.hk/sdw/search/ccass_part_list_c.htm?sortby=partid&shareholdingdate=YYYYMMDD
 
 Library file: ccass_participants.json
 
@@ -35,7 +35,7 @@ Usage:
   python ccass_participant_library.py --search "CITIBANK"
 
 API for other modules:
-  from ccass_participant_library import get_participant, get_all_participants
+  from ccass_participant_library import get_participant, get_all_participants, get_group, group_holdings
 """
 
 import os, json, logging, argparse
@@ -46,7 +46,8 @@ from datetime import date, timedelta
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-URL      = "https://www.hkexnews.hk/ccass_part_list.htm"
+# Base URL — shareholdingdate is set dynamically to today at fetch time
+URL_BASE = "https://www3.hkexnews.hk/sdw/search/ccass_part_list_c.htm"
 LIB_FILE = "ccass_participants.json"
 HEADERS  = {
     "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
@@ -89,7 +90,9 @@ def fetch() -> dict | None:
     Returns {participant_id: participant_name} or None on failure.
     """
     try:
-        r = requests.get(URL, headers=HEADERS, timeout=30)
+        from datetime import date as _date
+        url = f"{URL_BASE}?sortby=partid&shareholdingdate={_date.today().strftime('%Y%m%d')}"
+        r = requests.get(url, headers=HEADERS, timeout=30)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
@@ -99,7 +102,7 @@ def fetch() -> dict | None:
         # Try all tables — use the one with the most rows
         tables = soup.find_all("table")
         if not tables:
-            log.warning("No tables found on %s", URL)
+            log.warning("No tables found on %s", url)
             return None
 
         best_table = max(tables, key=lambda t: len(t.find_all("tr")))
@@ -117,10 +120,10 @@ def fetch() -> dict | None:
             participants[pid] = name
 
         if not participants:
-            log.warning("Parsed 0 participants from %s", URL)
+            log.warning("Parsed 0 participants from %s", url)
             return None
 
-        log.info("Fetched %d participants from CCASS list", len(participants))
+        log.info("Fetched %d participants from %s", len(participants), url)
         return participants
 
     except Exception as e:
@@ -184,6 +187,58 @@ def search_participants(query: str) -> list[tuple[str, str]]:
     ]
     return sorted(results)
 
+
+
+# ── Participant groups ────────────────────────────────────────────────────────
+
+# Major institutional holders (大型券商/託管行)
+DAHU_IDS = {
+    "B01555", "B01451", "B01224",
+    "C00010", "C00019", "C00074", "C00093", "C00039", "C00111",
+    "B01274", "B01161", "B01110", "B01504",
+    "C00100", "C00033", "B01366",
+}
+
+# Northbound / mainland China participants (北水)
+BEISHUI_IDS = {"A00003", "A00004", "A00005"}
+
+# Group labels
+GROUP_DAHU    = "大戶"
+GROUP_BEISHUI = "北水"
+GROUP_SANHU   = "散戶"
+
+
+def get_group(pid: str) -> str:
+    """Return the group label for a participant ID."""
+    if pid in BEISHUI_IDS:
+        return GROUP_BEISHUI
+    if pid in DAHU_IDS:
+        return GROUP_DAHU
+    return GROUP_SANHU
+
+
+def group_holdings(holders: list) -> dict:
+    """
+    Group a list of participant holding records by 大戶 / 北水 / 散戶.
+
+    Input:  list of {pid, name, sh, pct} (from ccass_sdw_library.get_holders)
+    Output: {
+        "大戶":  {"sh": int, "pct": float, "participants": [...]},
+        "北水":  {"sh": int, "pct": float, "participants": [...]},
+        "散戶":  {"sh": int, "pct": float, "participants": [...]},
+    }
+    """
+    groups = {
+        GROUP_DAHU:    {"sh": 0, "pct": 0.0, "participants": []},
+        GROUP_BEISHUI: {"sh": 0, "pct": 0.0, "participants": []},
+        GROUP_SANHU:   {"sh": 0, "pct": 0.0, "participants": []},
+    }
+    for h in holders:
+        g = get_group(h.get("pid", ""))
+        groups[g]["sh"]  += h.get("sh", 0)
+        groups[g]["pct"] += h.get("pct", 0.0)
+        groups[g]["participants"].append(h)
+    return groups
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
