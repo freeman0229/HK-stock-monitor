@@ -1275,11 +1275,18 @@ function drawSbChart(sorted) {
       ctx.font = '11px monospace';
       ctx.fillText(s.code, 64, cy);
 
+      const stockName = (s.name_chi || s.name);
       ctx.fillStyle = '#222';
       ctx.font = `500 13px "Noto Sans TC", sans-serif`;
-      const consecLabel = consec >= 2 ? ` ${consec}連買` : '';
-      const nameLabel = (s.name_chi || s.name) + consecLabel;
-      ctx.fillText(nameLabel, 110, cy);
+      ctx.fillText(stockName, 110, cy);
+      // Draw N連買/連賣 label in colour after the stock name
+      if (Math.abs(consec) >= 2) {
+        const nameW = ctx.measureText(stockName).width;
+        const consecStr = consec > 0 ? ` ${consec}連買` : ` ${Math.abs(consec)}連賣`;
+        ctx.fillStyle = consec > 0 ? '#c0252d' : '#1a7a3c';
+        ctx.font = `600 12px "Noto Sans TC", sans-serif`;
+        ctx.fillText(consecStr, 110 + nameW, cy);
+      }
     }
 
     // bar — only draw if stock has SB flow; zero-SB stocks get a grey centre tick
