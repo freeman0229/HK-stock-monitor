@@ -37,7 +37,7 @@ jobs:
   daily:
     name: Daily analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 75
     permissions:
       contents: write
     if: |
@@ -62,10 +62,19 @@ jobs:
       - name: Update CCASS southbound holdings (today)
         run: python ccass_library.py --update --fix-names
 
-      - name: SDW backfill (incremental, all ranges, 6 min budget each)
+      - name: SDW backfill (3-4 ranges alternating, 5 min budget, 90s cooldown)
         run: |
-          for range in 0001_1000 1001_2000 2001_3000 3001_4000 4001_7000 7001_9999 10000plus; do
-            python ccass_sdw_library.py --update --range $range --max-minutes 6
+          DOY=$(date +%j)
+          if [ $((DOY % 2)) -eq 0 ]; then
+            RANGES="0001_1000 2001_3000 4001_7000 10000plus"
+          else
+            RANGES="1001_2000 3001_4000 7001_9999"
+          fi
+          for range in $RANGES; do
+            echo "--- SDW range $range ---"
+            python ccass_sdw_library.py --update --range $range --max-minutes 5
+            echo "Cooling down 90s before next range..."
+            sleep 90
           done
 
       - name: Run daily analysis
