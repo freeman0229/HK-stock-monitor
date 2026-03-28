@@ -272,6 +272,9 @@ jobs:
           path: sfc_cache
           key: sfc-cache-${{ github.run_id }}
           restore-keys: sfc-cache-
+      - name: Update CCASS participant list
+        run: python ccass_participant_library.py --update
+
       - name: Update SFC library
         run: python sfc_library.py
       - name: Re-parse cached Excel files
@@ -287,6 +290,7 @@ jobs:
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
           for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
+          [ -f "ccass_participants.json" ] && git add "ccass_participants.json"
           git diff --staged --quiet || \
             (git commit -m "SFC weekly: $(date +'%Y-%m-%d')" && git push)
 
