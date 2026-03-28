@@ -498,6 +498,38 @@ def query_date(ds: str):
 
 # ── API for main.py ───────────────────────────────────────────────────────────
 
+
+def get_sb_summary(ds: str) -> dict:
+    """
+    Return combined SSE + SZSE southbound market summary for a date (YYYY-MM-DD).
+
+    Values are in HKD (converted from stored HKD-millions).
+    Returns {net, buy, sell, total, sse_net, szse_net} or {} if not found.
+    """
+    year = int(ds[:4])
+    p    = lib_path(year)
+    if not os.path.exists(p):
+        return {}
+    with open(p, encoding="utf-8") as f:
+        rec = json.load(f).get("by_date", {}).get(ds, {})
+    ss = rec.get("sse_summary",  {})
+    zs = rec.get("szse_summary", {})
+    if not ss and not zs:
+        return {}
+    m = 1_000_000  # stored in HKD millions
+    sse_buy  = ss.get("buy",  0) * m
+    sse_sell = ss.get("sell", 0) * m
+    sz_buy   = zs.get("buy",  0) * m
+    sz_sell  = zs.get("sell", 0) * m
+    return {
+        "buy":      sse_buy  + sz_buy,
+        "sell":     sse_sell + sz_sell,
+        "net":      (sse_buy - sse_sell) + (sz_buy - sz_sell),
+        "total":    (ss.get("total", 0) + zs.get("total", 0)) * m,
+        "sse_net":  sse_buy  - sse_sell,
+        "szse_net": sz_buy   - sz_sell,
+    }
+
 def get_top10(ds: str) -> list:
     """Return top10 list for a date string YYYY-MM-DD. Empty list if not found."""
     year = int(ds[:4])

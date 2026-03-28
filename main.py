@@ -12,7 +12,7 @@ from turnover_library import (load_year as tv_load_year,
                                get_tv_history, get_vol_history,
                                get_close_history, get_close,
                                load_recent as tv_load_recent, get_tv)
-from sc_top10_library import get_top10, get_top10_history
+from sc_top10_library import get_top10, get_top10_history, get_sb_summary
 try:
     from sfc_library import get_short_position as sfc_get_position, \
     all_report_fridays as sfc_fridays, get_position_history as sfc_get_history
@@ -810,6 +810,7 @@ def run_analysis():
     output = {
         "update_time": trading_day.strftime("%Y-%m-%d %H:%M"),
         "sb_date":     sb_date_used,
+        "sb_summary":  get_sb_summary(sb_date_used),
         "name_map":    load_store(NAME_MAP_FILE),
         "stocks":      results,
     }

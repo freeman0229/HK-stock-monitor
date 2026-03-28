@@ -612,6 +612,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <!-- ═══ Panel 1: 北水追蹤 ════════════════════════════════════════════════════ -->
 <div class="panel active" id="panel-bshui">
   <div class="summary-bar" id="sb-summary">
+    <div class="sum-card"><div class="sum-label">今日北水淨買入</div><div class="sum-val" id="sb-total-net">--</div><div class="sum-sub" id="sb-total-net-sub">滬深港通合計</div></div>
     <div class="sum-card"><div class="sum-label">今日北水淨買入 Top</div><div class="sum-val up" id="sb-top-buy">--</div><div class="sum-sub" id="sb-top-buy-name">--</div></div>
     <div class="sum-card"><div class="sum-label">今日北水淨賣出 Top</div><div class="sum-val dn" id="sb-top-sell">--</div><div class="sum-sub" id="sb-top-sell-name">--</div></div>
     <div class="sum-card"><div class="sum-label">北水持續淨買入</div><div class="sum-val gold" id="sb-consec">--</div><div class="sum-sub" id="sb-consec-name">--</div></div>
@@ -976,6 +977,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 let allStocks = [];
 let updateTime = '';
 let sbDate = '';          // date of southbound data (may be yesterday)
+let sbSummary = {};       // market-wide SSE+SZSE totals from sc_top10_library
 let lastChartData = [];   // cache last good chart render
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
@@ -1037,6 +1039,7 @@ function applyData(d, stale) {
   allStocks  = d.stocks || [];
   updateTime = d.update_time || '';
   sbDate     = d.sb_date || '';
+  sbSummary  = d.sb_summary || {};
   const staleMark = stale ? ' ⏳' : '';
   document.getElementById('hdr-time').textContent =
     updateTime ? '更新: ' + updateTime + staleMark : '';
@@ -1444,6 +1447,21 @@ function renderBshui() {
   const topConsecVal = topConsec ? (topConsec.sb_consec || 0) : 0;
   document.getElementById('sb-consec').textContent = topConsecVal >= 2 ? topConsecVal + '日' : '';
   document.getElementById('sb-consec-name').textContent = topConsecVal >= 2 ? topConsec.name_chi : '';
+
+  // Total market northbound net
+  const sbTotalNetEl  = document.getElementById('sb-total-net');
+  const sbTotalSubEl  = document.getElementById('sb-total-net-sub');
+  if (sbTotalNetEl && sbSummary && sbSummary.net != null) {
+    const net = sbSummary.net;
+    sbTotalNetEl.className = 'sum-val ' + (net >= 0 ? 'up' : 'dn');
+    sbTotalNetEl.textContent = (net >= 0 ? '+' : '') + fmtM(net);
+    if (sbTotalSubEl) {
+      const sseNet  = sbSummary.sse_net  || 0;
+      const szseNet = sbSummary.szse_net || 0;
+      const fmt = v => (v >= 0 ? '+' : '') + fmtM(v);
+      sbTotalSubEl.textContent = `滬: ${fmt(sseNet)} ｜ 深: ${fmt(szseNet)}`;
+    }
+  }
 
   // Draw chart — compute sb_net rank change
   const prevSorted = [...display].sort((a,b) => (b.sb_net_prev||0) - (a.sb_net_prev||0));
