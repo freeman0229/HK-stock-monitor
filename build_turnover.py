@@ -220,6 +220,7 @@ def parse(body: str) -> dict:
             continue
         # Keep higher-vol record if code appears twice
         if code not in out or vol > out[code]["vol"]:
+            vwap = round(tv / vol, 4) if vol > 0 else 0.0
             out[code] = {
                 "name_en":    name_en,
                 "name_zh":    name_zh,
@@ -227,6 +228,7 @@ def parse(body: str) -> dict:
                 "close":      close,
                 "vol":        vol,
                 "tv":         tv,
+                "vwap":       vwap,
             }
     return out
 

@@ -21,7 +21,8 @@ except ImportError:
     _SFC_AVAILABLE = False
 try:
     from ccass_sdw_library import get_latest_total_sh as sdw_get_total_sh, \
-                              get_total_sh_bulk   as sdw_get_total_sh_bulk
+                              get_total_sh_bulk   as sdw_get_total_sh_bulk, \
+                              get_holders         as sdw_get_holders
     _SDW_AVAILABLE = True
 except ImportError:
     _SDW_AVAILABLE = False
@@ -378,6 +379,29 @@ SFC_THRESHOLDS = {
     "bluechip": (    1.5,    -1.5 ),   # Mid base; slightly more tolerance
     "general":  (    1.0,    -1.0 ),   # Same as stable
 }
+
+
+# ── 鎖倉臨界點 classifier ────────────────────────────────────────────────────
+# Threshold at which institutional concentration makes short covering structurally
+# difficult. Categorised by 24-day average HKD daily turnover.
+#
+#   超大型 (tv_avg24 > 10億):  75%  — high liquidity, needs extreme concentration
+#   中型   (tv_avg24 2–10億):  60%  — moderate, 60% concentration traps shorts
+#   小型   (tv_avg24 < 2億):   90%  — illiquid; near-total lock needed to matter
+#
+_LOCKUP_LARGE  = 1_000_000_000   # 10億 HKD
+_LOCKUP_MID    =   200_000_000   #  2億 HKD
+
+def lockup_threshold(tv_avg24: float) -> float:
+    """
+    Return the 鎖倉臨界點 (%) for a stock given its 24-day avg HKD turnover.
+    超大型 > 10億 → 75%  |  中型 2–10億 → 60%  |  小型 < 2億 → 90%
+    """
+    if tv_avg24 >= _LOCKUP_LARGE:
+        return 75.0
+    if tv_avg24 >= _LOCKUP_MID:
+        return 60.0
+    return 90.0
 
 def classify_insight(stock_type, short_ratio, short_avg,
                      turnover, tv_avg5,
@@ -785,8 +809,10 @@ def run_analysis():
 
         # 換手率 = sum of last 5 trading days' 成交股數 / 總數 (CCASS-custodied shares) × 100
         vol_5d       = sum(vol_hist24[:5])
+        vol_20d      = sum(vol_hist24[:20])  # 20-day vol for monthly 換手率
         _ts          = _sdw_total_sh_map.get(code.zfill(5), 0)
-        turnover_5d  = round(vol_5d / _ts * 100, 4) if _ts > 0 and vol_5d > 0 else 0.0
+        turnover_5d  = round(vol_5d  / _ts * 100, 4) if _ts > 0 and vol_5d  > 0 else 0.0
+        turnover_20d = round(vol_20d / _ts * 100, 4) if _ts > 0 and vol_20d > 0 else 0.0
 
         # turnover_ratio = this week's 換手率 vs 4-week rolling average
         # weeks 1-3 use the same vol_hist24 already loaded — no extra I/O
@@ -819,6 +845,24 @@ def run_analysis():
         pct_hist24 = _pct_hist(code5, 24, today_ds)
         pct_avg24_lvl = round(sum(pct_hist24) / len(pct_hist24), 4) if pct_hist24 else 0.0
         pct_dev    = round(pct_listed - pct_avg24_lvl, 4) if pct_avg24_lvl > 0 else 0.0
+
+        # VWAP = tv (HKD) / vol (shares) — backward compatible
+        _today_rec = _tv_all.get(today_ds, {}).get(code5, {})
+        if isinstance(_today_rec, dict) and _today_rec.get('vwap', 0):
+            vwap = float(_today_rec['vwap'])
+        elif turnover > 0 and today_vol > 0:
+            vwap = round(turnover / today_vol, 4)
+        else:
+            vwap = 0.0
+
+        # 持倉集中度 — top-5 holder % sum from latest SDW snapshot
+        # Uses get_holders() which reads from the range-split SDW files
+        _holders = sdw_get_holders(code, today_ds) if _SDW_AVAILABLE else []
+        if not _holders:
+            # Try latest available SDW date if today not yet fetched
+            _holders = sdw_get_holders(code, (trading_day - timedelta(days=8)).strftime('%Y-%m-%d')) \
+                       if _SDW_AVAILABLE else []
+        concentration = round(sum(h.get('pct', 0) for h in _holders[:5]), 2)
 
         stock_type = classify_stock(code, name_eng)
         _, ind_zh  = get_industry(code)
@@ -866,6 +910,7 @@ def run_analysis():
             "days_to_cover":  days_to_cover,
             "vol_ratio":      vol_ratio,
             "turnover_5d":    turnover_5d,
+            "turnover_20d":   turnover_20d,
             "turnover_ratio": turnover_ratio,
             "net_buy_vol":    int(net_buy_vol_today),
             "net_buy_ratio":  net_buy_ratio,
@@ -876,6 +921,9 @@ def run_analysis():
             "sfc_level_dev":  sfc_map.get(code, {}).get("sfc_level_dev",  0.0),
             "tv_ratio":  tv_ratio,
             "pct_dev":   round(pct_dev, 4),
+            "vwap":          vwap,
+            "concentration": concentration,
+            "lockup_threshold": lockup_threshold(tv_avg24),
             "ccass_trade_date":  t2_date.strftime("%Y-%m-%d"),
             "ccass_delta":       int(ccass_delta),
             "ccass_consec":      int(ccass_consec),

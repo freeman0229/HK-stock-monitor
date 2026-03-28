@@ -1,27 +1,24 @@
 """
 turnover_library.py — HKEX Daily Turnover & Volume Library
 ===========================================================
-Read-only API used by main.py.  All writes are owned by build_turnover.py.
+Stores daily turnover (HKD) and volume (shares) for all stocks
+from the HKEX daily quotation file.
 
 Library files: turnover_{YYYY}.json — one per year
 
-JSON structure (written by build_turnover.py):
+Structure:
 {
   "meta": {"year": 2026, "last_updated": "...", "total_days": N},
   "by_date": {
     "2026-03-19": {
-      "00700": {"name_en": "TENCENT", "name_zh": "騰訊控股",
-                "prev_close": 478.0, "close": 481.6,
-                "vol": 62450000, "tv": 26800000000},
+      "00700": {"tv": 26800000000, "vol": 62450000, "close": 481.60},
       ...
     }
   }
 }
 
-Main API:
-  from turnover_library import (load_year, get_tv, get_tv_history,
-                                 get_vol_history, get_close_history,
-                                 load_recent, get_close)
+API for main.py:
+  from turnover_library import save_day, get_tv, get_tv_history, all_stored_dates
 """
 
 import os, json, logging
@@ -31,6 +28,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 START_DATE = date(2018, 3, 1)
+
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
@@ -68,30 +66,22 @@ def all_stored_dates() -> set:
                 stored.update(json.load(f).get("by_date", {}).keys())
     return stored
 
+
 # ── API for main.py ───────────────────────────────────────────────────────────
 
 def save_day(d: datetime, records: dict):
     """
-    Merge one day's records into the library (does NOT overwrite).
+    Save one day's turnover/volume into the library.
     records: {code: {"tv": int, "vol": int, "close": float}}
-
-    Uses merge so that build_turnover.py's full-market data (2100+ stocks)
-    is not wiped when main.py saves its smaller ~57-stock set.
-    main.py fields take precedence for the stocks it covers.
     """
     if not records:
         return
     ds   = d.strftime("%Y-%m-%d")
     year = d.year
     lib  = load_year(year)
-    existing = lib["by_date"].get(ds, {})
-    for code, rec in records.items():
-        if code in existing and isinstance(existing[code], dict):
-            existing[code].update(rec)
-        else:
-            existing[code] = rec
-    lib["by_date"][ds] = existing
+    lib["by_date"][ds] = records
     save_year(year, lib)
+
 
 def get_tv(code: str, ds_yyyymmdd: str) -> float:
     """
@@ -108,6 +98,31 @@ def get_tv(code: str, ds_yyyymmdd: str) -> float:
     if isinstance(rec, dict):
         return float(rec.get("tv", 0))
     return float(rec)
+
+
+def get_vwap(code: str, ds_yyyymmdd: str) -> float:
+    """
+    Return VWAP (成交均價) for a stock on a given date (YYYYMMDD format).
+    VWAP = tv (HKD) / vol (shares).
+    Uses stored "vwap" field if present (new records from build_turnover.py),
+    otherwise computes from tv/vol for backward compatibility.
+    Returns 0.0 if data missing or vol=0.
+    """
+    year = int(ds_yyyymmdd[:4])
+    ds   = f"{ds_yyyymmdd[:4]}-{ds_yyyymmdd[4:6]}-{ds_yyyymmdd[6:8]}"
+    p    = lib_path(year)
+    if not os.path.exists(p):
+        return 0.0
+    with open(p, encoding="utf-8") as f:
+        rec = json.load(f).get("by_date", {}).get(ds, {}).get(code, {})
+    if not isinstance(rec, dict):
+        return 0.0
+    if rec.get("vwap", 0):
+        return float(rec["vwap"])
+    tv  = float(rec.get("tv",  0))
+    vol = float(rec.get("vol", 0))
+    return round(tv / vol, 4) if vol > 0 else 0.0
+
 
 def get_vol_history(code: str, n: int, before: str) -> list:
     """
@@ -133,6 +148,7 @@ def get_vol_history(code: str, n: int, before: str) -> list:
                 return result
     return result
 
+
 def get_tv_history(code: str, n: int, before: str) -> list:
     """
     Return last n turnover values (HKD) for a stock before date `before`
@@ -156,6 +172,8 @@ def get_tv_history(code: str, n: int, before: str) -> list:
             if len(result) >= n:
                 return result
     return result
+
+
 
 def get_close_history(code: str, n: int, before: str) -> list:
     """
@@ -182,8 +200,11 @@ def get_close_history(code: str, n: int, before: str) -> list:
                 return result
     return result
 
+
+
 # Preferred alias for chart construction — same as get_close_history
 get_price_history = get_close_history
+
 
 def get_close(code: str, ds_yyyymmdd: str) -> float:
     """
@@ -200,6 +221,7 @@ def get_close(code: str, ds_yyyymmdd: str) -> float:
     if isinstance(rec, dict):
         return float(rec.get("close", 0.0))
     return 0.0
+
 
 def load_recent(n_days: int, before: str) -> dict:
     """
