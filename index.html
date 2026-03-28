@@ -988,12 +988,12 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 </div>
 
 <div id="footer">
-  <span>Email: tardigradeanalytics@gmail.com</span>
+  <span>Email: <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="56223724323f31243732333738373a2f223f352516313b373f3a7835393b">[email&#160;protected]</a></span>
   <span>港股策略板 ｜ 數據來源：HKEX · SFC ｜ 僅供參考，不構成投資建議</span>
   <span>©2026 tardigradeanalytics.com All rights reserved</span>
 </div>
 
-<script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 let allStocks = [];
 let updateTime = '';
 let sbDate = '';          // date of southbound data (may be yesterday)
@@ -2229,24 +2229,45 @@ function renderShort() {
 }
 
 // ── Short risk scatter map ────────────────────────────────────────────────────
+// Axes: X = DTC (days_to_cover), Y = vol_ratio, bubble size = short_ratio
+// Tier 1 active  : short_ratio > shortHi + DTC >= 3 + vol_ratio >= 1.8 + turnover > 0 → solid fill
+// Tier 2 buildup : short_ratio > shortHi + DTC >= 3 + turnover > 0 (vol_ratio < 1.8)  → dashed outline
+// 1.8× dashed separator line, top-5 composite-score labels, hover tooltip with tier badge
 function drawShortRiskMap(stocks) {
   const canvas = document.getElementById('shortRiskCanvas');
   if (!canvas) return;
+
+  // ── Remove any existing tooltip and create a fresh one ──────────────────
+  let TIP = document.getElementById('shortRiskTip');
+  if (!TIP) {
+    TIP = document.createElement('div');
+    TIP.id = 'shortRiskTip';
+    Object.assign(TIP.style, {
+      position:'absolute', display:'none', pointerEvents:'none',
+      background:'rgba(20,20,28,0.96)', color:'#fff',
+      border:'1px solid rgba(255,255,255,0.12)',
+      borderRadius:'7px', padding:'9px 13px',
+      fontSize:'12px', lineHeight:'1.8',
+      whiteSpace:'nowrap', zIndex:'200',
+    });
+    canvas.parentElement.style.position = 'relative';
+    canvas.parentElement.appendChild(TIP);
+  }
+
   const W = (canvas.parentElement.clientWidth || 700) - 24;
   const H = Math.max(300, Math.min(460, W * 0.54));
   canvas.width  = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
 
-  // Dark background
   ctx.fillStyle = '#1e1e24';
   ctx.fillRect(0, 0, W, H);
 
-  const PAD = { top:28, right:56, bottom:64, left:60 };
+  const PAD = { top:32, right:62, bottom:64, left:60 };
   const cW  = W - PAD.left - PAD.right;
   const cH  = H - PAD.top  - PAD.bottom;
 
-  // Two-tier filter
+  // ── Two-tier filter ──────────────────────────────────────────────────────
   const active  = stocks.filter(s =>
     s.turnover > 0 && s.short_ratio > shortHi(s) &&
     (s.days_to_cover||0) >= 3 && (s.vol_ratio||0) >= 1.8
@@ -2257,7 +2278,7 @@ function drawShortRiskMap(stocks) {
   );
   const pts = [...active, ...buildup];
 
-  // Axis ranges
+  // ── Axis ranges — auto-scale, origin at (0,0) ───────────────────────────
   const maxX = pts.length ? Math.max(10, Math.ceil(Math.max(...pts.map(s=>s.days_to_cover||0))*1.25/2)*2) : 10;
   const maxY = pts.length ? Math.max(4,  Math.ceil(Math.max(...pts.map(s=>s.vol_ratio||0))*1.25))         : 4;
   const stepX = [1,2,5,10].find(s => maxX/s <= 6) || 2;
@@ -2266,7 +2287,7 @@ function drawShortRiskMap(stocks) {
   const xAt = v => PAD.left + (v / maxX) * cW;
   const yAt = v => PAD.top  + cH - (v / maxY) * cH;
 
-  // Grid
+  // ── Grid ─────────────────────────────────────────────────────────────────
   ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
   for (let t = stepX; t <= maxX; t += stepX) {
     ctx.beginPath(); ctx.moveTo(xAt(t), PAD.top); ctx.lineTo(xAt(t), PAD.top+cH); ctx.stroke();
@@ -2275,56 +2296,50 @@ function drawShortRiskMap(stocks) {
     ctx.beginPath(); ctx.moveTo(PAD.left, yAt(t)); ctx.lineTo(PAD.left+cW, yAt(t)); ctx.stroke();
   }
 
-  // 1.8× threshold dashed line
+  // ── 1.8× dashed separator ────────────────────────────────────────────────
   if (yAt(1.8) >= PAD.top) {
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([6,4]);
+    ctx.strokeStyle = 'rgba(255,255,100,0.45)'; ctx.lineWidth = 1.5; ctx.setLineDash([6,4]);
     ctx.beginPath(); ctx.moveTo(PAD.left, yAt(1.8)); ctx.lineTo(PAD.left+cW, yAt(1.8)); ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,100,0.65)'; ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText('1.8×', PAD.left+cW+4, yAt(1.8));
   }
 
-  // Axes
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.5;
+  // ── Axes with arrowheads ─────────────────────────────────────────────────
+  ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
   ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top+2); ctx.lineTo(PAD.left, PAD.top+cH); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top+cH); ctx.lineTo(PAD.left+cW+2, PAD.top+cH); ctx.stroke();
-
-  // Arrowheads
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillStyle = 'rgba(255,255,255,0.65)';
   ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top-2); ctx.lineTo(PAD.left-4, PAD.top+9); ctx.lineTo(PAD.left+4, PAD.top+9); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(PAD.left+cW+6, PAD.top+cH); ctx.lineTo(PAD.left+cW-5, PAD.top+cH-4); ctx.lineTo(PAD.left+cW-5, PAD.top+cH+4); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(PAD.left+cW+7, PAD.top+cH); ctx.lineTo(PAD.left+cW-4, PAD.top+cH-4); ctx.lineTo(PAD.left+cW-4, PAD.top+cH+4); ctx.fill();
 
-  // Tick labels
+  // ── Tick labels ──────────────────────────────────────────────────────────
   ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '11px sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   ctx.fillText('0', PAD.left, PAD.top+cH+6);
-  for (let t = stepX; t <= maxX; t += stepX) {
-    ctx.fillText(t+'d', xAt(t), PAD.top+cH+6);
-  }
+  for (let t = stepX; t <= maxX; t += stepX) ctx.fillText(t+'d', xAt(t), PAD.top+cH+6);
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   for (let t = stepY; t <= maxY; t += stepY) {
     ctx.fillText((t%1===0?t.toFixed(0):t.toFixed(1))+'×', PAD.left-6, yAt(t));
   }
 
-  // Axis labels
+  // ── Axis labels ──────────────────────────────────────────────────────────
   ctx.save();
   ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '12px sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  ctx.fillText('回補天數 DTC（日）', PAD.left+cW/2, PAD.top+cH+28);
-  ctx.translate(16, PAD.top+cH/2);
-  ctx.rotate(-Math.PI/2);
-  ctx.textBaseline = 'bottom';
-  ctx.fillText('成交量倍數', 0, 0);
+  ctx.fillText('回補天數 DTC（日）', PAD.left+cW/2, PAD.top+cH+30);
+  ctx.translate(16, PAD.top+cH/2); ctx.rotate(-Math.PI/2);
+  ctx.textBaseline = 'bottom'; ctx.fillText('成交量倍數', 0, 0);
   ctx.restore();
 
-  // Top-right danger label
+  // ── Danger corner label ──────────────────────────────────────────────────
   ctx.fillStyle = '#e05c3a'; ctx.font = 'bold 12px sans-serif';
   ctx.textAlign = 'right'; ctx.textBaseline = 'top';
   ctx.fillText('🔥 最高挾倉風險', PAD.left+cW-4, PAD.top+6);
 
-  // Empty state
+  // ── Empty state ──────────────────────────────────────────────────────────
   if (!pts.length) {
     ctx.fillStyle = 'rgba(192,37,45,0.15)';
     const bx=PAD.left+cW/2-160, bw=320, bh=72, by=PAD.top+cH/2-36;
@@ -2337,44 +2352,90 @@ function drawShortRiskMap(stocks) {
     return;
   }
 
-  // Bubble colours by stock type
-  const SOLID  = { bluechip:'rgba(192,37,45,0.85)', general:'rgba(59,130,246,0.85)', stable:'rgba(34,197,94,0.85)',  etf:'rgba(184,134,11,0.90)' };
-  const DASHED = { bluechip:'rgba(192,37,45,0.55)', general:'rgba(59,130,246,0.55)', stable:'rgba(34,197,94,0.55)',  etf:'rgba(184,134,11,0.60)' };
+  // ── Bubble colours by stock type ─────────────────────────────────────────
+  const SOLID  = { bluechip:'rgba(192,37,45,0.88)',  general:'rgba(59,130,246,0.88)',  stable:'rgba(34,197,94,0.88)',  etf:'rgba(184,134,11,0.92)' };
+  const DASHED = { bluechip:'rgba(192,37,45,0.55)',  general:'rgba(59,130,246,0.55)',  stable:'rgba(34,197,94,0.55)',  etf:'rgba(184,134,11,0.60)' };
 
-  // Bubble size scale: short_ratio → radius
-  const allSr  = pts.map(s => s.short_ratio||1);
-  const maxSr  = Math.max(...allSr);
-  const rScale = v => 10 + (v/maxSr)*24;
+  // ── Bubble size: short_ratio → radius ────────────────────────────────────
+  const maxSr = Math.max(...pts.map(s => s.short_ratio||1));
+  const rScale = v => 10 + (v/maxSr)*26;
 
-  // Draw buildups first (dashed, behind)
+  // ── Top-5 labels by composite score ──────────────────────────────────────
+  const compositeScore = s =>
+    (s.days_to_cover/10)*0.35 + (s.vol_ratio/4)*0.35 + ((s.short_ratio-shortHi(s))/30)*0.30;
+  const top5 = new Set([...pts].sort((a,b)=>compositeScore(b)-compositeScore(a)).slice(0,5).map(s=>s.code));
+
+  // ── Store hit areas for tooltip ──────────────────────────────────────────
+  const hitAreas = [];
+
+  // ── Draw buildup tier first (dashed outline, behind) ────────────────────
   buildup.forEach(s => {
-    const type = (s.stock_type||'general').replace(/ /g,'');
+    const type = (s.stock_type||'general');
     const col  = DASHED[type] || DASHED.general;
     const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rScale(s.short_ratio||1);
     ctx.save();
-    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([5,3]);
+    ctx.strokeStyle=col; ctx.lineWidth=2.5; ctx.setLineDash([5,3]);
     ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,0.04)'; ctx.fill();
     ctx.restore();
+    hitAreas.push({s, x, y, r, tier:'buildup'});
   });
 
-  // Draw active (solid, in front)
+  // ── Draw active tier (solid fill, in front) ──────────────────────────────
   active.forEach(s => {
-    const type = (s.stock_type||'general').replace(/ /g,'');
+    const type = (s.stock_type||'general');
     const col  = SOLID[type] || SOLID.general;
     const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rScale(s.short_ratio||1);
     ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
-    ctx.fillStyle = col; ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.stroke();
+    ctx.fillStyle=col; ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.28)'; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.stroke();
+    hitAreas.push({s, x, y, r, tier:'active'});
   });
 
-  // Labels for all pts
-  pts.forEach(s => {
-    const nameMap = {}; allStocks.forEach(a => { nameMap[a.code]=a.name_chi||a.code; });
-    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rScale(s.short_ratio||1);
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText(nameMap[s.code]||s.code, x, y-r-4);
+  // ── Top-5 name labels ────────────────────────────────────────────────────
+  hitAreas.forEach(({s, x, y, r}) => {
+    if (!top5.has(s.code)) return;
+    ctx.fillStyle='#fff'; ctx.font='bold 11px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='bottom';
+    ctx.fillText(s.name_chi||s.code, x, y-r-4);
   });
+
+  // ── Hover tooltip ────────────────────────────────────────────────────────
+  function onMove(e) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    let hit = null;
+    for (const h of hitAreas) {
+      if (Math.hypot(mx-h.x, my-h.y) <= h.r+5) { hit=h; break; }
+    }
+    if (hit) {
+      const {s, tier} = hit;
+      const isActive = tier==='active';
+      const badge  = isActive ? '🔥 活躍擠壓' : '⚠️ 醞釀中';
+      const excess = (s.short_ratio - shortHi(s)).toFixed(1);
+      TIP.innerHTML =
+        `<strong style="font-size:13px">${s.name_chi||s.code}</strong> ` +
+        `<span style="color:rgba(255,255,255,0.45);font-size:11px">${s.code}</span><br>` +
+        `<span style="background:${isActive?'rgba(192,37,45,0.65)':'rgba(200,160,0,0.3)'};` +
+        `padding:1px 8px;border-radius:4px;font-size:11px;font-weight:600">${badge}</span><br>` +
+        `回補天數 <strong style="color:#f9a870">${(s.days_to_cover||0).toFixed(1)}d</strong>　` +
+        `成交量倍數 <strong style="color:#f9a870">${(s.vol_ratio||0).toFixed(2)}×</strong><br>` +
+        `今日沽空 <strong style="color:#f76e6e">${s.short_ratio.toFixed(1)}%</strong>　` +
+        `均值 <span style="color:rgba(255,255,255,0.55)">${(s.short_avg||0).toFixed(1)}%</span>　` +
+        `超出上限 <strong style="color:#f76e6e">+${excess}pp</strong>`;
+      TIP.style.display = 'block';
+      const tipW=270, tipH=110;
+      const tx = Math.min(mx+14, W-tipW-4);
+      const ty = Math.max(my-tipH-8, 4);
+      TIP.style.left = tx+'px'; TIP.style.top = ty+'px';
+      canvas.style.cursor = 'pointer';
+    } else {
+      TIP.style.display = 'none';
+      canvas.style.cursor = 'default';
+    }
+  }
+  canvas.onmousemove  = onMove;
+  canvas.onmouseleave = () => { TIP.style.display='none'; canvas.style.cursor='default'; };
 }
 
 // ── Participant group classification ────────────────────────────────────────
@@ -3354,12 +3415,4 @@ window.addEventListener('resize', () => {
   setTimeout(() => {
     if (document.querySelector('.tab-btn[data-tab="cai"]').classList.contains('active')) drawCai();
     if (document.querySelector('.tab-btn[data-tab="bshui"]').classList.contains('active')) renderBshui();
-    if (document.querySelector('.tab-btn[data-tab="short"]').classList.contains('active')) {
-      drawShortRiskMap([...allStocks].sort((a,b) => b.short_ratio - a.short_ratio));
-      if (sfcLoaded) drawSfcChart();
-    }
-  }, 50);
-});
-</script>
-</body>
-</html>
+    if (document.quer
