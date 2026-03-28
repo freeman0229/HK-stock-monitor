@@ -205,7 +205,7 @@ jobs:
       - name: Migrate old single-file SDW data
         run: python ccass_sdw_library.py --migrate
       - name: Build SDW range ${{ matrix.range }}
-        run: python ccass_sdw_library.py --range ${{ matrix.range }}
+        run: python ccass_sdw_library.py --range ${{ matrix.range }} --max-minutes 80
       - name: Commit
         run: |
           git config --global user.name "Bot"
