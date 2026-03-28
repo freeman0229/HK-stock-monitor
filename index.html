@@ -1509,9 +1509,10 @@ function renderBshui() {
     // HKEX counts buy + sell legs separately, so ratio can legitimately exceed 100%
     // for heavily SC-traded stocks like Tencent
     // sb_total = southbound buy+sell in HKD; turnover = full-market HKD from dayquot
-    // Only valid when full-market turnover exceeds southbound combined flow
-    const sbPct = (s.turnover > 0 && s.turnover > s.sb_total)
-      ? (s.sb_total / s.turnover * 100) : 0;
+    // Cap at 100% — sc data and dayquot use slightly different counting methods
+    // so sb_total can marginally exceed turnover for heavily-traded SC stocks
+    const sbPct = s.turnover > 0
+      ? Math.min(s.sb_total / s.turnover * 100, 100) : 0;
     return `<tr>
       <td class="rank">${i+1}</td>
       <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
