@@ -380,7 +380,6 @@ SFC_THRESHOLDS = {
     "general":  (    1.0,    -1.0 ),   # Same as stable
 }
 
-
 # ── 鎖倉臨界點 classifier ────────────────────────────────────────────────────
 # Threshold at which institutional concentration makes short covering structurally
 # difficult. Categorised by 24-day average HKD daily turnover.

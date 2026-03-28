@@ -112,7 +112,6 @@ def all_trading_days(start: date, end: date) -> list:
         d += timedelta(days=1)
     return days
 
-
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
 def lib_path(year: int) -> str:
@@ -147,7 +146,6 @@ def all_stored_dates() -> set:
             with open(lib_path(year), encoding="utf-8") as f:
                 stored.update(json.load(f).get("by_date", {}).keys())
     return stored
-
 
 # ── Parse ─────────────────────────────────────────────────────────────────────
 
@@ -333,7 +331,6 @@ def parse_js(text: str) -> dict | None:
     result["top10"] = sorted(merged.values(), key=lambda x: x["total"], reverse=True)
     return result
 
-
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
 def _cache_path(d: date) -> str:
@@ -368,7 +365,6 @@ def fetch_day(d: date) -> dict | None:
     except Exception as e:
         log.error("  fetch failed (%s): %s", d.isoformat(), e)
         return None
-
 
 # ── Build / update ────────────────────────────────────────────────────────────
 
@@ -465,7 +461,6 @@ def build(update_only: bool = False):
                     [d.isoformat() for d in missing[:5]],
                     "..." if len(missing) > 5 else "")
 
-
 # ── Query ─────────────────────────────────────────────────────────────────────
 
 def query_date(ds: str):
@@ -495,9 +490,7 @@ def query_date(ds: str):
               f"{fmt(s['buy']):>12} {fmt(s['sell']):>12} {fmt(s['total']):>12} "
               f"{s.get('rank_sse',0):>4} {s.get('rank_szse',0):>4}")
 
-
 # ── API for main.py ───────────────────────────────────────────────────────────
-
 
 def get_sb_summary(ds: str) -> dict:
     """
@@ -568,7 +561,6 @@ def get_top10_history(code: str, n: int, before: str) -> list:
                 return result
     return result
 
-
 # ── Export ────────────────────────────────────────────────────────────────────
 
 def export_csv():
@@ -591,7 +583,6 @@ def export_csv():
         w.writeheader()
         w.writerows(rows)
     print(f"Exported {len(rows)} rows to {path}")
-
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 

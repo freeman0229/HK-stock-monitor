@@ -54,7 +54,6 @@ HEADERS  = {
     "Referer":    "https://www.hkexnews.hk/",
 }
 
-
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
 def load_lib() -> dict:
@@ -62,7 +61,6 @@ def load_lib() -> dict:
         with open(LIB_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {"meta": {}, "participants": {}}
-
 
 def save_lib(lib: dict):
     lib["meta"]["last_updated"] = date.today().isoformat()
@@ -72,7 +70,6 @@ def save_lib(lib: dict):
     kb = os.path.getsize(LIB_FILE) / 1024
     log.info("Saved %s: %d participants, %.1f KB", LIB_FILE, lib["meta"]["total"], kb)
 
-
 def is_stale(max_days: int = 7) -> bool:
     """Return True if the library is missing or older than max_days."""
     lib = load_lib()
@@ -80,7 +77,6 @@ def is_stale(max_days: int = 7) -> bool:
     if not last:
         return True
     return date.today() - date.fromisoformat(last) > timedelta(days=max_days)
-
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
@@ -130,7 +126,6 @@ def fetch() -> dict | None:
         log.error("fetch failed: %s", e)
         return None
 
-
 # ── Build / update ────────────────────────────────────────────────────────────
 
 def build(update_only: bool = False):
@@ -147,7 +142,6 @@ def build(update_only: bool = False):
 
     lib = {"meta": {}, "participants": participants}
     save_lib(lib)
-
 
 # ── API for other modules ─────────────────────────────────────────────────────
 
@@ -168,11 +162,9 @@ def get_participant(pid: str) -> str | None:
             return v
     return None
 
-
 def get_all_participants() -> dict:
     """Return the full {id: name} dict."""
     return load_lib().get("participants", {})
-
 
 def search_participants(query: str) -> list[tuple[str, str]]:
     """
@@ -186,8 +178,6 @@ def search_participants(query: str) -> list[tuple[str, str]]:
         if q in name.upper() or q in pid.upper()
     ]
     return sorted(results)
-
-
 
 # ── Participant groups ────────────────────────────────────────────────────────
 
@@ -207,7 +197,6 @@ GROUP_DAHU    = "大戶"
 GROUP_BEISHUI = "北水"
 GROUP_SANHU   = "散戶"
 
-
 def get_group(pid: str) -> str:
     """Return the group label for a participant ID."""
     if pid in BEISHUI_IDS:
@@ -215,7 +204,6 @@ def get_group(pid: str) -> str:
     if pid in DAHU_IDS:
         return GROUP_DAHU
     return GROUP_SANHU
-
 
 def group_holdings(holders: list) -> dict:
     """

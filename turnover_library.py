@@ -29,7 +29,6 @@ log = logging.getLogger(__name__)
 
 START_DATE = date(2018, 3, 1)
 
-
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
 def lib_path(year: int) -> str:
@@ -66,7 +65,6 @@ def all_stored_dates() -> set:
                 stored.update(json.load(f).get("by_date", {}).keys())
     return stored
 
-
 # ── API for main.py ───────────────────────────────────────────────────────────
 
 def save_day(d: datetime, records: dict):
@@ -81,7 +79,6 @@ def save_day(d: datetime, records: dict):
     lib  = load_year(year)
     lib["by_date"][ds] = records
     save_year(year, lib)
-
 
 def get_tv(code: str, ds_yyyymmdd: str) -> float:
     """
@@ -98,7 +95,6 @@ def get_tv(code: str, ds_yyyymmdd: str) -> float:
     if isinstance(rec, dict):
         return float(rec.get("tv", 0))
     return float(rec)
-
 
 def get_vwap(code: str, ds_yyyymmdd: str) -> float:
     """
@@ -122,7 +118,6 @@ def get_vwap(code: str, ds_yyyymmdd: str) -> float:
     tv  = float(rec.get("tv",  0))
     vol = float(rec.get("vol", 0))
     return round(tv / vol, 4) if vol > 0 else 0.0
-
 
 def get_vol_history(code: str, n: int, before: str) -> list:
     """
@@ -148,7 +143,6 @@ def get_vol_history(code: str, n: int, before: str) -> list:
                 return result
     return result
 
-
 def get_tv_history(code: str, n: int, before: str) -> list:
     """
     Return last n turnover values (HKD) for a stock before date `before`
@@ -172,8 +166,6 @@ def get_tv_history(code: str, n: int, before: str) -> list:
             if len(result) >= n:
                 return result
     return result
-
-
 
 def get_close_history(code: str, n: int, before: str) -> list:
     """
@@ -200,11 +192,8 @@ def get_close_history(code: str, n: int, before: str) -> list:
                 return result
     return result
 
-
-
 # Preferred alias for chart construction — same as get_close_history
 get_price_history = get_close_history
-
 
 def get_close(code: str, ds_yyyymmdd: str) -> float:
     """
@@ -221,7 +210,6 @@ def get_close(code: str, ds_yyyymmdd: str) -> float:
     if isinstance(rec, dict):
         return float(rec.get("close", 0.0))
     return 0.0
-
 
 def load_recent(n_days: int, before: str) -> dict:
     """
