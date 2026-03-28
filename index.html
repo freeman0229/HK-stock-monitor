@@ -407,10 +407,14 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
 /* ── Footer ── */
 #footer {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 11px;
   color: var(--label);
-  padding: 24px 16px;
+  padding: 20px 16px;
   border-top: 1px solid var(--border);
   margin-top: 16px;
 }
@@ -984,7 +988,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 </div>
 
 <div id="footer">
-  港股策略板 ｜ 數據來源：HKEX · SFC · CCASS ｜ 僅供參考，不構成投資建議
+  <span>Email: tardigradeanalytics@gmail.com</span>
+  <span>港股策略板 ｜ 數據來源：HKEX · SFC ｜ 僅供參考，不構成投資建議</span>
+  <span>©2026 tardigradeanalytics.com All rights reserved</span>
 </div>
 
 <script>
