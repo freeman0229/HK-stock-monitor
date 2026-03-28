@@ -90,7 +90,7 @@ _EXCEL_URL_PATTERNS = [
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
     "Referer":    "https://www.sfc.hk/",
-    "Accept":     "text/html,application/xhtml+xml,application/vnd.ms-excel,"
+    "Accept":     "text/csv,text/html,application/xhtml+xml,application/vnd.ms-excel,"
                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*",
 }
 
@@ -228,6 +228,21 @@ def _is_valid_excel(data: bytes) -> bool:
     """Return True if data is a valid xlsx (ZIP) or xls (OLE2) file."""
     return len(data) > 4 and data[:4] in (_XLSX_MAGIC, _XLS_MAGIC)
 
+def _is_valid_csv(data: bytes) -> bool:
+    """Return True if data looks like a valid CSV (not an HTML error page)."""
+    if len(data) < 50:
+        return False
+    try:
+        text = data[:2000].decode("utf-8-sig", errors="replace")
+    except Exception:
+        return False
+    # HTML error pages start with < or contain <html
+    stripped = text.lstrip()
+    if stripped.startswith("<") or "<html" in stripped.lower():
+        return False
+    # A valid CSV must have at least one comma
+    return "," in text
+
 def _download_file(report_date: date) -> tuple[bytes, str] | tuple[None, None]:
     """
     Attempt to download an SFC file via direct URL patterns.
@@ -243,7 +258,7 @@ def _download_file(report_date: date) -> tuple[bytes, str] | tuple[None, None]:
         if os.path.exists(cache_file):
             with open(cache_file, "rb") as f:
                 data = f.read()
-            if ext == "csv" and len(data) > 100:
+            if ext == "csv" and _is_valid_csv(data):
                 return data, "csv"
             if ext == "xlsx" and _is_valid_excel(data):
                 fmt = "xlsx" if data[:4] == _XLSX_MAGIC else "xls"
@@ -257,7 +272,7 @@ def _download_file(report_date: date) -> tuple[bytes, str] | tuple[None, None]:
         day=report_date.day,   date=ds_nodash)
     try:
         r = requests.get(csv_url, headers=HEADERS, timeout=30)
-        if r.status_code == 200 and len(r.content) > 100:
+        if r.status_code == 200 and _is_valid_csv(r.content):
             cache_file = os.path.join(CACHE_DIR, f"sfc_{ds_nodash}.csv")
             with open(cache_file, "wb") as f:
                 f.write(r.content)
@@ -388,7 +403,7 @@ def _parse_excel(data: bytes, report_date: date) -> dict | None:
       Stock Code | Stock Name | Short Position (Shares) | Short Position (HKD)
       [optional] % of Issued Shares
 
-    Returns {code5: {sh, hkd, pct, name}, "__total__": {sh, hkd}} or None.
+    Returns {code5: {sh, hkd, name}, "__total__": {sh, hkd}} or None.
     """
     # ── Load workbook rows ────────────────────────────────────────────────────
     rows = None
@@ -533,30 +548,40 @@ def reparse(specific_date: date = None):
     Re-parse cached Excel files and overwrite JSON records.
 
     If specific_date is given, re-parses only that date.
-    Otherwise scans sfc_cache/ for all *.xlsx files — only processes
-    dates that actually have a cached file, avoiding a full Friday scan.
+    Otherwise scans sfc_cache/ for all *.csv and *.xlsx files — only
+    processes dates that actually have a cached file.
 
     Corrupt files (not valid xlsx/ZIP) are automatically deleted so the
     next build() run will re-download them from SFC.
     """
     if specific_date:
-        dates = [specific_date]
+        # For a specific date, find whichever cache file exists (.csv or .xlsx)
+        ds_nodash = specific_date.strftime("%Y%m%d")
+        date_ext_pairs = []
+        for ext in ("csv", "xlsx"):
+            if os.path.exists(os.path.join(CACHE_DIR, f"sfc_{ds_nodash}.{ext}")):
+                date_ext_pairs.append((specific_date, ext))
+                break
+        if not date_ext_pairs:
+            date_ext_pairs = [(specific_date, "csv")]  # will fail gracefully below
     else:
-        dates = []
+        date_ext_pairs = []
         for fname in sorted(os.listdir(CACHE_DIR)):
             m = re.match(r"sfc_(\d{8})\.(xlsx|csv)$", fname, re.IGNORECASE)
             if not m:
                 continue
-            ds = m.group(1)
+            ds, ext = m.group(1), m.group(2).lower()
             try:
-                dates.append(date(int(ds[:4]), int(ds[4:6]), int(ds[6:8])))
+                date_ext_pairs.append(
+                    (date(int(ds[:4]), int(ds[4:6]), int(ds[6:8])), ext)
+                )
             except ValueError:
                 pass
-        log.info("Reparse: found %d cached Excel files to process", len(dates))
+        log.info("Reparse: found %d cached files to process", len(date_ext_pairs))
 
     reparsed = parse_fail = purged = 0
-    for d in dates:
-        cache_file = os.path.join(CACHE_DIR, f"sfc_{d.strftime('%Y%m%d')}.xlsx")
+    for d, ext in date_ext_pairs:
+        cache_file = os.path.join(CACHE_DIR, f"sfc_{d.strftime('%Y%m%d')}.{ext}")
         if not os.path.exists(cache_file):
             log.warning("Reparse: cache file missing for %s — skipping", d.isoformat())
             continue
@@ -620,7 +645,7 @@ def _fetch_from_scraped_links(stored: set) -> int:
             if r.status_code != 200 or not r.content:
                 continue
             content = r.content
-            is_csv  = link.lower().endswith(".csv") or link.lower().endswith(".csv?")
+            is_csv  = bool(re.search(r"\.csv(\?|#|$)", link, re.I))
             if not is_csv and not _is_valid_excel(content):
                 continue
             ext        = "csv" if is_csv else ("xlsx" if content[:4] == _XLSX_MAGIC else "xls")
@@ -709,7 +734,7 @@ def build(specific_date: date = None):
 
 def get_short_position(code: str, ds: str) -> dict:
     """
-    Return {sh, hkd, pct, name} for stock on YYYY-MM-DD, or {}.
+    Return {sh, hkd, name} for stock on YYYY-MM-DD, or {}.
     Transparently handles old compact schema {n, s, v, p}.
     """
     year = int(ds[:4])
@@ -723,7 +748,7 @@ def get_short_position(code: str, ds: str) -> dict:
 def get_position_history(code: str, n: int, before: str) -> list:
     """
     Last n weekly snapshots before `before` (YYYY-MM-DD), newest-first.
-    Returns [{date, sh, hkd, pct}, ...].
+    Returns [{date, sh, hkd, name}, ...].
     Transparently handles old compact schema.
     """
     code5  = code.zfill(5)
