@@ -193,7 +193,7 @@ def get_short_sell_today(trading_day: datetime) -> pd.DataFrame:
                     log.info("Short sell: using %s (today not yet available)", ds)
                 else:
                     log.info("Short sell: %d stocks from %s", len(rows), ds)
-                return pd.DataFrame(rows)
+                return pd.DataFrame(rows), ds
         # Step back one trading day using date arithmetic (no datetime needed)
         prev = target - timedelta(days=1)
         while prev.weekday() >= 5 or datetime(prev.year, prev.month, prev.day) in HK_HOLIDAYS:
@@ -201,7 +201,7 @@ def get_short_sell_today(trading_day: datetime) -> pd.DataFrame:
         target = prev
     log.warning("Short sell: no data found near %s",
                 trading_day.strftime("%Y-%m-%d"))
-    return EMPTY_SHORT
+    return EMPTY_SHORT, None
 
 def save_short_sell(date: datetime, df: pd.DataFrame):
     """No-op — short data is now saved by build_turnover.py, not main.py."""
@@ -478,9 +478,21 @@ def run_analysis():
     log.info("Turnover library: %d stocks for %s", len(quote_map), today_ds)
 
     # ── 2. Short selling (full market: 800+ stocks) ───────────────────────────
-    df_short = get_short_sell_today(trading_day)
+    df_short, short_date = get_short_sell_today(trading_day)
     # save_short_sell is a no-op — data is saved by build_turnover.py
-    short_map     = {}   # code → short_ratio % (needs traded vol from quotation)
+    # Load volume for the short date — may differ from today if short data lags
+    _short_vol_map_ref = quote_map  # default: use today's vol
+    if short_date and short_date != today_ds:
+        # Short data is from a prior day — load that day's volume for a consistent ratio
+        _short_lib_day = tv_load_year(int(short_date[:4])).get("by_date", {}).get(short_date, {})
+        if _short_lib_day:
+            _short_vol_map_ref = {
+                code: {"vol": int(rec.get("vol", 0))}
+                for code, rec in _short_lib_day.items()
+                if isinstance(rec, dict)
+            }
+            log.info("Short ratio: using %s volume for denominator (matches short date)", short_date)
+    short_map     = {}   # code → short_ratio % (same-day vol/sv pair)
     short_vol_map = {}   # code → short volume (shares)
     short_st_map  = {}   # code → short turnover (HKD)
     for row in df_short.itertuples():
@@ -489,7 +501,7 @@ def run_analysis():
         st   = float(row.short_turnover)
         short_vol_map[code] = sv
         short_st_map[code]  = st
-        traded_vol = quote_map.get(code, {}).get("vol", 0)
+        traded_vol = _short_vol_map_ref.get(code, {}).get("vol", 0)
         if traded_vol > 0:
             short_map[code] = round(sv / traded_vol * 100, 2)
 
@@ -663,14 +675,17 @@ def run_analysis():
 
     # ── 9. Name lookup ────────────────────────────────────────────────────────
     _nm = load_store(NAME_MAP_FILE)
+    # Pre-build short name lookup to avoid O(N) DataFrame scan per stock
+    _short_name_map = {} if df_short.empty else dict(
+        zip(df_short["stock_code"], df_short["name"])
+    )
 
     def _get_names(code: str) -> tuple[str, str]:
         """Return (name_eng, name_chi) from best available source."""
         # Priority: stock_ref > quotation > short sell > CCASS > name_map > code
         ref_zh   = get_zh_name(code)
         q        = quote_map.get(code, {})
-        sh_name  = df_short[df_short["stock_code"] == code]["name"].iloc[0] if (
-                       not df_short.empty and code in short_vol_map) else ""
+        sh_name  = _short_name_map.get(code, "")
         cc_name  = ccass_name_map.get(code, "")
         nm_entry = _nm.get(code, {})
 
@@ -678,6 +693,68 @@ def run_analysis():
                     or nm_entry.get("zh") or nm_entry.get("en") or code)
         name_eng = (q.get("name") or nm_entry.get("en") or ref_zh or code)
         return name_eng, name_chi
+
+    # ── Pre-load all library data into memory for fast per-stock lookups ──────
+    # Avoids ~8000+ file opens in the stock loop below.
+    log.info("Pre-loading library data into memory …")
+
+    def _flat_by_date(load_fn, years):
+        """Merge {YYYY: {by_date: {ds: {code: rec}}}} into one flat {ds: {code: rec}}."""
+        out = {}
+        for y in years:
+            out.update(load_fn(y).get("by_date", {}))
+        return out
+
+    from turnover_library import load_year as _tv_load_year
+    from short_library    import load_year as _sh_load_year_inner
+    from ccass_library    import load_year as _cc_load_year
+
+    _years = list(range(2024, trading_day.year + 1))  # last 2 years sufficient for 24-day history
+    _tv_all   = _flat_by_date(_tv_load_year,          _years)
+    _sh_all   = _flat_by_date(_sh_load_year_inner,    _years)
+    _cc_all   = _flat_by_date(_cc_load_year,          _years)
+    log.info("Pre-loaded: %d tv days | %d short days | %d ccass days",
+             len(_tv_all), len(_sh_all), len(_cc_all))
+
+    def _vol_hist(code5, n, before):
+        result = []
+        for ds in sorted(_tv_all.keys(), reverse=True):
+            if ds >= before: continue
+            rec = _tv_all[ds].get(code5, {})
+            v = rec.get("vol", 0) if isinstance(rec, dict) else 0
+            if v > 0: result.append(int(v))
+            if len(result) >= n: break
+        return result
+
+    def _tv_hist(code5, n, before):
+        result = []
+        for ds in sorted(_tv_all.keys(), reverse=True):
+            if ds >= before: continue
+            rec = _tv_all[ds].get(code5, {})
+            tv = rec.get("tv", 0) if isinstance(rec, dict) else rec
+            if tv > 0: result.append(float(tv))
+            if len(result) >= n: break
+        return result
+
+    def _sh_hist(code5, n, before):
+        result = []
+        for ds in sorted(_sh_all.keys(), reverse=True):
+            if ds >= before: continue
+            rec = _sh_all[ds].get(code5, {})
+            if isinstance(rec, dict) and rec.get("sv", 0) > 0:
+                result.append({"date": ds, "sv": rec["sv"], "st": rec.get("st", 0)})
+            if len(result) >= n: break
+        return result
+
+    def _pct_hist(code5, n, before):
+        result = []
+        for ds in sorted(_cc_all.keys(), reverse=True):
+            if ds >= before: continue
+            rec = _cc_all[ds].get(code5, {})
+            pct = rec.get("pct", 0.0) if isinstance(rec, dict) else 0.0
+            if pct > 0: result.append(float(pct))
+            if len(result) >= n: break
+        return result
 
     # ── 10. Build results (full universe) ─────────────────────────────────────
     results = []
@@ -697,9 +774,11 @@ def run_analysis():
         ccass_streak_pct = ccass_streak_pct_map.get(code, 0.0)
         pct_listed       = pct_listed_map.get(code, 0.0)
         pct_delta        = pct_delta_map.get(code, 0.0)
-        tv_avg5          = _turnover_avg(code, today_ds, 5)
+        code5        = code.zfill(5)
+        tv_avg5_vals = _tv_hist(code5, 5, today_ds)
+        tv_avg5      = sum(tv_avg5_vals) / len(tv_avg5_vals) if tv_avg5_vals else 0.0
 
-        vol_hist24  = get_vol_history(code, 24, today_ds)
+        vol_hist24  = _vol_hist(code5, 24, today_ds)
         avg_vol24   = sum(vol_hist24) / len(vol_hist24) if vol_hist24 else 0
         days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
         vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
@@ -720,7 +799,7 @@ def run_analysis():
         # net_buy_vol = traded volume minus short-sold volume (non-short demand proxy)
         # Use _tv_recent (already loaded) and short history to build 24-day net_buy series
         net_buy_vol_today = max(0, today_vol - short_vol_today)
-        sh_hist24         = get_short_history(code, 24, today_ds)
+        sh_hist24         = _sh_hist(code5, 24, today_ds)
         sh_sv_by_date     = {e["date"]: e["sv"] for e in sh_hist24}
         nbv_hist = []
         for yyyymmdd in sorted(_tv_recent.keys(), reverse=True)[:24]:
@@ -734,10 +813,10 @@ def run_analysis():
         avg_nbv24     = sum(nbv_hist) / len(nbv_hist) if nbv_hist else 0
         net_buy_ratio = round(net_buy_vol_today / avg_nbv24, 2) if avg_nbv24 > 0 else 0.0
 
-        tv_hist24  = get_tv_history(code, 24, today_ds)
+        tv_hist24  = _tv_hist(code5, 24, today_ds)
         tv_avg24   = sum(tv_hist24) / len(tv_hist24) if tv_hist24 else 0.0
         tv_ratio   = round(turnover / tv_avg24, 2)  if tv_avg24 > 0 else 0.0
-        pct_hist24 = get_pct_history(code, 24, today_ds)
+        pct_hist24 = _pct_hist(code5, 24, today_ds)
         pct_avg24_lvl = round(sum(pct_hist24) / len(pct_hist24), 4) if pct_hist24 else 0.0
         pct_dev    = round(pct_listed - pct_avg24_lvl, 4) if pct_avg24_lvl > 0 else 0.0
 
