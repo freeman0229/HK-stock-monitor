@@ -113,7 +113,6 @@ try:
 except ImportError:
     pass
 
-
 # ── Schedule ──────────────────────────────────────────────────────────────────
 
 def _fetch_date_for_friday(friday: date) -> date | None:
@@ -138,7 +137,6 @@ def all_fetch_dates(up_to: date = None) -> list[date]:
             result.append(fd)
         d += timedelta(weeks=1)
     return result
-
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
@@ -193,7 +191,6 @@ def _stored_codes_for_date(ds: str) -> set[str]:
             codes.update(json.load(f).get("by_date", {}).get(ds, {}).keys())
     return codes
 
-
 # ── Schema normalisation ──────────────────────────────────────────────────────
 
 def _to_v2(raw) -> dict:
@@ -203,7 +200,6 @@ def _to_v2(raw) -> dict:
     if isinstance(raw, dict):
         return raw if "p" in raw else {"p": [], "total_sh": 0, "issued_sh": 0}
     return {"p": [], "total_sh": 0, "issued_sh": 0}
-
 
 # ── Stock universe from SFC library ──────────────────────────────────────────
 
@@ -252,7 +248,6 @@ def get_sfc_universe() -> list[str]:
     log.warning("No SFC universe available — returning empty list")
     return []
 
-
 # ── SDW fetch for one stock ───────────────────────────────────────────────────
 
 def _parse_num(s) -> int:
@@ -261,25 +256,30 @@ def _parse_num(s) -> int:
     except (ValueError, TypeError):
         return 0
 
-
-def fetch_stock(stock_code: str, d: date) -> dict | None:
+def fetch_stock(stock_code: str, d: date,
+                sess: requests.Session = None) -> dict | None:
     """
     Fetch CCASS participant holdings for one stock on one date.
 
     Each call does its own GET (viewstate) + POST (data) — ASP.NET
     __EVENTVALIDATION tokens are single-use per page load and cannot be
-    shared across requests.
+    shared across requests. However a shared Session reuses the underlying
+    TCP connection (keep-alive), saving ~100-300ms per stock vs creating
+    a new Session each time.
 
     Returns {p, total_sh, issued_sh} or None if no data found.
     """
     code5    = stock_code.zfill(5)
     date_str = d.strftime("%Y/%m/%d")
-    try:
+    own_sess = sess is None
+    if own_sess:
         sess = requests.Session()
         sess.headers.update(HEADERS)
 
+    for attempt in range(1, 4):   # up to 3 attempts
+      try:
         # GET to retrieve fresh ASP.NET viewstate tokens
-        r1 = sess.get(SDW_URL, timeout=8)
+        r1 = sess.get(SDW_URL, timeout=15)
         r1.raise_for_status()
         soup1 = BeautifulSoup(r1.text, "html.parser")
 
@@ -385,15 +385,23 @@ def fetch_stock(stock_code: str, d: date) -> dict | None:
 
         if not participants:
             log.debug("SDW: 0 records for %s on %s", code5, date_str)
+            if own_sess: sess.close()
             return None
 
         participants.sort(key=lambda x: -x["sh"])
+        if own_sess: sess.close()
         return {"p": participants, "total_sh": total_sh, "issued_sh": issued_sh}
 
-    except Exception as e:
-        log.error("fetch_stock (%s %s): %s", code5, date_str, e)
-        return None
-
+      except Exception as e:
+        if attempt < 3:
+            wait = attempt * 3
+            log.warning("fetch_stock (%s %s) attempt %d failed: %s — retrying in %ds",
+                        code5, date_str, attempt, e, wait)
+            time.sleep(wait)
+        else:
+            log.error("fetch_stock (%s %s): all 3 attempts failed: %s", code5, date_str, e)
+            if own_sess: sess.close()
+            return None
 
 # ── Build / update ────────────────────────────────────────────────────────────
 
@@ -512,6 +520,9 @@ def build(update_only: bool = False, specific_date: date = None,
         fetched       = 0
         timed_out     = False
         consec_errors = 0   # consecutive failures — triggers backoff
+        _dirty_ranges = set()  # track which ranges received new data
+        _shared_sess  = requests.Session()   # reuse TCP connection across stocks
+        _shared_sess.headers.update(HEADERS)
 
         for ci, code in enumerate(todo, 1):
             if deadline and time.monotonic() >= deadline:
@@ -520,10 +531,11 @@ def build(update_only: bool = False, specific_date: date = None,
                 timed_out = True
                 break
 
-            entry = fetch_stock(code, d)
+            entry = fetch_stock(code, d, sess=_shared_sess)
             if entry:
                 rl = code_range(code)
                 range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
+                _dirty_ranges.add(rl)
                 fetched      += 1
                 consec_errors = 0
             else:
@@ -538,12 +550,15 @@ def build(update_only: bool = False, specific_date: date = None,
 
             time.sleep(SLEEP_SEC)
 
-            # Checkpoint: save all ranges every 50 stocks
+            # Checkpoint: only save ranges that received new data
             if ci % 50 == 0:
-                for label, lib in range_libs.items():
-                    if lib["by_date"].get(ds):
-                        save_range(year, label, lib)
+                for label in _dirty_ranges:
+                    if range_libs[label]["by_date"].get(ds):
+                        save_range(year, label, range_libs[label])
+                _dirty_ranges.clear()
                 log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
+
+        _shared_sess.close()   # release connection pool
 
         # Final save for this date (complete or partial)
         for label, lib in range_libs.items():
@@ -556,7 +571,6 @@ def build(update_only: bool = False, specific_date: date = None,
             break
 
     log.info("Build complete")
-
 
 # ── Migration from old single-file format ────────────────────────────────────
 
@@ -601,7 +615,6 @@ def migrate_to_range_split():
         log.info("Migrated %d records from ccass_sdw_%d.json", migrated, year)
 
     log.info("Migration complete")
-
 
 # ── API ───────────────────────────────────────────────────────────────────────
 
@@ -673,7 +686,6 @@ def get_total_sh_bulk(ds: str) -> dict:
                 result[code5] = ts
     return result
 
-
 def get_holders_history(stock_code: str, n: int, before: str) -> list:
     """
     Last n weekly snapshots before `before` (YYYY-MM-DD), newest-first.
@@ -705,7 +717,6 @@ def get_holders_history(stock_code: str, n: int, before: str) -> list:
             if len(result) >= n:
                 return result
     return result
-
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -747,7 +758,6 @@ def _query(code: str, top: int, ds: str = None):
     hist = get_holders_history(code5, 6, (date.today() + timedelta(1)).isoformat())
     if hist:
         print(f"\nAvailable dates: {[h['date'] for h in hist]}")
-
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="CCASS SDW Participant Holdings Library")
