@@ -2233,15 +2233,20 @@ function drawShortRiskMap(stocks) {
   const canvas = document.getElementById('shortRiskCanvas');
   if (!canvas) return;
   const W = (canvas.parentElement.clientWidth || 700) - 24;
-  const H = Math.max(280, Math.min(420, W * 0.52));
+  const H = Math.max(300, Math.min(460, W * 0.54));
   canvas.width  = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, W, H);
 
-  // ── Two-tier squeeze detection ────────────────────────────────────────────
-  // Tier 1 — Active: short_ratio > shortHi(type) + DTC >= 3 + vol_ratio >= 1.8 + turnover > 0
-  // Tier 2 — Build-up: same but vol_ratio < 1.8 (volume not yet spiking)
+  // Dark background
+  ctx.fillStyle = '#1e1e24';
+  ctx.fillRect(0, 0, W, H);
+
+  const PAD = { top:28, right:56, bottom:64, left:60 };
+  const cW  = W - PAD.left - PAD.right;
+  const cH  = H - PAD.top  - PAD.bottom;
+
+  // Two-tier filter
   const active  = stocks.filter(s =>
     s.turnover > 0 && s.short_ratio > shortHi(s) &&
     (s.days_to_cover||0) >= 3 && (s.vol_ratio||0) >= 1.8
@@ -2252,193 +2257,126 @@ function drawShortRiskMap(stocks) {
   );
   const pts = [...active, ...buildup];
 
-  const SOLID  = { bluechip:'rgba(192,37,45,0.80)', general:'rgba(37,99,235,0.75)', stable:'rgba(22,163,74,0.75)', etf:'rgba(184,134,11,0.72)' };
-  const FAINT  = { bluechip:'rgba(192,37,45,0.12)', general:'rgba(37,99,235,0.11)', stable:'rgba(22,163,74,0.11)', etf:'rgba(184,134,11,0.11)' };
-  const DASHED = { bluechip:'rgba(192,37,45,0.55)', general:'rgba(37,99,235,0.50)', stable:'rgba(22,163,74,0.50)', etf:'rgba(184,134,11,0.50)' };
-
-  const PAD = { top:20, right:28, bottom:52, left:56 };
-  const cW  = W - PAD.left - PAD.right;
-  const cH  = H - PAD.top  - PAD.bottom;
-
-  // ── Axis ranges — from 0 with nice ticks ─────────────────────────────────
-  function niceStep(maxVal, n) {
-    const mag  = Math.pow(10, Math.floor(Math.log10(maxVal / n)));
-    const cands = [1,2,2.5,5,10].map(f => f * mag);
-    return cands.find(c => maxVal / c <= n + 1) || cands[cands.length-1];
-  }
-  const allDtc = pts.length ? pts.map(s => s.days_to_cover) : [10];
-  const allVol = pts.length ? pts.map(s => s.vol_ratio)     : [4];
-  const stepX  = niceStep(Math.max(...allDtc) * 1.15, 5);
-  const stepY  = niceStep(Math.max(...allVol) * 1.15, 5);
-  const maxX   = Math.ceil(Math.max(...allDtc) * 1.15 / stepX) * stepX;
-  const maxY   = Math.ceil(Math.max(...allVol) * 1.15 / stepY) * stepY;
+  // Axis ranges
+  const maxX = pts.length ? Math.max(10, Math.ceil(Math.max(...pts.map(s=>s.days_to_cover||0))*1.25/2)*2) : 10;
+  const maxY = pts.length ? Math.max(4,  Math.ceil(Math.max(...pts.map(s=>s.vol_ratio||0))*1.25))         : 4;
+  const stepX = [1,2,5,10].find(s => maxX/s <= 6) || 2;
+  const stepY = [0.5,1,2,5].find(s => maxY/s <= 6) || 1;
 
   const xAt = v => PAD.left + (v / maxX) * cW;
   const yAt = v => PAD.top  + cH - (v / maxY) * cH;
 
-  // ── Grid ─────────────────────────────────────────────────────────────────
-  ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
-  for (let t = stepX; t <= maxX + 1e-9; t += stepX) {
-    const x = xAt(t);
-    ctx.beginPath(); ctx.moveTo(x, PAD.top); ctx.lineTo(x, PAD.top + cH); ctx.stroke();
-    ctx.fillStyle = '#bbb'; ctx.font = '11px sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillText(t % 1 === 0 ? t.toFixed(0)+'d' : t.toFixed(1)+'d', x, PAD.top + cH + 6);
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
+  for (let t = stepX; t <= maxX; t += stepX) {
+    ctx.beginPath(); ctx.moveTo(xAt(t), PAD.top); ctx.lineTo(xAt(t), PAD.top+cH); ctx.stroke();
   }
-  for (let t = stepY; t <= maxY + 1e-9; t += stepY) {
-    const y = yAt(t);
-    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left + cW, y); ctx.stroke();
-    ctx.fillStyle = '#bbb'; ctx.font = '11px sans-serif';
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillText(t % 1 === 0 ? t.toFixed(0)+'×' : t.toFixed(1)+'×', PAD.left - 6, y);
+  for (let t = stepY; t <= maxY; t += stepY) {
+    ctx.beginPath(); ctx.moveTo(PAD.left, yAt(t)); ctx.lineTo(PAD.left+cW, yAt(t)); ctx.stroke();
   }
 
-  // ── Axes ─────────────────────────────────────────────────────────────────
-  ctx.strokeStyle = '#666'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, PAD.top + cH); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top + cH); ctx.lineTo(PAD.left + cW, PAD.top + cH); ctx.stroke();
+  // 1.8× threshold dashed line
+  if (yAt(1.8) >= PAD.top) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([6,4]);
+    ctx.beginPath(); ctx.moveTo(PAD.left, yAt(1.8)); ctx.lineTo(PAD.left+cW, yAt(1.8)); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('1.8×', PAD.left+cW+4, yAt(1.8));
+  }
 
-  // Origin label
-  ctx.fillStyle = '#bbb'; ctx.font = '11px sans-serif';
+  // Axes
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top+2); ctx.lineTo(PAD.left, PAD.top+cH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top+cH); ctx.lineTo(PAD.left+cW+2, PAD.top+cH); ctx.stroke();
+
+  // Arrowheads
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top-2); ctx.lineTo(PAD.left-4, PAD.top+9); ctx.lineTo(PAD.left+4, PAD.top+9); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(PAD.left+cW+6, PAD.top+cH); ctx.lineTo(PAD.left+cW-5, PAD.top+cH-4); ctx.lineTo(PAD.left+cW-5, PAD.top+cH+4); ctx.fill();
+
+  // Tick labels
+  ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '11px sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  ctx.fillText('0', PAD.left, PAD.top + cH + 6);
+  ctx.fillText('0', PAD.left, PAD.top+cH+6);
+  for (let t = stepX; t <= maxX; t += stepX) {
+    ctx.fillText(t+'d', xAt(t), PAD.top+cH+6);
+  }
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  ctx.fillText('0', PAD.left - 6, PAD.top + cH);
-
-  // Arrow heads
-  ctx.fillStyle = '#666';
-  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top - 2);
-  ctx.lineTo(PAD.left - 4, PAD.top + 8); ctx.lineTo(PAD.left + 4, PAD.top + 8);
-  ctx.closePath(); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(PAD.left + cW + 2, PAD.top + cH);
-  ctx.lineTo(PAD.left + cW - 8, PAD.top + cH - 4);
-  ctx.lineTo(PAD.left + cW - 8, PAD.top + cH + 4);
-  ctx.closePath(); ctx.fill();
+  for (let t = stepY; t <= maxY; t += stepY) {
+    ctx.fillText((t%1===0?t.toFixed(0):t.toFixed(1))+'×', PAD.left-6, yAt(t));
+  }
 
   // Axis labels
-  ctx.fillStyle = '#888'; ctx.font = '11px sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  ctx.fillText('回補天數 DTC（日）', PAD.left + cW / 2, PAD.top + cH + 28);
   ctx.save();
-  ctx.translate(14, PAD.top + cH / 2); ctx.rotate(-Math.PI / 2);
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '12px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.fillText('回補天數 DTC（日）', PAD.left+cW/2, PAD.top+cH+28);
+  ctx.translate(16, PAD.top+cH/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.textBaseline = 'bottom';
   ctx.fillText('成交量倍數', 0, 0);
   ctx.restore();
 
-  // 1.8× threshold line
-  if (maxY >= 1.8) {
-    const refY = yAt(1.8);
-    ctx.save();
-    ctx.strokeStyle = 'rgba(180,180,180,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
-    ctx.beginPath(); ctx.moveTo(PAD.left, refY); ctx.lineTo(PAD.left + cW, refY); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#aaa'; ctx.font = '10px sans-serif';
-    ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
-    ctx.fillText('1.8×', PAD.left + cW, refY - 3);
-    ctx.restore();
-  }
-
-  // Danger zone label
-  ctx.fillStyle = 'rgba(192,37,45,0.60)'; ctx.font = 'bold 10px sans-serif';
+  // Top-right danger label
+  ctx.fillStyle = '#e05c3a'; ctx.font = 'bold 12px sans-serif';
   ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-  ctx.fillText('🔥 最高挾倉風險', PAD.left + cW - 4, PAD.top + 4);
+  ctx.fillText('🔥 最高挾倉風險', PAD.left+cW-4, PAD.top+6);
 
-  // ── Empty state ───────────────────────────────────────────────────────────
+  // Empty state
   if (!pts.length) {
-    const bx = PAD.left + cW/2 - 180, bw = 360, bh = 80, by = PAD.top + cH/2 - 40;
-    ctx.fillStyle = 'rgba(192,37,45,0.08)';
-    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 8); ctx.fill();
-    ctx.fillStyle = '#c0252d'; ctx.font = 'bold 14px sans-serif';
+    ctx.fillStyle = 'rgba(192,37,45,0.15)';
+    const bx=PAD.left+cW/2-160, bw=320, bh=72, by=PAD.top+cH/2-36;
+    ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,8); ctx.fill();
+    ctx.fillStyle = '#e07070'; ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('今日無挾倉風險股票', PAD.left + cW/2, PAD.top + cH/2 - 12);
-    ctx.fillStyle = '#888'; ctx.font = '12px sans-serif';
-    ctx.fillText('沽空比率及回補天數均未達到警戒水平', PAD.left + cW/2, PAD.top + cH/2 + 14);
+    ctx.fillText('今日無挾倉風險股票', PAD.left+cW/2, PAD.top+cH/2-10);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '12px sans-serif';
+    ctx.fillText('沽空比率及回補天數均未達到警戒水平', PAD.left+cW/2, PAD.top+cH/2+16);
     return;
   }
 
-  // ── Bubbles ───────────────────────────────────────────────────────────────
-  const maxSR = Math.max(...pts.map(s => s.short_ratio || 1), 1);
-  canvas._pts = [];
+  // Bubble colours by stock type
+  const SOLID  = { bluechip:'rgba(192,37,45,0.85)', general:'rgba(59,130,246,0.85)', stable:'rgba(34,197,94,0.85)',  etf:'rgba(184,134,11,0.90)' };
+  const DASHED = { bluechip:'rgba(192,37,45,0.55)', general:'rgba(59,130,246,0.55)', stable:'rgba(34,197,94,0.55)',  etf:'rgba(184,134,11,0.60)' };
 
-  // Build-up tier first (drawn behind)
+  // Bubble size scale: short_ratio → radius
+  const allSr  = pts.map(s => s.short_ratio||1);
+  const maxSr  = Math.max(...allSr);
+  const rScale = v => 10 + (v/maxSr)*24;
+
+  // Draw buildups first (dashed, behind)
   buildup.forEach(s => {
-    const x = xAt(s.days_to_cover), y = yAt(s.vol_ratio);
-    const r = Math.max(5, Math.min(18, 5 + (s.short_ratio / maxSR) * 13));
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
-    ctx.fillStyle   = FAINT[s.stock_type]  || FAINT.general;
-    ctx.strokeStyle = DASHED[s.stock_type] || DASHED.general;
-    ctx.lineWidth = 1.5; ctx.setLineDash([3,2]);
-    ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
-    canvas._pts.push({ s, x, y, r, tier: 2 });
+    const type = (s.stock_type||'general').replace(/ /g,'');
+    const col  = DASHED[type] || DASHED.general;
+    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rScale(s.short_ratio||1);
+    ctx.save();
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([5,3]);
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
   });
 
-  // Active tier on top
+  // Draw active (solid, in front)
   active.forEach(s => {
-    const x = xAt(s.days_to_cover), y = yAt(s.vol_ratio);
-    const r = Math.max(5, Math.min(18, 5 + (s.short_ratio / maxSR) * 13));
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
-    ctx.fillStyle   = SOLID[s.stock_type] || SOLID.general;
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = 1.5; ctx.setLineDash([]);
-    ctx.fill(); ctx.stroke();
-    canvas._pts.push({ s, x, y, r, tier: 1 });
+    const type = (s.stock_type||'general').replace(/ /g,'');
+    const col  = SOLID[type] || SOLID.general;
+    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rScale(s.short_ratio||1);
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+    ctx.fillStyle = col; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.stroke();
   });
 
-  // Labels: top-5 by composite score (DTC × vol_ratio × short_ratio)
-  const top5 = [...pts]
-    .sort((a,b) =>
-      (b.days_to_cover||0) * (b.vol_ratio||0) * (b.short_ratio||0) -
-      (a.days_to_cover||0) * (a.vol_ratio||0) * (a.short_ratio||0)
-    )
-    .slice(0, 5);
-  top5.forEach(s => {
-    const x = xAt(s.days_to_cover), y = yAt(s.vol_ratio);
-    const r = Math.max(5, Math.min(18, 5 + (s.short_ratio/maxSR)*13));
-    ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 10px sans-serif';
+  // Labels for all pts
+  pts.forEach(s => {
+    const nameMap = {}; allStocks.forEach(a => { nameMap[a.code]=a.name_chi||a.code; });
+    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rScale(s.short_ratio||1);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    const label = s.name_chi.length > 4 ? s.name_chi.slice(0,4)+'…' : s.name_chi;
-    ctx.fillText(label, x, y - r - 3);
+    ctx.fillText(nameMap[s.code]||s.code, x, y-r-4);
   });
-
-  // ── Tooltip ───────────────────────────────────────────────────────────────
-  if (!canvas._tipWired) {
-    canvas._tipWired = true;
-    const tip = document.getElementById('short-risk-tip');
-    canvas.parentElement.style.position = 'relative';
-    canvas.addEventListener('mousemove', e => {
-      const rect = canvas.getBoundingClientRect();
-      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-      const hit = (canvas._pts||[]).find(p => Math.hypot(mx-p.x, my-p.y) <= p.r + 4);
-      if (!hit) { tip.style.display = 'none'; return; }
-      const s = hit.s;
-      const tierLabel = hit.tier === 1
-        ? '<span style="color:#c0252d;font-weight:500">🔥 活躍擠壓</span>'
-        : '<span style="color:#888">⚠️ 醞釀中</span>';
-      const concVal = s.concentration || 0;
-      const lockupVal = s.lockup_threshold || 0;
-      const concStr = concVal > 0
-        ? concVal.toFixed(1) + '%' + (lockupVal > 0 && concVal >= lockupVal ? ' ⚠️' : '')
-        : '—';
-      tip.innerHTML =
-        `<b>${s.name_chi} (${s.code})</b> ${tierLabel}<br>` +
-        `DTC ${(s.days_to_cover||0).toFixed(1)} 日 &nbsp; 成交量 ${(s.vol_ratio||0).toFixed(2)}×<br>` +
-        `沽空比率 ${s.short_ratio.toFixed(1)}% &nbsp; 均值 ${s.short_avg.toFixed(1)}%<br>` +
-        `集中度 ${concStr}`;
-      tip.style.left = Math.min(mx+12, W-215)+'px';
-      tip.style.top  = Math.max(my-72, 4)+'px';
-      tip.style.display = 'block';
-    });
-    canvas.addEventListener('mouseleave', () => { tip.style.display='none'; });
-  }
 }
-// ══ SDW 大戶持倉 ════════════════════════════════════════════════════════════
-//
-// Data loaded from ccass_sdw_YYYY.json on GitHub Pages.
-// Structure:  { by_date: { "YYYY-MM-DD": { "00700": [{pid,name,sh,pct}…] } } }
-// Holdings are sorted by sh desc (already done by Python library).
 
-let sdwData       = {};   // merged multi-year: { "YYYY-MM-DD": { code: [{…}] } }
-let sdwDates      = [];   // sorted asc
 // ── Participant group classification ────────────────────────────────────────
 const DAHU_IDS = new Set([
   'B01555','B01451','B01224','C00010','C00019','C00074','C00093',
