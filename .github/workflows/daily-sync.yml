@@ -37,7 +37,7 @@ jobs:
   daily:
     name: Daily analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: write
     if: |
@@ -61,6 +61,12 @@ jobs:
 
       - name: Update CCASS southbound holdings (today)
         run: python ccass_library.py --update --fix-names
+
+      - name: SDW backfill (incremental, all ranges, 10 min budget)
+        run: |
+          for range in 0001_1000 1001_2000 2001_3000 3001_4000 4001_7000 7001_9999 10000plus; do
+            python ccass_sdw_library.py --update --range $range --max-minutes 1.4
+          done
 
       - name: Run daily analysis
         env:
