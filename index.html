@@ -415,6 +415,23 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   margin-top: 16px;
 }
 
+
+/* ── 持倉明細 detail card ── */
+.detail-sec { margin-bottom: 20px; }
+.detail-stat-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+.detail-bar-row { display:flex; align-items:center; gap:10px; margin-bottom:7px; font-size:13px; }
+.detail-bar-lbl { width:38px; color:var(--muted); font-size:12px; text-align:right; flex-shrink:0; }
+.detail-bar-track { flex:1; height:8px; background:var(--border); border-radius:4px; overflow:hidden; }
+.detail-bar-fill { height:100%; border-radius:4px; }
+.detail-bar-pct { width:44px; text-align:right; font-weight:600; color:var(--text); font-size:13px; flex-shrink:0; }
+.lockup-note-row { display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:var(--muted); }
+.detail-holder-tbl { width:100%; font-size:12px; border-collapse:collapse; }
+.detail-holder-tbl th { color:var(--muted); font-weight:400; text-align:left; padding:3px 6px 6px; }
+.detail-holder-tbl th:last-child { text-align:right; }
+.detail-holder-tbl td { padding:5px 6px; border-top:0.5px solid var(--border); }
+.detail-holder-tbl td:last-child { text-align:right; font-weight:600; }
+.detail-holder-tbl .pid-cell { font-family:monospace; font-size:11px; color:var(--muted); }
+.grp-history-wrap { margin-top:16px; }
 /* ── Short risk map ── */
 #panel-short .summary-bar { grid-template-columns: repeat(3, 1fr); }
 @media (max-width: 700px) { #panel-short .summary-bar { grid-template-columns: repeat(2, 1fr); } }
@@ -787,6 +804,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th class="num-r mob-hide" data-col="short_avg">均值%</th>
           <th class="num-r mob-hide" data-col="days_to_cover">回補天數</th>
           <th class="num-r mob-hide" data-col="turnover">成交額(萬)</th>
+          <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔已發行股份合計%；超過鎖倉臨界點以紅色顯示">集中度%</th>
           <th>沽空趨勢</th>
           <th data-col="insight">信號</th>
         </tr>
@@ -802,8 +820,13 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <!-- ═══ Panel 3: 大戶持倉 ════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-ccass">
 
-  <!-- Summary cards — computed from SDW data -->
+  <!-- Summary cards: 持倉最集中, 最大單一持倉, 本週增持最多, 本週減持最多 -->
   <div class="summary-bar" id="sdw-summary">
+    <div class="sum-card">
+      <div class="sum-label">持倉最集中</div>
+      <div class="sum-val" id="sdw-conc-name">--</div>
+      <div class="sum-sub" id="sdw-conc-val">--</div>
+    </div>
     <div class="sum-card">
       <div class="sum-label">最大單一持倉</div>
       <div class="sum-val up" id="sdw-max-name">--</div>
@@ -815,35 +838,19 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div class="sum-sub" id="sdw-inc-val">--</div>
     </div>
     <div class="sum-card">
-      <div class="sum-label">持倉最集中</div>
-      <div class="sum-val" id="sdw-conc-name">--</div>
-      <div class="sum-sub" id="sdw-conc-val">--</div>
-    </div>
-    <div class="sum-card">
       <div class="sum-label">本週減持最多</div>
       <div class="sum-val dn" id="sdw-dec-name">--</div>
       <div class="sum-sub" id="sdw-dec-val">--</div>
     </div>
   </div>
 
-  <!-- Controls row -->
-  <div class="sdw-controls">
-    <div class="sdw-ctrl-group">
-      <label class="sdw-lbl">選擇股票</label>
-      <input type="text" id="sdw-search" placeholder="輸入代號或名稱…" autocomplete="off">
-      <div id="sdw-dropdown" class="sdw-dd" style="display:none"></div>
-    </div>
-    <div class="sdw-ctrl-group">
-      <label class="sdw-lbl">持倉日期</label>
-      <select id="sdw-date-sel"><option>載入中…</option></select>
-    </div>
-    <div class="sdw-ctrl-group">
-      <label class="sdw-lbl">顯示持倉數</label>
-      <select id="sdw-top-n">
-        <option value="10">前10位</option>
-        <option value="20" selected>前20位</option>
-        <option value="50">前50位</option>
-      </select>
+  <!-- Panel header: title + stock dropdown -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <div class="sec-title" style="margin:0;font-size:15px">大戶持倉</div>
+    <div style="position:relative;display:inline-block">
+      <input type="text" id="sdw-search" placeholder="輸入代號或名稱…" autocomplete="off"
+        style="font-size:13px;padding:7px 28px 7px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--card);color:var(--text);min-width:200px">
+      <div id="sdw-dropdown" class="sdw-dd" style="display:none;right:0;left:auto"></div>
     </div>
   </div>
 
@@ -852,41 +859,46 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="loading-box"><div class="spinner"></div>載入大戶持倉數據…</div>
   </div>
 
-  <!-- Main content: chart + table -->
+  <!-- Main content -->
   <div id="sdw-content" style="display:none">
 
-    <!-- Concentration trend chart -->
-    <div class="sec-head" style="margin-top:0">
-      <div class="sec-title" id="sdw-chart-title">持倉集中度趨勢</div>
-      <div class="sec-sub" id="sdw-chart-sub">前10大持倉機構合計佔已發行股份% — 週度數據（逢星期五）</div>
-    </div>
-    <div class="sdw-chart-wrap">
-      <canvas id="sdwCanvas" height="200"></canvas>
-      <div class="sdw-legend" id="sdw-legend"></div>
+    <!-- ── Detail card (stock header + 7 metrics + 持倉比例) ── -->
+    <div id="sdw-det-card" style="background:var(--card-alt,var(--bg));border:0.5px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px">
+      <!-- Stock header: code name industry type size -->
+      <div id="sdw-det-hdr" style="display:flex;align-items:baseline;gap:10px;margin-bottom:16px;flex-wrap:wrap"></div>
+      <!-- 7 metric cards -->
+      <div id="sdw-det-metrics" style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin-bottom:14px"></div>
+      <!-- 持倉比例 bars -->
+      <div style="font-size:12px;font-weight:500;color:var(--muted);margin-bottom:8px">持倉比例</div>
+      <div id="sdw-group-bars"></div>
     </div>
 
-    <!-- Holdings table -->
-    <div class="sec-head">
-      <div class="sec-title" id="sdw-tbl-title">大戶持倉明細</div>
-      <div class="sec-sub" id="sdw-tbl-sub">按持股量排序 ｜ 數據來源：HKEX CCASS SDW</div>
-    </div>
+    <!-- Top-5 table -->
+    <div style="font-size:12px;font-weight:500;color:var(--muted);margin-bottom:7px" id="sdw-top5-label">前5大持倉人明細</div>
     <div class="tbl-wrap">
-      <table id="tbl-sdw">
-        <thead>
-          <tr>
-            <th class="rank">#</th>
-            <th>中央結算參與者</th>
-            <th class="num-r">持股量</th>
-            <th class="num-r">佔已發行%</th>
-            <th class="num-r mob-hide">較上週股數變動</th>
-            <th class="num-r mob-hide">較上週%變動</th>
-          </tr>
-        </thead>
+      <table id="tbl-sdw" class="detail-holder-tbl" style="width:100%;font-size:12px;border-collapse:collapse">
+        <thead><tr>
+          <th class="rank">#</th>
+          <th>中央結算參與者</th>
+          <th class="num-r">持股量</th>
+          <th class="num-r">佔已發行%</th>
+          <th class="num-r mob-hide">較上週股數變動</th>
+          <th class="num-r mob-hide">較上週%變動</th>
+        </tr></thead>
         <tbody id="body-sdw">
           <tr><td colspan="6"><div class="loading-box">請選擇股票</div></td></tr>
         </tbody>
       </table>
     </div>
+
+    <!-- Group history chart -->
+    <div style="font-size:12px;font-weight:500;color:var(--muted);margin:16px 0 8px">持倉比例趨勢（週度）</div>
+    <canvas id="sdwGroupCanvas" style="width:100%;display:block"></canvas>
+    <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted)"></div>
+
+    <!-- hidden: date select kept for renderSdwPanel compatibility -->
+    <select id="sdw-date-sel" style="display:none"><option>載入中…</option></select>
+    <select id="sdw-top-n"    style="display:none"><option value="20" selected>前20位</option></select>
   </div>
 
   <!-- No data placeholder -->
@@ -1130,6 +1142,8 @@ function generateMockData() {
       rank: i+1, rank_new: Math.random()>0.85, rank_change: Math.round((Math.random()-0.5)*10),
       ...s, turnover: tv,
       short_ratio: sr, short_avg: sa,
+      concentration: parseFloat((20 + Math.random() * 70).toFixed(1)),
+      lockup_threshold: [60, 75, 90][Math.floor(Math.random()*3)],
       turnover_5d: parseFloat((0.5 + Math.random() * 4).toFixed(2)),
       turnover_20d: parseFloat((1.5 + Math.random() * 12).toFixed(2)),
       turnover_ratio: parseFloat((0.7 + Math.random() * 0.9).toFixed(2)),
@@ -2188,6 +2202,10 @@ function renderShort() {
     const dtcTxt    = dtc > 0 ? dtc.toFixed(1) + '日' : '—';
     const sfcPct    = s.sfc_pct || 0;
     const sfcPctTxt = sfcPct > 0 ? sfcPct.toFixed(2) + '%' : '—';
+    const conc      = s.concentration || 0;
+    const lockup    = s.lockup_threshold || 0;
+    const concClass = (conc > 0 && lockup > 0 && conc >= lockup) ? 'up-txt' : '';
+    const concTxt   = conc > 0 ? conc.toFixed(1) + '%' : '—';
     return `<tr>
       <td class="rank">${i+1}</td>
       <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
@@ -2196,6 +2214,7 @@ function renderShort() {
       <td class="num-r mob-hide">${fmtPct(s.short_avg)}</td>
       <td class="num-r mob-hide ${dtcClass}">${dtcTxt}</td>
       <td class="num-r mob-hide">${fmtM(s.turnover)}</td>
+      <td class="num-r mob-hide ${concClass}">${concTxt}</td>
       <td class="${diffClass}">${trend}</td>
       <td>${insightBadge(s.insight)}</td>
     </tr>`;
@@ -2389,10 +2408,16 @@ function drawShortRiskMap(stocks) {
       const tierLabel = hit.tier === 1
         ? '<span style="color:#c0252d;font-weight:500">🔥 活躍擠壓</span>'
         : '<span style="color:#888">⚠️ 醞釀中</span>';
+      const concVal = s.concentration || 0;
+      const lockupVal = s.lockup_threshold || 0;
+      const concStr = concVal > 0
+        ? concVal.toFixed(1) + '%' + (lockupVal > 0 && concVal >= lockupVal ? ' ⚠️' : '')
+        : '—';
       tip.innerHTML =
         `<b>${s.name_chi} (${s.code})</b> ${tierLabel}<br>` +
         `DTC ${(s.days_to_cover||0).toFixed(1)} 日 &nbsp; 成交量 ${(s.vol_ratio||0).toFixed(2)}×<br>` +
-        `沽空比率 ${s.short_ratio.toFixed(1)}% &nbsp; 均值 ${s.short_avg.toFixed(1)}%`;
+        `沽空比率 ${s.short_ratio.toFixed(1)}% &nbsp; 均值 ${s.short_avg.toFixed(1)}%<br>` +
+        `集中度 ${concStr}`;
       tip.style.left = Math.min(mx+12, W-215)+'px';
       tip.style.top  = Math.max(my-72, 4)+'px';
       tip.style.display = 'block';
@@ -2408,6 +2433,29 @@ function drawShortRiskMap(stocks) {
 
 let sdwData       = {};   // merged multi-year: { "YYYY-MM-DD": { code: [{…}] } }
 let sdwDates      = [];   // sorted asc
+// ── Participant group classification ────────────────────────────────────────
+const DAHU_IDS = new Set([
+  'B01555','B01451','B01224','C00010','C00019','C00074','C00093',
+  'C00039','C00111','B01274','B01161','B01110','B01504','C00100','C00033','B01366'
+]);
+const BEISHUI_IDS = new Set(['A00003','A00004','A00005']);
+
+function getGroup(pid) {
+  if (BEISHUI_IDS.has(pid)) return '北水';
+  if (DAHU_IDS.has(pid))    return '大戶';
+  return '散戶';
+}
+
+function groupHoldings(holders) {
+  const g = { '大戶':{sh:0,pct:0}, '北水':{sh:0,pct:0}, '散戶':{sh:0,pct:0} };
+  holders.forEach(h => {
+    const grp = getGroup(h.pid);
+    g[grp].sh  += h.sh  || 0;
+    g[grp].pct += h.pct || 0;
+  });
+  return g;
+}
+
 let sdwCurCode    = '';   // currently selected stock code
 let sdwCurDate    = '';   // currently selected date
 let sdwInitDone   = false;
@@ -2607,8 +2655,10 @@ function renderSdwPanel() {
 
   document.getElementById('sdw-chart-title').textContent = `${sdwCurCode} ${name} — 持倉集中度趨勢`;
   document.getElementById('sdw-chart-sub').textContent   = `前10大機構合計持股% ｜ 資料截至 ${ds}`;
-  document.getElementById('sdw-tbl-title').textContent   = `${sdwCurCode} ${name} — 大戶持倉明細`;
+  document.getElementById('sdw-tbl-title').textContent   = `${sdwCurCode} ${name} — 持倉明細`;
   document.getElementById('sdw-tbl-sub').textContent     = `${ds} 共 ${holders.length} 個機構 ｜ ${prevNote}`;
+  document.getElementById('sdw-detail-title').textContent = `${sdwCurCode} ${name} — 持倉明細`;
+  document.getElementById('sdw-detail-sub').textContent   = `資料日期：${ds}`;
 
   // ── Table ────────────────────────────────────────────────────────────────
   const rows = holders.slice(0, topN).map((h, i) => {
@@ -2649,8 +2699,12 @@ function renderSdwPanel() {
   }).join('');
   document.getElementById('body-sdw').innerHTML = rows;
 
+  // ── 持倉明細 detail card ────────────────────────────────────────────────
+  renderDetailCard(sdwCurCode, ds, holders);
+
   // ── Chart ────────────────────────────────────────────────────────────────
   drawSdwChart(sdwCurCode, ds);
+  drawGroupHistoryChart(sdwCurCode);
 }
 
 // ── Canvas chart: concentration trend across all stored dates ───────────────
@@ -2801,6 +2855,199 @@ function drawSdwChart(code, selectedDs) {
     </span>`).join('');
 }
 
+
+// ── 持倉明細 detail card renderer ─────────────────────────────────────────────
+function renderDetailCard(code, ds, holders) {
+  const sec = document.getElementById('sdw-detail-sec');
+  if (!sec) return;
+  sec.style.display = holders.length ? 'block' : 'none';
+  if (!holders.length) return;
+
+  // Stock metrics from allStocks
+  const s = allStocks.find(x => x.code === code) || {};
+  const conc    = parseFloat(s.concentration || 0);
+  const lockup  = parseFloat(s.lockup_threshold || 60);
+  const gap     = parseFloat((conc - lockup).toFixed(1));
+  const exceeded= gap >= 0;
+  const vwap    = s.vwap || 0;
+  const dtc     = s.days_to_cover || 0;
+  const sfcHkd  = s.sfc_hkd || 0;
+  const tv5d    = s.turnover_5d || 0;
+  const tv20d   = s.turnover_20d || 0;
+  const sr      = s.short_ratio || 0;
+
+  const nameMap = {}; allStocks.forEach(x => { nameMap[x.code] = x; });
+  const info = nameMap[code] || {};
+  const industry = info.industry_zh || '';
+  const stockType= info.stock_type  || '';
+  const typeLabel = { bluechip:'藍籌', general:'一般', stable:'穩健', etf:'ETF' }[stockType] || stockType;
+  const sizeLabel = (() => {
+    const tv24 = info.tv_ratio > 0 ? (info.turnover || 0) / (info.tv_ratio || 1) : 0;
+    if (tv24 >= 1e9) return '超大型'; if (tv24 >= 2e8) return '中型'; return '小型';
+  })();
+
+  // Stock header: code name industry type size
+  const detHdr = document.getElementById('sdw-det-hdr');
+  if (detHdr) {
+    detHdr.innerHTML =
+      `<span style="font-size:13px;color:var(--muted);font-family:monospace">${code}</span>` +
+      `<span style="font-size:17px;font-weight:500;color:var(--text)">${info.name_chi||code}</span>` +
+      (industry ? `<span style="font-size:12px;padding:3px 10px;border-radius:20px;border:0.5px solid var(--border);color:var(--muted)">${industry}</span>` : '') +
+      (typeLabel? `<span style="font-size:12px;padding:3px 10px;border-radius:20px;background:var(--text);color:var(--card);border:0.5px solid var(--text)">${typeLabel}</span>` : '') +
+      (sizeLabel? `<span style="font-size:12px;padding:3px 10px;border-radius:20px;border:0.5px solid var(--border);color:var(--muted)">${sizeLabel}</span>` : '');
+  }
+
+  // 7 metric cards: 今日沽空%, 累積沽空, 回補天數, 成交均價VWAP, 換手率, 持倉集中度, 鎖倉臨界點
+  const mc = (lbl, val, sub, red) =>
+    `<div style="background:var(--card);border:0.5px solid var(--border);border-radius:10px;padding:11px 12px">` +
+    `<div style="font-size:11px;color:var(--muted);margin-bottom:5px">${lbl}</div>` +
+    `<div style="font-size:18px;font-weight:500;${red?'color:#c0252d':''}">${val}</div>` +
+    (sub ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${sub}</div>` : '') +
+    `</div>`;
+  const detMetrics = document.getElementById('sdw-det-metrics');
+  if (detMetrics) detMetrics.innerHTML =
+    mc('今日沽空%',   sr>0 ? sr.toFixed(1)+'%'           : '—',  '',                       sr > shortHi({stock_type:stockType})) +
+    mc('累積沽空',    sfcHkd>0 ? fmtM(sfcHkd)             : '—',  'SFC 港元',               false) +
+    mc('回補天數',    dtc>0 ? dtc.toFixed(1)+' 日'         : '—',  'DTC',                    dtc>3) +
+    mc('成交均價 VWAP',vwap>0 ? 'HK$'+vwap.toFixed(2)     : '—',  '',                       false) +
+    mc('換手率',      tv5d>0 ? tv5d.toFixed(2)+'%'         : '—',  tv20d>0?'20日：'+tv20d.toFixed(1)+'%':'', false) +
+    mc('持倉集中度',  conc>0 ? conc.toFixed(1)+'%'         : '—',  '前5大合計',              exceeded) +
+    mc('鎖倉臨界點',  conc>0 ? (gap>=0?'+':'')+gap.toFixed(1)+'%':'—', '臨界 '+lockup+'%',  exceeded);
+
+  // 持倉比例 bars
+  const grp = groupHoldings(holders);
+  const barData = [
+    { lbl:'大戶', pct:grp['大戶'].pct, color:'#378ADD' },
+    { lbl:'北水', pct:grp['北水'].pct, color:'#639922' },
+    { lbl:'散戶', pct:grp['散戶'].pct, color:'#888780' },
+  ];
+  document.getElementById('sdw-group-bars').innerHTML = barData.map(b => `
+    <div class="detail-bar-row">
+      <span class="detail-bar-lbl">${b.lbl}</span>
+      <div class="detail-bar-track"><div class="detail-bar-fill" style="width:${Math.min(b.pct,100).toFixed(1)}%;background:${b.color}"></div></div>
+      <span class="detail-bar-pct">${b.pct.toFixed(1)}%</span>
+    </div>`).join('');
+
+  // Lockup note
+  const lockupNote = conc > 0 ? `
+    <div class="lockup-note-row">
+      前5大合計：<strong>${conc.toFixed(1)}%</strong>　鎖倉臨界點 ${lockup}%　
+      <span style="color:${exceeded?'#c0252d':'#3B6D11'};font-weight:500">
+        ${gap>=0?'+':''} ${gap.toFixed(1)}%　${exceeded ? '超過臨界點，沽空回補空間受限' : '距臨界點尚有空間'}
+      </span>
+    </div>` : '';
+  document.getElementById('sdw-group-bars').innerHTML += lockupNote;
+
+  // Top-5 table (no 組別 column)
+  document.getElementById('sdw-top5-label').textContent = `前5大持倉人明細（${ds}）`;
+  const top5 = holders.slice(0, 5);
+  const others = holders.slice(5).reduce((a,h) => a + (h.pct||0), 0);
+  document.getElementById('sdw-top5-body').innerHTML =
+    top5.map((h,i) => `<tr>
+      <td style="color:var(--muted)">${i+1}</td>
+      <td class="pid-cell">${h.pid}</td>
+      <td>${h.name}</td>
+      <td style="text-align:right;color:var(--muted);font-size:11px">${h.sh.toLocaleString('zh-HK')}</td>
+      <td>${h.pct.toFixed(1)}%</td>
+    </tr>`).join('') +
+    `<tr style="background:var(--card-alt,var(--bg))">
+      <td colspan="4" style="color:var(--muted);font-size:11px">其餘持倉人合計</td>
+      <td>${others.toFixed(1)}%</td>
+    </tr>`;
+}
+
+// ── Group history chart: 大戶/北水/散戶 grouped bars (weekly, 0–100% Y) ─────────
+function drawGroupHistoryChart(code) {
+  const canvas = document.getElementById('sdwGroupCanvas');
+  if (!canvas) return;
+  const W = canvas.parentElement.clientWidth || 600;
+  const H = 200;
+  canvas.width  = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
+  const dates  = sdwDates.filter(d => d >= cutoff && (sdwData[d]||{})[code]);
+
+  if (dates.length < 2) {
+    ctx.fillStyle = '#aaa'; ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('需至少兩期數據以顯示趨勢', W/2, H/2);
+    return;
+  }
+
+  const series = dates.map(ds => {
+    const raw = sdwData[ds][code];
+    const h   = raw ? (Array.isArray(raw) ? raw : (raw.p||[])) : [];
+    const g   = groupHoldings(h);
+    return { ds, dahu: g['大戶'].pct, bei: g['北水'].pct, san: g['散戶'].pct };
+  });
+
+  const GSERIES = [
+    { key:'dahu', col:'rgba(192,37,45,0.72)', solid:'#c0252d' },
+    { key:'bei',  col:'rgba(26,122,60,0.68)', solid:'#1a7a3c' },
+    { key:'san',  col:'rgba(184,134,11,0.60)', solid:'#b8860b' },
+  ];
+  const LBLS = { dahu:'大戶', bei:'北水', san:'散戶' };
+
+  const PAD = { top:16, right:48, bottom:28, left:44 };
+  const cW  = W - PAD.left - PAD.right;
+  const cH  = H - PAD.top  - PAD.bottom;
+  const n   = series.length;
+  const yAt = v => PAD.top + cH - (v / 100) * cH;
+  const xAt = i => PAD.left + (n > 1 ? i/(n-1) : 0.5) * cW;
+
+  // Grid: fixed 0–100%
+  ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
+  [0, 25, 50, 75, 100].forEach(t => {
+    const y = yAt(t);
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left+cW, y); ctx.stroke();
+    ctx.fillStyle='#bbb'; ctx.font='10px sans-serif';
+    ctx.textAlign='right'; ctx.textBaseline='middle';
+    ctx.fillText(t+'%', PAD.left-4, y);
+  });
+
+  // Grouped bars — thin (3 bars per date group)
+  const groupW = cW / n;
+  const bw     = Math.max(1.5, Math.min(3, groupW / 4));
+  const gTW    = bw * 3 + 2;
+  series.forEach((s, gi) => {
+    const gx = PAD.left + gi * groupW + (groupW - gTW) / 2;
+    GSERIES.forEach((gs, si) => {
+      const bh = Math.max(1, (s[gs.key] / 100) * cH);
+      ctx.fillStyle = gs.col;
+      ctx.fillRect(gx + si * (bw + 1), PAD.top + cH - bh, bw, bh);
+    });
+  });
+
+  // X labels — month boundaries only
+  ctx.fillStyle='#aaa'; ctx.font='10px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  let lastM = '';
+  series.forEach((s, i) => {
+    const m = s.ds.slice(5, 7);
+    if (m !== lastM) {
+      ctx.fillText(s.ds.slice(5), xAt(i), PAD.top+cH+4);
+      lastM = m;
+    }
+  });
+
+  // Right-edge value labels
+  const last = series[n-1];
+  GSERIES.forEach(gs => {
+    ctx.fillStyle = gs.solid; ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(last[gs.key].toFixed(1)+'%', PAD.left+cW+4, yAt(last[gs.key]));
+  });
+
+  // Legend
+  document.getElementById('sdw-group-legend').innerHTML = GSERIES.map(gs => `
+    <span style="display:flex;align-items:center;gap:5px">
+      <span style="width:22px;height:3px;background:${gs.solid};display:inline-block;border-radius:2px"></span>
+      ${LBLS[gs.key]}
+    </span>`).join('');
+}
 // ── Main init (called when tab is clicked or data loads) ────────────────────
 async function initSdwPanel() {
   if (sdwInitDone && sdwLoaded) {
