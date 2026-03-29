@@ -712,14 +712,14 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <!-- ═══ Panel 2: 累積沽空 ════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-short">
   <div class="summary-bar" style="grid-template-columns:repeat(3,1fr)">
-    <div class="sum-card"><div class="sum-label">沽空比率最高</div><div class="sum-val up" id="sh-top-name">--</div><div class="sum-sub" id="sh-top-pct">--</div></div>
-    <div class="sum-card"><div class="sum-label">高沽空預警</div><div class="sum-val up" id="sh-warn-cnt">--</div><div class="sum-sub" id="sh-warn-sub">比率超出上限</div></div>
-    <div class="sum-card"><div class="sum-label">挾倉風險</div><div class="sum-val up" id="sh-squeeze-cnt">--</div><div class="sum-sub">DTC &gt; 5 且成交放大 &gt; 2×</div></div>
-  </div>
+<div class="sum-card"><div class="sum-label">沽空比率最高</div><div class="sum-val up" id="sh-top-name">--</div><div class="sum-sub" id="sh-top-pct">--</div></div>
   <div class="summary-bar" style="grid-template-columns:repeat(3,1fr);margin-top:0">
     <div class="sum-card"><div class="sum-label">市場平均沽空</div><div class="sum-val" id="sh-avg">--</div><div class="sum-sub">全部股票均值</div></div>
     <div class="sum-card"><div class="sum-label">最高回補天數</div><div class="sum-val gold" id="sh-dtc-top-name">--</div><div class="sum-sub" id="sh-dtc-top-val">--</div></div>
     <div class="sum-card"><div class="sum-label">沽空偏低</div><div class="sum-val dn" id="sh-low-cnt">--</div><div class="sum-sub">比率低於下限</div></div>
+  </div>
+    <div class="sum-card"><div class="sum-label">高沽空預警</div><div class="sum-val up" id="sh-warn-cnt">--</div><div class="sum-sub" id="sh-warn-sub">比率超出上限</div></div>
+    <div class="sum-card"><div class="sum-label">挾倉風險</div><div class="sum-val up" id="sh-squeeze-cnt">--</div><div class="sum-sub">DTC &gt; 5 且成交放大 &gt; 2×</div></div>
   </div>
 
   <!-- ── Risk map ── -->
@@ -727,8 +727,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="sec-title">沽空風險圖 <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">泡泡大小 = 今日成交量倍數</span></div>
     <div class="sec-sub">X軸：今日沽空比率% ｜ Y軸：回補天數（DTC = 沽空股數 ÷ 30日平均成交量）｜ 右上角 = 挾倉風險區</div>
   </div>
-  <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:12px 12px 8px;margin-bottom:16px;">
-    <canvas id="shortRiskCanvas"></canvas>
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:12px 12px 8px;margin-bottom:16px;position:relative;">
+    <canvas id="shortRiskCanvas" style="cursor:crosshair;display:block;width:100%"></canvas>
     <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;font-size:11px;color:var(--muted);">
       <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#c0252d;opacity:.75"></span>藍籌</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;opacity:.75"></span>一般</span>
@@ -736,7 +736,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#b8860b;opacity:.75"></span>ETF</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:28px;height:1px;background:#c0252d;border-top:1px dashed #c0252d"></span>高危區</span>
     </div>
-    <div id="short-risk-tip" style="display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.6"></div>
+    <div id="short-risk-tip" style="display:none;position:absolute;background:#fff;border:0.5px solid #ddd;border-radius:8px;padding:8px 12px;font-size:12px;pointer-events:none;line-height:1.6;color:#1a1a1a;z-index:200;box-shadow:0 2px 8px rgba(0,0,0,0.08);white-space:nowrap"></div>
   </div>
 
   <!-- ── SFC 累積沽空持倉趨勢 ── -->
@@ -881,25 +881,21 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div id="sdw-group-bars"></div>
     </div>
 
-    <!-- Detail section wrapper -->
+    <!-- Detail section -->
     <div id="sdw-detail-sec" style="display:none">
       <div style="display:flex;align-items:baseline;gap:8px;margin:14px 0 4px;flex-wrap:wrap">
         <span id="sdw-detail-title" style="font-size:13px;font-weight:600;color:var(--text)"></span>
         <span id="sdw-detail-sub" style="font-size:11px;color:var(--muted)"></span>
       </div>
     </div>
-
-    <!-- Stock price / turnover chart -->
-    <div style="display:flex;align-items:baseline;gap:8px;margin:14px 0 4px;flex-wrap:wrap">
+    <!-- sdw chart -->
+    <div style="display:flex;align-items:baseline;gap:8px;margin:14px 0 4px">
       <span id="sdw-chart-title" style="font-size:12px;font-weight:500;color:var(--muted)">持倉集中度趨勢</span>
       <span id="sdw-chart-sub" style="font-size:11px;color:var(--muted)"></span>
     </div>
     <canvas id="sdwCanvas" style="width:100%;display:block;margin-bottom:12px"></canvas>
-
     <!-- Group history chart -->
-    <div style="display:flex;align-items:baseline;gap:8px;margin:0 0 4px;flex-wrap:wrap">
-      <span style="font-size:12px;font-weight:500;color:var(--muted)">持倉比例趨勢（週度）</span>
-    </div>
+    <div style="font-size:12px;font-weight:500;color:var(--muted);margin:0 0 4px">持倉比例趨勢（週度）</div>
     <canvas id="sdwGroupCanvas" style="width:100%;display:block"></canvas>
     <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);justify-content:center"></div>
 
@@ -1014,7 +1010,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 </div>
 
 <div id="footer">
-  <span>Email: <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="56223724323f31243732333738373a2f223f352516313b373f3a7835393b">[email&#160;protected]</a></span>
+  <span>Email: <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="196d786b7d707e6b787d7c78777875606d707a6a597e74787075377a7674">[email&#160;protected]</a></span>
   <span>港股策略板 ｜ 數據來源：HKEX · SFC ｜ 僅供參考，不構成投資建議</span>
   <span>©2026 tardigradeanalytics.com All rights reserved</span>
 </div>
@@ -2254,214 +2250,136 @@ function renderShort() {
   document.getElementById('body-short').innerHTML = html;
 }
 
-// ── Short risk scatter map ────────────────────────────────────────────────────
-// Axes: X = DTC (days_to_cover), Y = vol_ratio, bubble size = short_ratio
-// Tier 1 active  : short_ratio > shortHi + DTC >= 3 + vol_ratio >= 1.8 + turnover > 0 → solid fill
-// Tier 2 buildup : short_ratio > shortHi + DTC >= 3 + turnover > 0 (vol_ratio < 1.8)  → dashed outline
-// 1.8× dashed separator line, top-5 composite-score labels, hover tooltip with tier badge
+// ── Short risk scatter map ────────────────────────────────────────────
+// X = DTC  |  Y = vol_ratio  |  bubble = short_ratio
+// Tier 1 active  : short_ratio > shortHi + DTC >= 3 + vol_ratio >= 1.8 + turnover > 0
+// Tier 2 buildup : short_ratio > shortHi + DTC >= 3 + turnover > 0, vol_ratio < 1.8
 function drawShortRiskMap(stocks) {
   const canvas = document.getElementById('shortRiskCanvas');
   if (!canvas) return;
-
-  // ── Remove any existing tooltip and create a fresh one ──────────────────
-  let TIP = document.getElementById('shortRiskTip');
-  if (!TIP) {
-    TIP = document.createElement('div');
-    TIP.id = 'shortRiskTip';
-    Object.assign(TIP.style, {
-      position:'absolute', display:'none', pointerEvents:'none',
-      background:'rgba(20,20,28,0.96)', color:'#fff',
-      border:'1px solid rgba(255,255,255,0.12)',
-      borderRadius:'7px', padding:'9px 13px',
-      fontSize:'12px', lineHeight:'1.8',
-      whiteSpace:'nowrap', zIndex:'200',
-    });
-    canvas.parentElement.style.position = 'relative';
-    canvas.parentElement.appendChild(TIP);
-  }
-
-  const W = (canvas.parentElement.clientWidth || 700) - 24;
-  const H = Math.max(300, Math.min(460, W * 0.54));
-  canvas.width  = W;
-  canvas.height = H;
+  const TIP = document.getElementById('short-risk-tip');
+  const dpr = window.devicePixelRatio || 1;
+  const W   = canvas.parentElement.clientWidth || 700;
+  const H   = Math.max(280, Math.min(420, W * 0.52));
+  canvas.width  = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
   const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = '#1e1e24';
-  ctx.fillRect(0, 0, W, H);
-
-  const PAD = { top:32, right:62, bottom:64, left:60 };
-  const cW  = W - PAD.left - PAD.right;
-  const cH  = H - PAD.top  - PAD.bottom;
-
-  // ── Two-tier filter ──────────────────────────────────────────────────────
-  const active  = stocks.filter(s =>
-    s.turnover > 0 && s.short_ratio > shortHi(s) &&
-    (s.days_to_cover||0) >= 3 && (s.vol_ratio||0) >= 1.8
-  );
-  const buildup = stocks.filter(s =>
-    s.turnover > 0 && s.short_ratio > shortHi(s) &&
-    (s.days_to_cover||0) >= 3 && (s.vol_ratio||0) <  1.8
-  );
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
+  const active  = stocks.filter(s => s.turnover > 0 && s.short_ratio > shortHi(s) && (s.days_to_cover||0) >= 3 && (s.vol_ratio||0) >= 1.8);
+  const buildup = stocks.filter(s => s.turnover > 0 && s.short_ratio > shortHi(s) && (s.days_to_cover||0) >= 3 && (s.vol_ratio||0) <  1.8);
   const pts = [...active, ...buildup];
-
-  // ── Axis ranges — auto-scale, origin at (0,0) ───────────────────────────
-  const maxX = pts.length ? Math.max(10, Math.ceil(Math.max(...pts.map(s=>s.days_to_cover||0))*1.25/2)*2) : 10;
-  const maxY = pts.length ? Math.max(4,  Math.ceil(Math.max(...pts.map(s=>s.vol_ratio||0))*1.25))         : 4;
-  const stepX = [1,2,5,10].find(s => maxX/s <= 6) || 2;
-  const stepY = [0.5,1,2,5].find(s => maxY/s <= 6) || 1;
-
+  const PAD = { top:20, right:28, bottom:52, left:56 };
+  const cW = W - PAD.left - PAD.right, cH = H - PAD.top - PAD.bottom;
+  function niceStep(mv, n) {
+    const mag = Math.pow(10, Math.floor(Math.log10(mv / n)));
+    const cands = [1,2,2.5,5,10].map(f => f * mag);
+    return cands.find(c => mv / c <= n + 1) || cands[cands.length-1];
+  }
+  const allDtc = pts.length ? pts.map(s => s.days_to_cover||0) : [10];
+  const allVol = pts.length ? pts.map(s => s.vol_ratio||0)     : [4];
+  const stepX = niceStep(Math.max(...allDtc) * 1.15, 5);
+  const stepY = niceStep(Math.max(...allVol) * 1.15, 5);
+  const maxX  = Math.ceil(Math.max(...allDtc) * 1.15 / stepX) * stepX;
+  const maxY  = Math.ceil(Math.max(...allVol) * 1.15 / stepY) * stepY;
   const xAt = v => PAD.left + (v / maxX) * cW;
   const yAt = v => PAD.top  + cH - (v / maxY) * cH;
-
-  // ── Grid ─────────────────────────────────────────────────────────────────
-  ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
-  for (let t = stepX; t <= maxX; t += stepX) {
+  ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
+  for (let t = stepX; t <= maxX + 1e-9; t += stepX) {
     ctx.beginPath(); ctx.moveTo(xAt(t), PAD.top); ctx.lineTo(xAt(t), PAD.top+cH); ctx.stroke();
+    ctx.fillStyle='#bbb'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+    ctx.fillText(t%1===0 ? t.toFixed(0)+'d' : t.toFixed(1)+'d', xAt(t), PAD.top+cH+6);
   }
-  for (let t = stepY; t <= maxY; t += stepY) {
+  for (let t = stepY; t <= maxY + 1e-9; t += stepY) {
     ctx.beginPath(); ctx.moveTo(PAD.left, yAt(t)); ctx.lineTo(PAD.left+cW, yAt(t)); ctx.stroke();
+    ctx.fillStyle='#bbb'; ctx.font='11px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
+    ctx.fillText(t%1===0 ? t.toFixed(0)+'x' : t.toFixed(1)+'x', PAD.left-6, yAt(t));
   }
-
-  // ── 1.8× dashed separator ────────────────────────────────────────────────
-  if (yAt(1.8) >= PAD.top) {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,100,0.45)'; ctx.lineWidth = 1.5; ctx.setLineDash([6,4]);
-    ctx.beginPath(); ctx.moveTo(PAD.left, yAt(1.8)); ctx.lineTo(PAD.left+cW, yAt(1.8)); ctx.stroke();
-    ctx.restore();
-    ctx.fillStyle = 'rgba(255,255,100,0.65)'; ctx.font = 'bold 11px sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText('1.8×', PAD.left+cW+4, yAt(1.8));
-  }
-
-  // ── Axes with arrowheads ─────────────────────────────────────────────────
-  ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 1.5; ctx.setLineDash([]);
-  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top+2); ctx.lineTo(PAD.left, PAD.top+cH); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top+cH); ctx.lineTo(PAD.left+cW+2, PAD.top+cH); ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.65)';
-  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top-2); ctx.lineTo(PAD.left-4, PAD.top+9); ctx.lineTo(PAD.left+4, PAD.top+9); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(PAD.left+cW+7, PAD.top+cH); ctx.lineTo(PAD.left+cW-4, PAD.top+cH-4); ctx.lineTo(PAD.left+cW-4, PAD.top+cH+4); ctx.fill();
-
-  // ── Tick labels ──────────────────────────────────────────────────────────
-  ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.font = '11px sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.strokeStyle='#666'; ctx.lineWidth=1.5; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, PAD.top+cH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top+cH); ctx.lineTo(PAD.left+cW, PAD.top+cH); ctx.stroke();
+  ctx.fillStyle='#666';
+  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top-2); ctx.lineTo(PAD.left-4, PAD.top+8); ctx.lineTo(PAD.left+4, PAD.top+8); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(PAD.left+cW+2, PAD.top+cH); ctx.lineTo(PAD.left+cW-8, PAD.top+cH-4); ctx.lineTo(PAD.left+cW-8, PAD.top+cH+4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#bbb'; ctx.font='11px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='top';
   ctx.fillText('0', PAD.left, PAD.top+cH+6);
-  for (let t = stepX; t <= maxX; t += stepX) ctx.fillText(t+'d', xAt(t), PAD.top+cH+6);
-  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  for (let t = stepY; t <= maxY; t += stepY) {
-    ctx.fillText((t%1===0?t.toFixed(0):t.toFixed(1))+'×', PAD.left-6, yAt(t));
+  ctx.textAlign='right'; ctx.textBaseline='middle';
+  ctx.fillText('0', PAD.left-6, PAD.top+cH);
+  ctx.fillStyle='#888'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillText('回補天數 DTC（日）', PAD.left+cW/2, PAD.top+cH+28);
+  ctx.save(); ctx.translate(14, PAD.top+cH/2); ctx.rotate(-Math.PI/2);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('成交量倍數', 0, 0); ctx.restore();
+  if (maxY >= 1.8) {
+    const refY = yAt(1.8);
+    ctx.save(); ctx.strokeStyle='rgba(180,180,180,0.5)'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(PAD.left, refY); ctx.lineTo(PAD.left+cW, refY); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='#aaa'; ctx.font='10px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='bottom';
+    ctx.fillText('1.8x', PAD.left+cW, refY-3); ctx.restore();
   }
-
-  // ── Axis labels ──────────────────────────────────────────────────────────
-  ctx.save();
-  ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '12px sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  ctx.fillText('回補天數 DTC（日）', PAD.left+cW/2, PAD.top+cH+30);
-  ctx.translate(16, PAD.top+cH/2); ctx.rotate(-Math.PI/2);
-  ctx.textBaseline = 'bottom'; ctx.fillText('成交量倍數', 0, 0);
-  ctx.restore();
-
-  // ── Danger corner label ──────────────────────────────────────────────────
-  ctx.fillStyle = '#e05c3a'; ctx.font = 'bold 12px sans-serif';
-  ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-  ctx.fillText('🔥 最高挾倉風險', PAD.left+cW-4, PAD.top+6);
-
-  // ── Empty state ──────────────────────────────────────────────────────────
+  ctx.fillStyle='rgba(192,37,45,0.60)'; ctx.font='bold 10px sans-serif';
+  ctx.textAlign='right'; ctx.textBaseline='top';
+  ctx.fillText('🔥 最高攪倉風險', PAD.left+cW-4, PAD.top+4);
   if (!pts.length) {
-    ctx.fillStyle = 'rgba(192,37,45,0.15)';
-    const bx=PAD.left+cW/2-160, bw=320, bh=72, by=PAD.top+cH/2-36;
-    ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,8); ctx.fill();
-    ctx.fillStyle = '#e07070'; ctx.font = 'bold 14px sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('今日無挾倉風險股票', PAD.left+cW/2, PAD.top+cH/2-10);
-    ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '12px sans-serif';
-    ctx.fillText('沽空比率及回補天數均未達到警戒水平', PAD.left+cW/2, PAD.top+cH/2+16);
+    ctx.fillStyle='rgba(192,37,45,0.08)';
+    ctx.beginPath(); ctx.roundRect(PAD.left+cW/2-180, PAD.top+cH/2-40, 360, 80, 8); ctx.fill();
+    ctx.fillStyle='#c0252d'; ctx.font='bold 14px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('今日無攪倉風險股票', PAD.left+cW/2, PAD.top+cH/2-12);
+    ctx.fillStyle='#888'; ctx.font='12px sans-serif';
+    ctx.fillText('沿空比率及回補天數均未達到警戒水平', PAD.left+cW/2, PAD.top+cH/2+14);
     return;
   }
-
-  // ── Bubble colours by stock type ─────────────────────────────────────────
-  const SOLID  = { bluechip:'rgba(192,37,45,0.88)',  general:'rgba(59,130,246,0.88)',  stable:'rgba(34,197,94,0.88)',  etf:'rgba(184,134,11,0.92)' };
-  const DASHED = { bluechip:'rgba(192,37,45,0.55)',  general:'rgba(59,130,246,0.55)',  stable:'rgba(34,197,94,0.55)',  etf:'rgba(184,134,11,0.60)' };
-
-  // ── Bubble size: short_ratio → radius ────────────────────────────────────
+  const SOLID  = { bluechip:'rgba(192,37,45,0.80)',  general:'rgba(37,99,235,0.75)',  stable:'rgba(22,163,74,0.75)',  etf:'rgba(184,134,11,0.72)' };
+  const FAINT  = { bluechip:'rgba(192,37,45,0.12)',  general:'rgba(37,99,235,0.11)',  stable:'rgba(22,163,74,0.11)',  etf:'rgba(184,134,11,0.11)' };
+  const STROKE = { bluechip:'rgba(192,37,45,0.55)',  general:'rgba(37,99,235,0.50)',  stable:'rgba(22,163,74,0.50)',  etf:'rgba(184,134,11,0.50)' };
   const maxSr = Math.max(...pts.map(s => s.short_ratio||1));
-  const rScale = v => 10 + (v/maxSr)*26;
-
-  // ── Top-5 labels by composite score ──────────────────────────────────────
-  const compositeScore = s =>
-    (s.days_to_cover/10)*0.35 + (s.vol_ratio/4)*0.35 + ((s.short_ratio-shortHi(s))/30)*0.30;
-  const top5 = new Set([...pts].sort((a,b)=>compositeScore(b)-compositeScore(a)).slice(0,5).map(s=>s.code));
-
-  // ── Store hit areas for tooltip ──────────────────────────────────────────
+  const rOf = sr => Math.max(5, Math.min(18, 5 + (sr/maxSr)*13));
+  const top5 = new Set([...pts].sort((a,b) =>
+    (b.days_to_cover||0)*(b.vol_ratio||0)*b.short_ratio - (a.days_to_cover||0)*(a.vol_ratio||0)*a.short_ratio
+  ).slice(0,5).map(s => s.code));
   const hitAreas = [];
-
-  // ── Draw buildup tier first (dashed outline, behind) ────────────────────
   buildup.forEach(s => {
-    const type = (s.stock_type||'general');
-    const col  = DASHED[type] || DASHED.general;
-    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rScale(s.short_ratio||1);
-    ctx.save();
-    ctx.strokeStyle=col; ctx.lineWidth=2.5; ctx.setLineDash([5,3]);
-    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.stroke();
-    ctx.fillStyle='rgba(255,255,255,0.04)'; ctx.fill();
-    ctx.restore();
-    hitAreas.push({s, x, y, r, tier:'buildup'});
+    const type = s.stock_type||'general';
+    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rOf(s.short_ratio||1);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fillStyle = FAINT[type]||FAINT.general; ctx.strokeStyle = STROKE[type]||STROKE.general;
+    ctx.lineWidth=1.5; ctx.setLineDash([3,2]); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    hitAreas.push({s, x, y, r, tier:2});
   });
-
-  // ── Draw active tier (solid fill, in front) ──────────────────────────────
   active.forEach(s => {
-    const type = (s.stock_type||'general');
-    const col  = SOLID[type] || SOLID.general;
-    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rScale(s.short_ratio||1);
-    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
-    ctx.fillStyle=col; ctx.fill();
-    ctx.strokeStyle='rgba(255,255,255,0.28)'; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.stroke();
-    hitAreas.push({s, x, y, r, tier:'active'});
+    const type = s.stock_type||'general';
+    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rOf(s.short_ratio||1);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fillStyle = SOLID[type]||SOLID.general; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.fill(); ctx.stroke();
+    hitAreas.push({s, x, y, r, tier:1});
   });
-
-  // ── Top-5 name labels ────────────────────────────────────────────────────
   hitAreas.forEach(({s, x, y, r}) => {
     if (!top5.has(s.code)) return;
-    ctx.fillStyle='#fff'; ctx.font='bold 11px sans-serif';
+    const nm = s.name_chi||s.code;
+    ctx.fillStyle='#1a1a1a'; ctx.font='bold 10px sans-serif';
     ctx.textAlign='center'; ctx.textBaseline='bottom';
-    ctx.fillText(s.name_chi||s.code, x, y-r-4);
+    ctx.fillText(nm.length > 4 ? nm.slice(0,4)+'…' : nm, x, y-r-3);
   });
-
-  // ── Hover tooltip ────────────────────────────────────────────────────────
-  function onMove(e) {
+  canvas.onmousemove = e => {
     const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    let hit = null;
-    for (const h of hitAreas) {
-      if (Math.hypot(mx-h.x, my-h.y) <= h.r+5) { hit=h; break; }
-    }
-    if (hit) {
-      const {s, tier} = hit;
-      const isActive = tier==='active';
-      const badge  = isActive ? '🔥 活躍擠壓' : '⚠️ 醞釀中';
-      const excess = (s.short_ratio - shortHi(s)).toFixed(1);
-      TIP.innerHTML =
-        `<strong style="font-size:13px">${s.name_chi||s.code}</strong> ` +
-        `<span style="color:rgba(255,255,255,0.45);font-size:11px">${s.code}</span><br>` +
-        `<span style="background:${isActive?'rgba(192,37,45,0.65)':'rgba(200,160,0,0.3)'};` +
-        `padding:1px 8px;border-radius:4px;font-size:11px;font-weight:600">${badge}</span><br>` +
-        `回補天數 <strong style="color:#f9a870">${(s.days_to_cover||0).toFixed(1)}d</strong>　` +
-        `成交量倍數 <strong style="color:#f9a870">${(s.vol_ratio||0).toFixed(2)}×</strong><br>` +
-        `今日沽空 <strong style="color:#f76e6e">${s.short_ratio.toFixed(1)}%</strong>　` +
-        `均值 <span style="color:rgba(255,255,255,0.55)">${(s.short_avg||0).toFixed(1)}%</span>　` +
-        `超出上限 <strong style="color:#f76e6e">+${excess}pp</strong>`;
-      TIP.style.display = 'block';
-      const tipW=270, tipH=110;
-      const tx = Math.min(mx+14, W-tipW-4);
-      const ty = Math.max(my-tipH-8, 4);
-      TIP.style.left = tx+'px'; TIP.style.top = ty+'px';
-      canvas.style.cursor = 'pointer';
-    } else {
-      TIP.style.display = 'none';
-      canvas.style.cursor = 'default';
-    }
-  }
-  canvas.onmousemove  = onMove;
-  canvas.onmouseleave = () => { TIP.style.display='none'; canvas.style.cursor='default'; };
+    const mx = e.clientX-rect.left, my = e.clientY-rect.top;
+    const hit = hitAreas.find(p => Math.hypot(mx-p.x, my-p.y) <= p.r+4);
+    if (!hit || !TIP) { if (TIP) TIP.style.display='none'; return; }
+    const {s, tier} = hit, excess = (s.short_ratio - shortHi(s)).toFixed(1);
+    const badge = tier===1
+      ? '<span style="color:#c0252d;font-weight:500">🔥 活躍攪倉</span>'
+      : '<span style="color:#888">⚠️ 釞釀中</span>';
+    TIP.innerHTML = '<b>'+(s.name_chi||s.code)+' ('+s.code+')</b> '+badge+'<br>'
+      +'DTC '+(s.days_to_cover||0).toFixed(1)+' 日 &nbsp; 成交量 '+(s.vol_ratio||0).toFixed(2)+'x<br>'
+      +'沿空比率 '+s.short_ratio.toFixed(1)+'% &nbsp; 均値 '+(s.short_avg||0).toFixed(1)+'% &nbsp; 超出上限 +'+excess+'pp';
+    TIP.style.left = Math.min(mx+12, W-220)+'px';
+    TIP.style.top  = Math.max(my-72, 4)+'px';
+    TIP.style.display = 'block';
+  };
+  canvas.onmouseleave = () => { if (TIP) TIP.style.display='none'; };
 }
 
 // ── Participant group classification ────────────────────────────────────────
