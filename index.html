@@ -711,30 +711,29 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
 <!-- ═══ Panel 2: 累積沽空 ════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-short">
-  <div class="summary-bar" style="grid-template-columns:repeat(3,1fr)">
-<div class="sum-card"><div class="sum-label">沽空比率最高</div><div class="sum-val up" id="sh-top-name">--</div><div class="sum-sub" id="sh-top-pct">--</div></div>
-  <div class="summary-bar" style="grid-template-columns:repeat(3,1fr);margin-top:0">
+  <div class="summary-bar" style="grid-template-columns:repeat(6,1fr)">
+    <div class="sum-card"><div class="sum-label">沽空比率最高</div><div class="sum-val up" id="sh-top-name">--</div><div class="sum-sub" id="sh-top-pct">--</div></div>
+    <div class="sum-card"><div class="sum-label">高沽空預警</div><div class="sum-val up" id="sh-warn-cnt">--</div><div class="sum-sub" id="sh-warn-sub">比率超出上限</div></div>
+    <div class="sum-card"><div class="sum-label">挾倉風險</div><div class="sum-val up" id="sh-squeeze-cnt">--</div><div class="sum-sub">DTC ≥ 3 且成交量 ≥ 1.8×</div></div>
     <div class="sum-card"><div class="sum-label">市場平均沽空</div><div class="sum-val" id="sh-avg">--</div><div class="sum-sub">全部股票均值</div></div>
     <div class="sum-card"><div class="sum-label">最高回補天數</div><div class="sum-val gold" id="sh-dtc-top-name">--</div><div class="sum-sub" id="sh-dtc-top-val">--</div></div>
     <div class="sum-card"><div class="sum-label">沽空偏低</div><div class="sum-val dn" id="sh-low-cnt">--</div><div class="sum-sub">比率低於下限</div></div>
   </div>
-    <div class="sum-card"><div class="sum-label">高沽空預警</div><div class="sum-val up" id="sh-warn-cnt">--</div><div class="sum-sub" id="sh-warn-sub">比率超出上限</div></div>
-    <div class="sum-card"><div class="sum-label">挾倉風險</div><div class="sum-val up" id="sh-squeeze-cnt">--</div><div class="sum-sub">DTC &gt; 5 且成交放大 &gt; 2×</div></div>
-  </div>
 
   <!-- ── Risk map ── -->
   <div class="sec-head" style="margin-top:4px">
-    <div class="sec-title">沽空風險圖 <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">泡泡大小 = 今日成交量倍數</span></div>
-    <div class="sec-sub">X軸：今日沽空比率% ｜ Y軸：回補天數（DTC = 沽空股數 ÷ 30日平均成交量）｜ 右上角 = 挾倉風險區</div>
+    <div class="sec-title">沽空風險圖 <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">泡泡大小 = 沽空比率%</span></div>
+    <div class="sec-sub">X軸：回補天數 DTC（日）｜ Y軸：成交量倍數 ｜ 泡泡大小：沽空比率% ｜ 實心 = 活躍擠壓 ｜ 虛線 = 醞釀中</div>
   </div>
   <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:12px 12px 8px;margin-bottom:16px;position:relative;">
     <canvas id="shortRiskCanvas" style="cursor:crosshair;display:block;width:100%"></canvas>
-    <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;font-size:11px;color:var(--muted);">
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#c0252d;opacity:.75"></span>藍籌</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#2563eb;opacity:.75"></span>一般</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#16a34a;opacity:.75"></span>穩健</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#b8860b;opacity:.75"></span>ETF</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:28px;height:1px;background:#c0252d;border-top:1px dashed #c0252d"></span>高危區</span>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px;font-size:11px;color:var(--muted);align-items:center">
+      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(192,37,45,0.80)"></span>藍籌</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(37,99,235,0.75)"></span>一般</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(22,163,74,0.75)"></span>穩健</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(184,134,11,0.72)"></span>ETF</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(37,99,235,0.11);border:1.5px dashed rgba(37,99,235,0.5);box-sizing:border-box"></span>醞釀中</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:16px;height:8px;border-radius:2px;background:rgba(150,150,150,0.25)"></span>大小 = 沽空比率%</span>
     </div>
     <div id="short-risk-tip" style="display:none;position:absolute;background:#fff;border:0.5px solid #ddd;border-radius:8px;padding:8px 12px;font-size:12px;pointer-events:none;line-height:1.6;color:#1a1a1a;z-index:200;box-shadow:0 2px 8px rgba(0,0,0,0.08);white-space:nowrap"></div>
   </div>
@@ -2198,7 +2197,7 @@ function renderShort() {
   const avg       = sorted.reduce((a,s) => a + s.short_ratio, 0) / sorted.length;
   const warnCnt   = sorted.filter(s => s.short_ratio > shortHi(s)).length;
   const lowCnt    = sorted.filter(s => s.short_ratio > 0 && s.short_ratio < shortLo(s)).length;
-  const squeezeCnt= sorted.filter(s => (s.days_to_cover||0) > 5 && (s.vol_ratio||0) > 2).length;
+  const squeezeCnt= sorted.filter(s => s.turnover > 0 && s.short_ratio > shortHi(s) && (s.days_to_cover||0) >= 3 && (s.vol_ratio||0) >= 1.8).length;
   const top       = sorted[0];
   const topDtc    = [...sorted].sort((a,b) => (b.days_to_cover||0) - (a.days_to_cover||0))[0];
 
