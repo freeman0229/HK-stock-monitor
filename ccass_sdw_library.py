@@ -53,7 +53,7 @@ API:
                                  get_latest_total_sh, get_holders_history
 """
 
-import os, json, re, time, logging, argparse
+import os, json, re, time, logging, argparse, random
 import requests
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
@@ -61,15 +61,46 @@ from datetime import date, timedelta
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-SDW_URL  = "https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx"
-HEADERS  = {
-    "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
-    "Referer":    "https://www3.hkexnews.hk/",
-}
+SDW_URL = "https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx"
+
+# Rotate User-Agents to reduce fingerprinting risk.
+# A fresh UA is chosen each time a new Session is created.
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
+
+# Proxy URL — set via SDW_PROXY env var / GitHub secret.
+# Format: http://user:pass@host:port  or  socks5://user:pass@host:port
+# Leave unset to fetch directly (no proxy).
+_PROXY = os.getenv("SDW_PROXY", "").strip() or None
+
+def _new_session() -> requests.Session:
+    """Fresh Session with a random UA and optional proxy."""
+    sess = requests.Session()
+    sess.headers.update({
+        "User-Agent": random.choice(_USER_AGENTS),
+        "Referer":    "https://www3.hkexnews.hk/",
+    })
+    if _PROXY:
+        sess.proxies = {"http": _PROXY, "https": _PROXY}
+        log.info("Session proxy: %s", _PROXY.split("@")[-1])   # log host:port only, not credentials
+    return sess
 
 START_DATE     = date(2025, 3, 23)   # first Friday = 2025-03-28
-SLEEP_SEC      = 2.0   # polite delay — HKEX rate-limits below ~2s; backoffs waste more time than the delay saves
+SLEEP_SEC      = 2.0                 # polite inter-request delay
 SCHEMA_VERSION = 2
+
+# Circuit breaker: abort a date after this many consecutive failures.
+# Prevents burning the entire time budget when HKEX blocks the session.
+CIRCUIT_BREAKER_LIMIT = 20
+
+# Cool-down after circuit breaker fires — gives HKEX time to forget the IP.
+# Capped to remaining time budget so we never overshoot max-minutes.
+BLOCKED_COOLDOWN_SEC = 300   # 5 minutes
 
 # ── Code ranges ───────────────────────────────────────────────────────────────
 
@@ -273,8 +304,7 @@ def fetch_stock(stock_code: str, d: date,
     date_str = d.strftime("%Y/%m/%d")
     own_sess = sess is None
     if own_sess:
-        sess = requests.Session()
-        sess.headers.update(HEADERS)
+        sess = _new_session()
 
     for attempt in range(1, 4):   # up to 3 attempts
       try:
@@ -519,10 +549,13 @@ def build(update_only: bool = False, specific_date: date = None,
 
         fetched       = 0
         timed_out     = False
-        consec_errors = 0   # consecutive failures — triggers backoff
-        _dirty_ranges = set()  # track which ranges received new data
-        _shared_sess  = requests.Session()   # reuse TCP connection across stocks
-        _shared_sess.headers.update(HEADERS)
+        blocked       = False
+        consec_errors = 0
+        _dirty_ranges = set()
+
+        # Fresh session per date — new random UA + proxy each time
+        _shared_sess = _new_session()
+        log.info("  Session UA: %s", _shared_sess.headers["User-Agent"][:60])
 
         for ci, code in enumerate(todo, 1):
             if deadline and time.monotonic() >= deadline:
@@ -540,8 +573,21 @@ def build(update_only: bool = False, specific_date: date = None,
                 consec_errors = 0
             else:
                 consec_errors += 1
-                # Backoff when server rate-limits: every 3 consecutive errors
-                # add a pause (5s, 10s, 15s … capped at 30s)
+
+                # ── Circuit breaker ───────────────────────────────────────────
+                # Stop wasting the time budget when HKEX clearly blocks us.
+                # Save progress, cool down, then continue to the next date
+                # with a fresh session and new UA.
+                if consec_errors >= CIRCUIT_BREAKER_LIMIT:
+                    log.error(
+                        "  Circuit breaker: %d consecutive errors — session blocked. "
+                        "Saving progress and cooling down for %ds.",
+                        consec_errors, BLOCKED_COOLDOWN_SEC,
+                    )
+                    blocked = True
+                    break
+
+                # Graduated backoff every 3 errors (5s → 10s → … capped at 30s)
                 if consec_errors % 3 == 0:
                     backoff = min(30, 5 * (consec_errors // 3))
                     log.warning("  %d consecutive errors — backing off %ds",
@@ -550,7 +596,7 @@ def build(update_only: bool = False, specific_date: date = None,
 
             time.sleep(SLEEP_SEC)
 
-            # Checkpoint: only save ranges that received new data
+            # Checkpoint every 50 stocks — only flush dirty ranges
             if ci % 50 == 0:
                 for label in _dirty_ranges:
                     if range_libs[label]["by_date"].get(ds):
@@ -558,12 +604,25 @@ def build(update_only: bool = False, specific_date: date = None,
                 _dirty_ranges.clear()
                 log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
 
-        _shared_sess.close()   # release connection pool
+        _shared_sess.close()
 
         # Final save for this date (complete or partial)
         for label, lib in range_libs.items():
             if lib["by_date"].get(ds):
                 save_range(year, label, lib)
+
+        if blocked:
+            log.info("  %s blocked: %d/%d stocks saved", ds, fetched, len(todo))
+            remaining = (deadline - time.monotonic()) if deadline else float("inf")
+            cooldown  = min(BLOCKED_COOLDOWN_SEC, remaining - 10)
+            if cooldown > 0:
+                log.info("  Cooling down for %.0fs before next date…", cooldown)
+                time.sleep(cooldown)
+            else:
+                log.info("  No time remaining after cooldown — stopping")
+                break
+            continue   # next date gets a fresh session + new UA
+
         status = "partial" if timed_out else "done"
         log.info("  %s %s: %d/%d stocks saved", ds, status, fetched, len(todo))
 
