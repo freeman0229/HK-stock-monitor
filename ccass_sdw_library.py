@@ -87,6 +87,7 @@ def _new_session() -> requests.Session:
     })
     if _PROXY:
         sess.proxies = {"http": _PROXY, "https": _PROXY}
+        sess.verify = False   # allow HTTP proxy to intercept HTTPS traffic
         log.info("Session proxy: %s", _PROXY.split("@")[-1])   # log host:port only, not credentials
     return sess
 
