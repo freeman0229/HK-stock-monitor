@@ -54,7 +54,7 @@ API:
 """
 
 import os, json, re, time, logging, argparse, random
-import requests
+from curl_cffi import requests   # drop-in replacement — mimics real Chrome TLS fingerprint
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
 
@@ -79,8 +79,8 @@ _USER_AGENTS = [
 _PROXY = os.getenv("SDW_PROXY", "").strip() or None
 
 def _new_session() -> requests.Session:
-    """Fresh Session with a random UA and optional proxy."""
-    sess = requests.Session()
+    """Fresh Session with Chrome TLS impersonation, random UA, and optional proxy."""
+    sess = requests.Session(impersonate="chrome124")
     sess.headers.update({
         "User-Agent": random.choice(_USER_AGENTS),
         "Referer":    "https://www3.hkexnews.hk/",
