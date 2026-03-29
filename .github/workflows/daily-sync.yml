@@ -196,7 +196,7 @@ jobs:
   sdw-build:
     name: SDW backfill — range ${{ matrix.range }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 100
     permissions:
       contents: write
     if: |
@@ -226,8 +226,12 @@ jobs:
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
           for f in ccass_sdw_${{ matrix.range }}_20*.json; do [ -f "$f" ] && git add "$f"; done
-          git diff --staged --quiet || \
-            (git commit -m "SDW ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')" && git push)
+          git diff --staged --quiet || git commit -m "SDW ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && break
+            echo "Push attempt $i failed — retrying in 10s..."
+            sleep 10
+          done
 
   # ── SDW weekly (Thu+Fri 22:00 HKT) ───────────────────────────────────────────
   sdw-weekly:
@@ -250,14 +254,18 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Fetch latest Friday SDW data for range ${{ matrix.range }}
-        run: python ccass_sdw_library.py --update --range ${{ matrix.range }}
+        run: python ccass_sdw_library.py --update --range ${{ matrix.range }} --max-minutes 75
       - name: Commit
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
           for f in ccass_sdw_${{ matrix.range }}_20*.json; do [ -f "$f" ] && git add "$f"; done
-          git diff --staged --quiet || \
-            (git commit -m "SDW weekly ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')" && git push)
+          git diff --staged --quiet || git commit -m "SDW weekly ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && break
+            echo "Push attempt $i failed — retrying in 10s..."
+            sleep 10
+          done
 
   # ── SFC weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
   sfc-weekly:
