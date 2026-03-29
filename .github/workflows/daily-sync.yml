@@ -63,6 +63,8 @@ jobs:
         run: python ccass_library.py --update --fix-names
 
       - name: SDW backfill (3-4 ranges alternating, 5 min budget, 90s cooldown)
+        env:
+          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: |
           DOY=$(date +%j)
           if [ $((DOY % 2)) -eq 0 ]; then
@@ -220,6 +222,8 @@ jobs:
       - name: Migrate old single-file SDW data
         run: python ccass_sdw_library.py --migrate
       - name: Build SDW range ${{ matrix.range }}
+        env:
+          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: python ccass_sdw_library.py --range ${{ matrix.range }} --max-minutes 80
       - name: Commit
         run: |
@@ -254,6 +258,8 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Fetch latest Friday SDW data for range ${{ matrix.range }}
+        env:
+          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: python ccass_sdw_library.py --update --range ${{ matrix.range }} --max-minutes 75
       - name: Commit
         run: |
