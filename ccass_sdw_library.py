@@ -435,13 +435,15 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             page.fill('input[name="txtParticipantID"]',     "")
             page.fill('input[name="txtParticipantName"]',   "")
 
-            # Submit — fill stock code field and press Enter.
-            # Using keyboard Enter is more reliable than clicking the
-            # ASP.NET button whose ID may vary. Then wait 4s for the
-            # postback to complete before reading page content.
-            stock_input = page.locator('input[name="txtStockCode"]')
-            stock_input.press("Enter")
-            page.wait_for_timeout(4_000)   # 4s for postback to complete
+            # Submit via JavaScript — most reliable for ASP.NET postbacks.
+            # __doPostBack is the standard ASP.NET postback mechanism.
+            page.evaluate("__doPostBack('btnSearch', '')")
+            page.wait_for_timeout(5_000)   # 5s for postback to complete
+
+            # Debug: save screenshot on first stock of each date to verify page state
+            if ci == 1:
+                page.screenshot(path=f"debug_{code5}_{date_str.replace('/', '-')}.png")
+                log.info("  Debug screenshot saved for %s", code5)
 
             result = _parse_html(page.content(), code5, date_str)
             if own_page:
