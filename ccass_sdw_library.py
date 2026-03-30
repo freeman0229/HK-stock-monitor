@@ -13,12 +13,12 @@ Schedule: every Friday; Thursday fallback if Friday is a HK holiday.
 Start:    2025-03-23  (first trading Friday = 2025-03-28)
 
 Library files split by stock code range — one set of 7 files per year:
-  ccass_sdw_0001_1000_{YYYY}.json  — codes 00001–01000  (~237 stocks, ~15 MB/yr)
-  ccass_sdw_1001_2000_{YYYY}.json  — codes 01001–02000  (~201 stocks, ~13 MB/yr)
-  ccass_sdw_2001_3000_{YYYY}.json  — codes 02001–03000  (~239 stocks, ~15 MB/yr)
-  ccass_sdw_3001_4000_{YYYY}.json  — codes 03001–04000  (~246 stocks, ~15 MB/yr)
-  ccass_sdw_4001_7000_{YYYY}.json  — codes 04001–07000  (~77 stocks,   ~5 MB/yr)
-  ccass_sdw_7001_9999_{YYYY}.json  — codes 07001–09999  (~201 stocks, ~13 MB/yr)
+  ccass_sdw_0001_1000_{YYYY}.json  — codes 00001-01000  (~237 stocks, ~15 MB/yr)
+  ccass_sdw_1001_2000_{YYYY}.json  — codes 01001-02000  (~201 stocks, ~13 MB/yr)
+  ccass_sdw_2001_3000_{YYYY}.json  — codes 02001-03000  (~239 stocks, ~15 MB/yr)
+  ccass_sdw_3001_4000_{YYYY}.json  — codes 03001-04000  (~246 stocks, ~15 MB/yr)
+  ccass_sdw_4001_7000_{YYYY}.json  — codes 04001-07000  (~77 stocks,   ~5 MB/yr)
+  ccass_sdw_7001_9999_{YYYY}.json  — codes 07001-09999  (~201 stocks, ~13 MB/yr)
   ccass_sdw_10000plus_{YYYY}.json  — codes 10000+       (~85 stocks,   ~5 MB/yr)
 
 Schema v2:
@@ -28,18 +28,12 @@ Schema v2:
     "2026-03-21": {
       "00700": {
         "p":         [{"pid": "B01234", "name": "...", "sh": 1234567, "pct": 1.23}, ...],
-        "total_sh":  9234567890,   ← 總數 (total CCASS-settled shares)
-        "issued_sh": 9567000000    ← 已發行股份/權證/單位
+        "total_sh":  9234567890,
+        "issued_sh": 9567000000
       }
     }
   }
 }
-
-Fields per participant:
-  pid      — 參與者編號 (Participant ID)
-  name     — 中央結算系統參與者名稱
-  sh       — 持股量 (shares held)
-  pct      — 佔已發行股份/權證/單位百分比
 
 Usage:
   python ccass_sdw_library.py                    # full backfill
@@ -48,60 +42,40 @@ Usage:
   python ccass_sdw_library.py --query 00700      # show holdings for a stock
   python ccass_sdw_library.py --migrate          # upgrade old files to range-split format
 
-API:
-  from ccass_sdw_library import get_holders, get_total_sh,
-                                 get_latest_total_sh, get_holders_history
+Install deps:
+  pip install playwright beautifulsoup4 requests holidays
+  playwright install chromium
 """
 
 import os, json, re, time, logging, argparse, random
-from curl_cffi import requests   # drop-in replacement — mimics real Chrome TLS fingerprint
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
+from playwright.sync_api import sync_playwright, Page, Browser, Playwright
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 SDW_URL = "https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx"
 
-# Rotate User-Agents to reduce fingerprinting risk.
-# A fresh UA is chosen each time a new Session is created.
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
 ]
 
-# Proxy URL — set via SDW_PROXY env var / GitHub secret.
-# Format: http://user:pass@host:port  or  socks5://user:pass@host:port
-# Leave unset to fetch directly (no proxy).
+# Proxy URL via SDW_PROXY env var / GitHub secret.
+# Format: http://user:pass@host:port
+# Leave unset for direct connection.
 _PROXY = os.getenv("SDW_PROXY", "").strip() or None
 
-def _new_session() -> requests.Session:
-    """Fresh Session with Chrome TLS impersonation, random UA, and optional proxy."""
-    sess = requests.Session(impersonate="chrome124")
-    sess.headers.update({
-        "User-Agent": random.choice(_USER_AGENTS),
-        "Referer":    "https://www3.hkexnews.hk/",
-    })
-    if _PROXY:
-        sess.proxies = {"http": _PROXY, "https": _PROXY}
-        sess.verify = False   # allow HTTP proxy to intercept HTTPS traffic
-        log.info("Session proxy: %s", _PROXY.split("@")[-1])   # log host:port only, not credentials
-    return sess
-
-START_DATE     = date(2025, 3, 23)   # first Friday = 2025-03-28
-SLEEP_SEC      = 2.0                 # polite inter-request delay
+START_DATE     = date(2025, 3, 23)
+SLEEP_SEC      = 1.5   # inter-request delay (Playwright is slower; 1.5s is sufficient)
 SCHEMA_VERSION = 2
 
-# Circuit breaker: abort a date after this many consecutive failures.
-# Prevents burning the entire time budget when HKEX blocks the session.
-CIRCUIT_BREAKER_LIMIT = 20
-
-# Cool-down after circuit breaker fires — gives HKEX time to forget the IP.
-# Capped to remaining time budget so we never overshoot max-minutes.
-BLOCKED_COOLDOWN_SEC = 300   # 5 minutes
+CIRCUIT_BREAKER_LIMIT = 20    # consecutive failures before aborting a date
+BLOCKED_COOLDOWN_SEC  = 300   # 5-minute cool-down after circuit breaker fires
 
 # ── Code ranges ───────────────────────────────────────────────────────────────
 
@@ -116,12 +90,11 @@ RANGES = [
 ]
 
 def code_range(code: str) -> str:
-    """Return the range label for a 5-digit code string."""
     n = int(code)
     for label, lo, hi in RANGES:
         if lo <= n <= hi:
             return label
-    return "0001_1000"   # fallback
+    return "0001_1000"
 
 # ── HK holidays ───────────────────────────────────────────────────────────────
 
@@ -148,7 +121,6 @@ except ImportError:
 # ── Schedule ──────────────────────────────────────────────────────────────────
 
 def _fetch_date_for_friday(friday: date) -> date | None:
-    """Friday → actual fetch date (Thu fallback if Friday is holiday). None = skip week."""
     thu = friday - timedelta(days=1)
     if friday not in _HK_HOLIDAYS:
         return friday
@@ -157,11 +129,10 @@ def _fetch_date_for_friday(friday: date) -> date | None:
     return None
 
 def all_fetch_dates(up_to: date = None) -> list[date]:
-    """All scheduled weekly fetch dates from START_DATE to up_to."""
     up_to  = up_to or date.today()
     result = []
     d = START_DATE
-    while d.weekday() != 4:          # advance to first Friday
+    while d.weekday() != 4:
         d += timedelta(days=1)
     while d <= up_to:
         fd = _fetch_date_for_friday(d)
@@ -201,7 +172,6 @@ def save_range(year: int, range_label: str, lib: dict):
     log.info("Saved %s  %d dates  %d stocks  %.0f KB", p, n_dates, n_stocks, kb)
 
 def all_stored_dates() -> set[str]:
-    """Return all dates stored across any range file."""
     stored = set()
     for year in range(START_DATE.year, date.today().year + 1):
         for label, _, _ in RANGES:
@@ -212,7 +182,6 @@ def all_stored_dates() -> set[str]:
     return stored
 
 def _stored_codes_for_date(ds: str) -> set[str]:
-    """Return all stock codes already stored for a given date across all range files."""
     year = int(ds[:4])
     codes = set()
     for label, _, _ in RANGES:
@@ -226,25 +195,18 @@ def _stored_codes_for_date(ds: str) -> set[str]:
 # ── Schema normalisation ──────────────────────────────────────────────────────
 
 def _to_v2(raw) -> dict:
-    """Normalise v1 (flat list) or v2 (dict with p key) to v2 dict."""
     if isinstance(raw, list):
         return {"p": raw, "total_sh": 0, "issued_sh": 0}
     if isinstance(raw, dict):
         return raw if "p" in raw else {"p": [], "total_sh": 0, "issued_sh": 0}
     return {"p": [], "total_sh": 0, "issued_sh": 0}
 
-# ── Stock universe from SFC library ──────────────────────────────────────────
+# ── Stock universe ────────────────────────────────────────────────────────────
 
 def get_sfc_universe() -> list[str]:
-    """
-    Return sorted list of 5-digit stock codes from the SFC short-position library.
-    Falls back to a broad range scan if SFC library is not available.
-    """
     codes = set()
-
-    # Try importing sfc_library
     try:
-        from sfc_library import all_stored_dates as sfc_stored, lib_path as sfc_lib_path
+        from sfc_library import lib_path as sfc_lib_path
         import json as _json
         for year in range(2018, date.today().year + 1):
             p = sfc_lib_path(year)
@@ -262,7 +224,6 @@ def get_sfc_universe() -> list[str]:
     except Exception as e:
         log.warning("Could not load SFC universe from sfc_library: %s", e)
 
-    # Fallback: use codes from existing SDW files
     for year in range(START_DATE.year, date.today().year + 1):
         for label, _, _ in RANGES:
             p = lib_path(year, label)
@@ -280,7 +241,78 @@ def get_sfc_universe() -> list[str]:
     log.warning("No SFC universe available — returning empty list")
     return []
 
-# ── SDW fetch for one stock ───────────────────────────────────────────────────
+# ── Playwright browser management ─────────────────────────────────────────────
+#
+# Strategy:
+#   - One global Chromium browser per process (reused across all dates)
+#   - One browser context + page per date (fresh Imperva cookie each time)
+#   - After the warm-up navigation, form submissions are in-place postbacks
+#     so no full page reload per stock — much faster
+#
+# Why Playwright instead of requests/curl_cffi:
+#   HKEX is protected by Imperva/Incapsula which issues the s3cdn_s... cookie
+#   only after a JavaScript challenge. A real Chromium browser solves this
+#   automatically; pure HTTP clients cannot.
+
+_pw:      Playwright | None = None
+_browser: Browser    | None = None
+
+def _ensure_browser() -> Browser:
+    global _pw, _browser
+    if _browser is None:
+        log.info("Launching Playwright Chromium (headless)...")
+        _pw      = sync_playwright().start()
+        _browser = _pw.chromium.launch(headless=True)
+        log.info("Browser launched")
+    return _browser
+
+def _new_page() -> Page:
+    """
+    Create a fresh browser context + page with a random UA.
+    Navigates to SDW_URL once so Imperva's JS challenge runs and
+    the s3cdn_s... cookie is set before any form submissions.
+    """
+    browser  = _ensure_browser()
+    ua       = random.choice(_USER_AGENTS)
+    ctx_opts = {
+        "user_agent":  ua,
+        "locale":      "zh-HK",
+        "timezone_id": "Asia/Hong_Kong",
+    }
+    if _PROXY:
+        ctx_opts["proxy"] = {"server": _PROXY}
+        log.info("  Page proxy: %s", _PROXY.split("@")[-1])
+
+    ctx  = browser.new_context(**ctx_opts)
+    page = ctx.new_page()
+
+    log.info("  Warming up (Imperva challenge)... UA: %s", ua[:60])
+    page.goto(SDW_URL, wait_until="networkidle", timeout=30_000)
+    log.info("  Page ready")
+    return page
+
+def _close_page(page: Page):
+    try:
+        page.context.close()
+    except Exception:
+        pass
+
+def _close_browser():
+    global _pw, _browser
+    if _browser:
+        try:
+            _browser.close()
+        except Exception:
+            pass
+        _browser = None
+    if _pw:
+        try:
+            _pw.stop()
+        except Exception:
+            pass
+        _pw = None
+
+# ── Parse helpers ─────────────────────────────────────────────────────────────
 
 def _parse_num(s) -> int:
     try:
@@ -288,151 +320,146 @@ def _parse_num(s) -> int:
     except (ValueError, TypeError):
         return 0
 
-def fetch_stock(stock_code: str, d: date,
-                sess: requests.Session = None) -> dict | None:
+def _parse_html(html: str, code5: str, date_str: str) -> dict | None:
+    """Parse SDW result HTML into {p, total_sh, issued_sh} or None."""
+    soup      = BeautifulSoup(html, "html.parser")
+    full_text = soup.get_text(" ", strip=True)
+
+    # ---- 已發行股份/權證/單位 ------------------------------------------------
+    issued_sh = 0
+    for pat in [
+        r"已發行股份[^\d]{0,30}([\d,]{6,})",
+        r"Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
+        r"Number\s+of\s+Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
+    ]:
+        m = re.search(pat, full_text)
+        if m:
+            issued_sh = _parse_num(m.group(1))
+            if issued_sh > 0:
+                break
+
+    # ---- Participant rows ----------------------------------------------------
+    def clean(s):
+        return re.sub(r'^[^:]+[:]\s*', '', s).strip()
+
+    participants      = []
+    total_sh_fallback = 0
+
+    for tr in soup.find_all("tr"):
+        tds = [td.get_text(strip=True) for td in tr.find_all("td")]
+        if len(tds) < 5:
+            continue
+        pid_raw = clean(tds[0])
+        sh_raw  = clean(tds[3]).replace(",", "")
+        pct_raw = clean(tds[4]).replace("%", "").strip()
+        if not pid_raw or not sh_raw.isdigit():
+            continue
+        if pid_raw.lower() in ("participant id", "id"):
+            continue
+        try:
+            sh = int(sh_raw)
+            participants.append({
+                "pid":  pid_raw,
+                "name": clean(tds[1]),
+                "sh":   sh,
+                "pct":  float(pct_raw) if pct_raw else 0.0,
+            })
+            total_sh_fallback += sh
+        except (ValueError, TypeError):
+            continue
+
+    # ---- 總數 ---------------------------------------------------------------
+    total_sh = 0
+    for pat in [r"總數[^\d]{0,20}([\d,]{6,})", r"Grand\s+Total[^\d]{0,20}([\d,]{6,})"]:
+        m = re.search(pat, full_text)
+        if m:
+            total_sh = _parse_num(m.group(1))
+            if total_sh > 0:
+                break
+
+    if total_sh == 0:
+        for tr in soup.find_all("tr"):
+            tds = [td.get_text(strip=True) for td in tr.find_all("td")]
+            if "總數" in " ".join(tds) or "Grand Total" in " ".join(tds):
+                for cell in reversed(tds):
+                    num = _parse_num(cell)
+                    if num > 1_000_000:
+                        total_sh = num
+                        break
+                if total_sh > 0:
+                    break
+
+    if total_sh == 0 and total_sh_fallback > 0:
+        total_sh = total_sh_fallback
+        log.warning("SDW %s %s: 總數 not found — using participant sum %d",
+                    code5, date_str, total_sh)
+
+    if not participants:
+        log.debug("SDW: 0 records for %s on %s", code5, date_str)
+        return None
+
+    participants.sort(key=lambda x: -x["sh"])
+    return {"p": participants, "total_sh": total_sh, "issued_sh": issued_sh}
+
+# ── SDW fetch for one stock ───────────────────────────────────────────────────
+
+def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
     """
     Fetch CCASS participant holdings for one stock on one date.
 
-    Each call does its own GET (viewstate) + POST (data) — ASP.NET
-    __EVENTVALIDATION tokens are single-use per page load and cannot be
-    shared across requests. However a shared Session reuses the underlying
-    TCP connection (keep-alive), saving ~100-300ms per stock vs creating
-    a new Session each time.
+    Uses a Playwright Page so that Imperva's JS challenge runs in real
+    Chromium and the s3cdn_s... cookie persists across requests.
+    The page is reused across stocks within a date (passed from build()).
 
     Returns {p, total_sh, issued_sh} or None if no data found.
     """
     code5    = stock_code.zfill(5)
     date_str = d.strftime("%Y/%m/%d")
-    own_sess = sess is None
-    if own_sess:
-        sess = _new_session()
+    own_page = page is None
+    if own_page:
+        page = _new_page()
 
-    for attempt in range(1, 4):   # up to 3 attempts
-      try:
-        # GET to retrieve fresh ASP.NET viewstate tokens
-        r1 = sess.get(SDW_URL, timeout=15)
-        r1.raise_for_status()
-        soup1 = BeautifulSoup(r1.text, "html.parser")
+    for attempt in range(1, 4):
+        try:
+            # Navigate to SDW if not already there (first call or post-error recovery)
+            if SDW_URL not in page.url:
+                page.goto(SDW_URL, wait_until="networkidle", timeout=30_000)
 
-        def hv(name):
-            tag = soup1.find("input", {"name": name})
-            return tag["value"] if tag else ""
+            # Set date via JS to bypass the datepicker widget
+            page.evaluate(
+                "document.querySelector('input[name=\"txtShareholdingDate\"]')"
+                f".value = '{date_str}'"
+            )
+            # Fill stock code and clear participant fields
+            page.fill('input[name="txtStockCode"]',         code5)
+            page.fill('input[name="txtParticipantID"]',     "")
+            page.fill('input[name="txtParticipantName"]',   "")
 
-        # POST with stock code and date
-        r2 = sess.post(SDW_URL, data={
-            "__EVENTTARGET":        "btnSearch",
-            "__EVENTARGUMENT":      "",
-            "__VIEWSTATE":          hv("__VIEWSTATE"),
-            "__VIEWSTATEGENERATOR": hv("__VIEWSTATEGENERATOR"),
-            "__EVENTVALIDATION":    hv("__EVENTVALIDATION"),
-            "txtShareholdingDate":  date_str,
-            "txtStockCode":         code5,
-            "txtParticipantID":     "",
-            "txtParticipantName":   "",
-        }, timeout=20)
-        r2.raise_for_status()
+            # Submit — ASP.NET postback updates the page in-place
+            with page.expect_navigation(wait_until="networkidle", timeout=25_000):
+                page.click('input[name="btnSearch"], a[id*="btnSearch"]')
 
-        soup2     = BeautifulSoup(r2.text, "html.parser")
-        full_text = soup2.get_text(" ", strip=True)
+            result = _parse_html(page.content(), code5, date_str)
+            if own_page:
+                _close_page(page)
+            return result
 
-        # ── 已發行股份/權證/單位 (最近更新數目) ─────────────────────────────
-        issued_sh = 0
-        for pat in [
-            r"已發行股份[^\d]{0,30}([\d,]{6,})",
-            r"Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
-            r"Number\s+of\s+Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
-        ]:
-            m = re.search(pat, full_text)
-            if m:
-                issued_sh = _parse_num(m.group(1))
-                if issued_sh > 0:
-                    break
-
-        # ── Participant rows ─────────────────────────────────────────────────
-        # Table columns:
-        #   [0] 參與者編號  [1] 中央結算系統參與者名稱  [2] (skip)  [3] 持股量  [4] 佔...百分比
-        def clean(s):
-            return re.sub(r'^[^:：]+[:：]\s*', '', s).strip()
-
-        participants      = []
-        total_sh_fallback = 0
-
-        for tr in soup2.find_all("tr"):
-            tds = [td.get_text(strip=True) for td in tr.find_all("td")]
-            if len(tds) < 5:
-                continue
-            pid_raw = clean(tds[0])
-            sh_raw  = clean(tds[3]).replace(",", "")
-            pct_raw = clean(tds[4]).replace("%", "").strip()
-            if not pid_raw or not sh_raw.isdigit():
-                continue
-            if pid_raw.lower() in ("參與者編號", "id", "participant id"):
-                continue
-            try:
-                sh = int(sh_raw)
-                participants.append({
-                    "pid":  pid_raw,
-                    "name": clean(tds[1]),
-                    "sh":   sh,
-                    "pct":  float(pct_raw) if pct_raw else 0.0,
-                })
-                total_sh_fallback += sh
-            except (ValueError, TypeError):
-                continue
-
-        # ── 總數 ─────────────────────────────────────────────────────────────
-        total_sh = 0
-
-        # 1. Regex on full page text
-        for pat in [
-            r"總數[^\d]{0,20}([\d,]{6,})",
-            r"Grand\s+Total[^\d]{0,20}([\d,]{6,})",
-        ]:
-            m = re.search(pat, full_text)
-            if m:
-                total_sh = _parse_num(m.group(1))
-                if total_sh > 0:
-                    break
-
-        # 2. Scan table rows for a footer containing 總數
-        if total_sh == 0:
-            for tr in soup2.find_all("tr"):
-                tds = [td.get_text(strip=True) for td in tr.find_all("td")]
-                row_text = " ".join(tds)
-                if "總數" in row_text or "Grand Total" in row_text:
-                    for cell in reversed(tds):
-                        num = _parse_num(cell)
-                        if num > 1_000_000:
-                            total_sh = num
-                            break
-                    if total_sh > 0:
-                        break
-
-        # 3. Fallback: sum participant rows
-        if total_sh == 0 and total_sh_fallback > 0:
-            total_sh = total_sh_fallback
-            log.warning("SDW %s %s: 總數 not found — using participant sum %d",
-                        code5, date_str, total_sh)
-
-        if not participants:
-            log.debug("SDW: 0 records for %s on %s", code5, date_str)
-            if own_sess: sess.close()
-            return None
-
-        participants.sort(key=lambda x: -x["sh"])
-        if own_sess: sess.close()
-        return {"p": participants, "total_sh": total_sh, "issued_sh": issued_sh}
-
-      except Exception as e:
-        if attempt < 3:
-            wait = attempt * 3
-            log.warning("fetch_stock (%s %s) attempt %d failed: %s — retrying in %ds",
-                        code5, date_str, attempt, e, wait)
-            time.sleep(wait)
-        else:
-            log.error("fetch_stock (%s %s): all 3 attempts failed: %s", code5, date_str, e)
-            if own_sess: sess.close()
-            return None
+        except Exception as e:
+            if attempt < 3:
+                wait = attempt * 3
+                log.warning("fetch_stock (%s %s) attempt %d failed: %s — retrying in %ds",
+                            code5, date_str, attempt, e, wait)
+                time.sleep(wait)
+                try:
+                    page.goto(SDW_URL, wait_until="networkidle", timeout=30_000)
+                except Exception:
+                    pass
+            else:
+                log.error("fetch_stock (%s %s): all 3 attempts failed: %s",
+                          code5, date_str, e)
+                if own_page:
+                    _close_page(page)
+                return None
 
 # ── Build / update ────────────────────────────────────────────────────────────
 
@@ -441,20 +468,15 @@ def build(update_only: bool = False, specific_date: date = None,
     """
     Build or update SDW files.
 
-    range_label — if given (e.g. "0001_1000"), only fetch stocks in that range.
-                  Used by the parallel matrix strategy in GitHub Actions where
-                  7 jobs run simultaneously, each owning one range file.
-                  When None, fetches all ranges (original behaviour).
-
-    max_minutes — stop gracefully after N minutes (0 = no limit).
+    range_label -- if given, only fetch stocks in that range.
+    max_minutes -- stop gracefully after N minutes (0 = no limit).
     """
     deadline = (time.monotonic() + max_minutes * 60) if max_minutes > 0 else None
 
-    # Resolve which ranges this job owns
     if range_label:
         owned_ranges = [(lbl, lo, hi) for lbl, lo, hi in RANGES if lbl == range_label]
         if not owned_ranges:
-            log.error("Unknown range_label %r — valid: %s",
+            log.error("Unknown range_label %r -- valid: %s",
                       range_label, [r[0] for r in RANGES])
             return
         log.info("Range filter: %s only", range_label)
@@ -465,21 +487,14 @@ def build(update_only: bool = False, specific_date: date = None,
         dates_to_fetch = [specific_date]
     else:
         all_dates = all_fetch_dates()
-
         if update_only:
-            # Only fetch dates newer than the most recently stored date
             stored_all = all_stored_dates()
             last = date.fromisoformat(max(stored_all)) if stored_all else None
             all_dates = [d for d in all_dates if last is None or d > last]
             log.info("Update mode: %d new dates after %s",
                      len(all_dates), last.isoformat() if last else "none")
 
-        # Determine which dates still need fetching.
-        # For a range-specific run: a date is incomplete if fewer than 95% of
-        # that range's universe codes are stored in its range file.
-        # For a full run: use the global stored-dates set (faster).
         if range_label:
-            # Pre-compute universe for this range once (not per date)
             universe_all = get_sfc_universe()
             owned_lo, owned_hi = owned_ranges[0][1], owned_ranges[0][2]
             range_universe = [c for c in universe_all if owned_lo <= int(c) <= owned_hi]
@@ -510,10 +525,9 @@ def build(update_only: bool = False, specific_date: date = None,
 
     universe = get_sfc_universe()
     if not universe:
-        log.error("Empty stock universe — aborting")
+        log.error("Empty stock universe -- aborting")
         return
 
-    # Filter universe to owned ranges only
     if range_label:
         owned_lo = owned_ranges[0][1]
         owned_hi = owned_ranges[0][2]
@@ -525,121 +539,113 @@ def build(update_only: bool = False, specific_date: date = None,
     if deadline:
         log.info("Time limit: %.0f minutes", max_minutes)
 
-    for di, d in enumerate(dates_to_fetch, 1):
-        if deadline and time.monotonic() >= deadline:
-            log.info("Time limit reached after %d/%d dates — stopping cleanly",
-                     di - 1, len(dates_to_fetch))
-            break
-
-        ds         = d.isoformat()
-        year       = d.year
-        log.info("── [%d/%d] %s ──", di, len(dates_to_fetch), ds)
-
-        # Only load range files this job owns
-        range_libs = {label: load_range(year, label) for label, _, _ in owned_ranges}
-
-        # For range-specific runs read already-stored codes from the owned range file only
-        # (avoids scanning all 7 range files when only 1 is relevant)
-        if range_label:
-            lbl = owned_ranges[0][0]
-            already = set(range_libs[lbl]["by_date"].get(ds, {}).keys())
-        else:
-            already = _stored_codes_for_date(ds)
-        todo = [c for c in universe if c not in already]
-        log.info("  %d stocks to fetch (%d already stored)", len(todo), len(already))
-
-        fetched       = 0
-        timed_out     = False
-        blocked       = False
-        consec_errors = 0
-        _dirty_ranges = set()
-
-        # Fresh session per date — new random UA + proxy each time
-        _shared_sess = _new_session()
-        log.info("  Session UA: %s", _shared_sess.headers["User-Agent"][:60])
-
-        for ci, code in enumerate(todo, 1):
+    try:
+        for di, d in enumerate(dates_to_fetch, 1):
             if deadline and time.monotonic() >= deadline:
-                log.info("  Time limit reached mid-date at stock [%d/%d] — saving progress",
-                         ci, len(todo))
-                timed_out = True
+                log.info("Time limit reached after %d/%d dates -- stopping cleanly",
+                         di - 1, len(dates_to_fetch))
                 break
 
-            entry = fetch_stock(code, d, sess=_shared_sess)
-            if entry:
-                rl = code_range(code)
-                range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
-                _dirty_ranges.add(rl)
-                fetched      += 1
-                consec_errors = 0
-            else:
-                consec_errors += 1
+            ds   = d.isoformat()
+            year = d.year
+            log.info("-- [%d/%d] %s --", di, len(dates_to_fetch), ds)
 
-                # ── Circuit breaker ───────────────────────────────────────────
-                # Stop wasting the time budget when HKEX clearly blocks us.
-                # Save progress, cool down, then continue to the next date
-                # with a fresh session and new UA.
-                if consec_errors >= CIRCUIT_BREAKER_LIMIT:
-                    log.error(
-                        "  Circuit breaker: %d consecutive errors — session blocked. "
-                        "Saving progress and cooling down for %ds.",
-                        consec_errors, BLOCKED_COOLDOWN_SEC,
-                    )
-                    blocked = True
+            range_libs = {label: load_range(year, label) for label, _, _ in owned_ranges}
+
+            if range_label:
+                lbl     = owned_ranges[0][0]
+                already = set(range_libs[lbl]["by_date"].get(ds, {}).keys())
+            else:
+                already = _stored_codes_for_date(ds)
+            todo = [c for c in universe if c not in already]
+            log.info("  %d stocks to fetch (%d already stored)", len(todo), len(already))
+
+            if not todo:
+                log.info("  %s already complete -- skipping", ds)
+                continue
+
+            fetched       = 0
+            timed_out     = False
+            blocked       = False
+            consec_errors = 0
+            _dirty_ranges = set()
+
+            # Fresh page per date -- new UA, fresh Imperva cookie
+            _shared_page = _new_page()
+
+            try:
+                for ci, code in enumerate(todo, 1):
+                    if deadline and time.monotonic() >= deadline:
+                        log.info("  Time limit reached mid-date at stock [%d/%d] -- saving progress",
+                                 ci, len(todo))
+                        timed_out = True
+                        break
+
+                    entry = fetch_stock(code, d, page=_shared_page)
+
+                    if entry:
+                        rl = code_range(code)
+                        range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
+                        _dirty_ranges.add(rl)
+                        fetched      += 1
+                        consec_errors = 0
+                    else:
+                        consec_errors += 1
+                        if consec_errors >= CIRCUIT_BREAKER_LIMIT:
+                            log.error(
+                                "  Circuit breaker: %d consecutive errors -- "
+                                "aborting date %s after saving progress.",
+                                consec_errors, ds,
+                            )
+                            blocked = True
+                            break
+                        if consec_errors % 3 == 0:
+                            backoff = min(30, 5 * (consec_errors // 3))
+                            log.warning("  %d consecutive errors -- backing off %ds",
+                                        consec_errors, backoff)
+                            time.sleep(backoff)
+
+                    time.sleep(SLEEP_SEC)
+
+                    if ci % 50 == 0:
+                        for label in _dirty_ranges:
+                            if range_libs[label]["by_date"].get(ds):
+                                save_range(year, label, range_libs[label])
+                        _dirty_ranges.clear()
+                        log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
+
+            finally:
+                _close_page(_shared_page)
+
+            for label, lib in range_libs.items():
+                if lib["by_date"].get(ds):
+                    save_range(year, label, lib)
+
+            if blocked:
+                log.info("  %s blocked: %d/%d stocks saved", ds, fetched, len(todo))
+                remaining = (deadline - time.monotonic()) if deadline else float("inf")
+                cooldown  = min(BLOCKED_COOLDOWN_SEC, remaining - 10)
+                if cooldown > 0:
+                    log.info("  Cooling down %.0fs before next date...", cooldown)
+                    time.sleep(cooldown)
+                else:
+                    log.info("  No time remaining -- stopping")
                     break
+                continue
 
-                # Graduated backoff every 3 errors (5s → 10s → … capped at 30s)
-                if consec_errors % 3 == 0:
-                    backoff = min(30, 5 * (consec_errors // 3))
-                    log.warning("  %d consecutive errors — backing off %ds",
-                                consec_errors, backoff)
-                    time.sleep(backoff)
-
-            time.sleep(SLEEP_SEC)
-
-            # Checkpoint every 50 stocks — only flush dirty ranges
-            if ci % 50 == 0:
-                for label in _dirty_ranges:
-                    if range_libs[label]["by_date"].get(ds):
-                        save_range(year, label, range_libs[label])
-                _dirty_ranges.clear()
-                log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
-
-        _shared_sess.close()
-
-        # Final save for this date (complete or partial)
-        for label, lib in range_libs.items():
-            if lib["by_date"].get(ds):
-                save_range(year, label, lib)
-
-        if blocked:
-            log.info("  %s blocked: %d/%d stocks saved", ds, fetched, len(todo))
-            remaining = (deadline - time.monotonic()) if deadline else float("inf")
-            cooldown  = min(BLOCKED_COOLDOWN_SEC, remaining - 10)
-            if cooldown > 0:
-                log.info("  Cooling down for %.0fs before next date…", cooldown)
-                time.sleep(cooldown)
-            else:
-                log.info("  No time remaining after cooldown — stopping")
+            status = "partial" if timed_out else "done"
+            log.info("  %s %s: %d/%d stocks saved", ds, status, fetched, len(todo))
+            if timed_out:
                 break
-            continue   # next date gets a fresh session + new UA
 
-        status = "partial" if timed_out else "done"
-        log.info("  %s %s: %d/%d stocks saved", ds, status, fetched, len(todo))
-
-        if timed_out:
-            break
+    finally:
+        _close_browser()
 
     log.info("Build complete")
 
-# ── Migration from old single-file format ────────────────────────────────────
+# ── Migration ────────────────────────────────────────────────────────────────
 
 def migrate_to_range_split():
-    """
-    Migrate old ccass_sdw_{YYYY}.json files (single file per year)
-    to the new range-split format ccass_sdw_{range}_{YYYY}.json.
-    Safe to re-run — already-migrated files are skipped.
-    """
     for year in range(START_DATE.year, date.today().year + 1):
         old_path = f"ccass_sdw_{year}.json"
         if not os.path.exists(old_path):
@@ -648,24 +654,17 @@ def migrate_to_range_split():
             old_lib = json.load(f)
         by_date = old_lib.get("by_date", {})
         if not by_date:
-            log.info("ccass_sdw_%d.json: empty — skipping", year)
+            log.info("ccass_sdw_%d.json: empty -- skipping", year)
             continue
-
-        # Check if already migrated
-        range_files_exist = all(
-            os.path.exists(lib_path(year, label))
-            for label, _, _ in RANGES
-        )
-        if range_files_exist:
-            log.info("Range files for %d already exist — skipping migration", year)
+        if all(os.path.exists(lib_path(year, label)) for label, _, _ in RANGES):
+            log.info("Range files for %d already exist -- skipping", year)
             continue
-
-        log.info("Migrating ccass_sdw_%d.json (%d dates)…", year, len(by_date))
+        log.info("Migrating ccass_sdw_%d.json (%d dates)...", year, len(by_date))
         range_libs = {label: load_range(year, label) for label, _, _ in RANGES}
         migrated = 0
         for ds, stocks in by_date.items():
             for code, raw in stocks.items():
-                rl  = code_range(code)
+                rl    = code_range(code)
                 entry = _to_v2(raw)
                 range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
                 migrated += 1
@@ -673,7 +672,6 @@ def migrate_to_range_split():
             if lib["by_date"]:
                 save_range(year, label, lib)
         log.info("Migrated %d records from ccass_sdw_%d.json", migrated, year)
-
     log.info("Migration complete")
 
 # ── API ───────────────────────────────────────────────────────────────────────
@@ -688,22 +686,18 @@ def _load_for_code(code: str, ds: str) -> dict:
         return json.load(f).get("by_date", {}).get(ds, {})
 
 def get_holders(stock_code: str, ds: str) -> list:
-    """Return participant list [{pid, name, sh, pct}] or []."""
     raw = _load_for_code(stock_code, ds).get(stock_code.zfill(5))
     return _to_v2(raw)["p"] if raw is not None else []
 
 def get_total_sh(stock_code: str, ds: str) -> int:
-    """Return 總數 for a stock on YYYY-MM-DD, or 0."""
     raw = _load_for_code(stock_code, ds).get(stock_code.zfill(5))
     return _to_v2(raw).get("total_sh", 0) if raw is not None else 0
 
 def get_issued_sh(stock_code: str, ds: str) -> int:
-    """Return 已發行股份 for a stock on YYYY-MM-DD, or 0."""
     raw = _load_for_code(stock_code, ds).get(stock_code.zfill(5))
     return _to_v2(raw).get("issued_sh", 0) if raw is not None else 0
 
 def get_latest_total_sh(stock_code: str, before: str = None) -> int:
-    """Most recent 總數 for a stock (optionally before a YYYY-MM-DD date)."""
     code5  = stock_code.zfill(5)
     label  = code_range(code5)
     cutoff = before or (date.today() + timedelta(days=1)).isoformat()
@@ -725,11 +719,6 @@ def get_latest_total_sh(stock_code: str, before: str = None) -> int:
     return 0
 
 def get_total_sh_bulk(ds: str) -> dict:
-    """
-    Return {code5: total_sh} for all stocks with SDW data on YYYY-MM-DD date ds.
-    Loads all 7 range files in one pass — use this instead of per-stock
-    get_total_sh() calls to avoid opening a file per stock (O(N) → O(7)).
-    """
     result = {}
     year   = int(ds[:4])
     for label, _, _ in RANGES:
@@ -738,19 +727,13 @@ def get_total_sh_bulk(ds: str) -> dict:
             continue
         with open(p, encoding="utf-8") as f:
             by_date = json.load(f).get("by_date", {})
-        day = by_date.get(ds, {})
-        for code5, raw in day.items():
-            v = _to_v2(raw)
-            ts = v.get("total_sh", 0)
+        for code5, raw in by_date.get(ds, {}).items():
+            ts = _to_v2(raw).get("total_sh", 0)
             if ts > 0:
                 result[code5] = ts
     return result
 
 def get_holders_history(stock_code: str, n: int, before: str) -> list:
-    """
-    Last n weekly snapshots before `before` (YYYY-MM-DD), newest-first.
-    Returns [{date, holders, total_sh, issued_sh}, ...].
-    """
     code5  = stock_code.zfill(5)
     label  = code_range(code5)
     result = []
@@ -806,12 +789,11 @@ def _query(code: str, top: int, ds: str = None):
         return
     entry   = _to_v2(raw)
     holders = entry["p"]
-    print(f"\n{code5}  {ds}  ({len(holders)} participants)  "
-          f"[range: {label}]")
-    print(f"  總數:       {entry.get('total_sh',  0):>20,}")
-    print(f"  已發行股份: {entry.get('issued_sh', 0):>20,}")
+    print(f"\n{code5}  {ds}  ({len(holders)} participants)  [range: {label}]")
+    print(f"  Total CCASS shares: {entry.get('total_sh',  0):>20,}")
+    print(f"  Issued shares:      {entry.get('issued_sh', 0):>20,}")
     print(f"{'#':<4} {'ID':<12} {'Name':<40} {'Shares':>16} {'%':>8}")
-    print("─" * 84)
+    print("-" * 84)
     for i, h in enumerate(holders[:top], 1):
         print(f"{i:<4} {h['pid']:<12} {h['name'][:39]:<40} "
               f"{h['sh']:>16,} {h['pct']:>7.2f}%")
@@ -821,21 +803,20 @@ def _query(code: str, top: int, ds: str = None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="CCASS SDW Participant Holdings Library")
-    ap.add_argument("--update",       action="store_true",
+    ap.add_argument("--update",      action="store_true",
                     help="Fetch only dates newer than last stored")
-    ap.add_argument("--date",         metavar="YYYY-MM-DD",
+    ap.add_argument("--date",        metavar="YYYY-MM-DD",
                     help="Fetch one specific date")
-    ap.add_argument("--max-minutes",  type=float, default=0, metavar="N",
-                    help="Stop after N minutes (0 = no limit). Use 12 for 15-min CI jobs.")
-    ap.add_argument("--query",        metavar="CODE",
+    ap.add_argument("--max-minutes", type=float, default=0, metavar="N",
+                    help="Stop after N minutes (0 = no limit)")
+    ap.add_argument("--query",       metavar="CODE",
                     help="Show participant holdings for a stock code")
-    ap.add_argument("--top",          type=int, default=20,
+    ap.add_argument("--top",         type=int, default=20,
                     help="Number of top participants to show (default 20)")
-    ap.add_argument("--range",        metavar="LABEL",
-                    help="Only fetch stocks in this range (e.g. 0001_1000). "
-                         "Used by parallel matrix jobs — each job owns one range.")
-    ap.add_argument("--migrate",      action="store_true",
-                    help="Migrate old ccass_sdw_YYYY.json files to range-split format")
+    ap.add_argument("--range",       metavar="LABEL",
+                    help="Only fetch stocks in this range (e.g. 0001_1000)")
+    ap.add_argument("--migrate",     action="store_true",
+                    help="Migrate old ccass_sdw_YYYY.json to range-split format")
     args = ap.parse_args()
 
     if args.migrate:
