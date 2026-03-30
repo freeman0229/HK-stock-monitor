@@ -435,9 +435,12 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             page.fill('input[name="txtParticipantID"]',     "")
             page.fill('input[name="txtParticipantName"]',   "")
 
-            # Submit — ASP.NET postback updates the page in-place
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=25_000):
-                page.click('input[name="btnSearch"], a[id*="btnSearch"]')
+            # Submit — ASP.NET postback updates the page in-place.
+            # expect_navigation doesn't work for postbacks; instead click
+            # then wait for network to settle (Imperva challenge already
+            # solved, so networkidle fires quickly on postback responses).
+            page.click('input[name="btnSearch"], a[id*="btnSearch"]')
+            page.wait_for_load_state("networkidle", timeout=25_000)
 
             result = _parse_html(page.content(), code5, date_str)
             if own_page:
