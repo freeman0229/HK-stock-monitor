@@ -429,37 +429,31 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
 
     for attempt in range(1, 4):
         try:
-            # Fresh GET every stock — __EVENTVALIDATION is single-use in ASP.NET.
-            # Reusing a stale token causes silent failure (blank page returned).
+            # GET to load fresh ASP.NET tokens into the browser session.
             page.goto(SDW_URL, wait_until="domcontentloaded", timeout=30_000)
             page.wait_for_timeout(500)
 
-            # Set date via JS to bypass the datepicker widget
-            page.evaluate(
-                "document.querySelector('input[name=\"txtShareholdingDate\"]')"
-                f".value = '{date_str}'"
-            )
-            # Fill stock code and clear participant fields
-            page.fill('input[name="txtStockCode"]',       code5)
-            page.fill('input[name="txtParticipantID"]',   "")
-            page.fill('input[name="txtParticipantName"]', "")
+            # Read fresh hidden field values directly from the DOM
+            vs  = page.eval_on_selector('input[name="__VIEWSTATE"]',         "el => el.value")
+            vsg = page.eval_on_selector('input[name="__VIEWSTATEGENERATOR"]', "el => el.value")
+            ev_el = page.query_selector('input[name="__EVENTVALIDATION"]')
+            ev  = page.eval_on_selector('input[name="__EVENTVALIDATION"]', "el => el.value") if ev_el else ""
 
-            # Submit — expect_navigation registers BEFORE submit fires
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=25_000):
-                page.evaluate("""
-                    document.getElementById('__EVENTTARGET').value = 'btnSearch';
-                    document.getElementById('__EVENTARGUMENT').value = '';
-                    document.forms[0].submit();
-                """)
-            page.wait_for_timeout(1_000)
-
-
-            html   = page.content()
+            # POST using page.request — shares browser cookies (Imperva session)
+            # but sends a proper HTTP POST exactly like the original requests library.
+            resp = page.request.post(SDW_URL, form={
+                "__EVENTTARGET":        "btnSearch",
+                "__EVENTARGUMENT":      "",
+                "__VIEWSTATE":          vs,
+                "__VIEWSTATEGENERATOR": vsg,
+                "__EVENTVALIDATION":    ev,
+                "txtShareholdingDate":  date_str,
+                "txtStockCode":         code5,
+                "txtParticipantID":     "",
+                "txtParticipantName":   "",
+            })
+            html   = resp.text()
             result = _parse_html(html, code5, date_str)
-            if result is None:
-                snippet = " ".join(html[:500].split())
-                log.warning("fetch_stock (%s %s): parse=None page: %s", code5, date_str, snippet)
-                page.screenshot(path="debug_result_" + code5 + ".png")
             if own_page:
                 _close_page(page)
             return result
