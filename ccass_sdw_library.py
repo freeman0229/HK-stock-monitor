@@ -435,19 +435,10 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             page.fill('input[name="txtParticipantID"]',     "")
             page.fill('input[name="txtParticipantName"]',   "")
 
-            # Dump all input elements to log so we can find the correct button selector
-            inputs = page.evaluate("""() => {
-                return Array.from(document.querySelectorAll('input, button, a')).map(el => ({
-                    tag:   el.tagName,
-                    id:    el.id,
-                    name:  el.name,
-                    value: el.value,
-                    text:  el.innerText,
-                    type:  el.type,
-                }));
-            }""")
-            log.info("PAGE INPUTS: %s", inputs)
-            page.wait_for_timeout(3_000)
+            # Click the search button (it's an <a> tag with id="btnSearch")
+            # then wait for the postback to complete.
+            page.click('a#btnSearch')
+            page.wait_for_load_state("networkidle", timeout=25_000)
 
             result = _parse_html(page.content(), code5, date_str)
             if own_page:
