@@ -443,12 +443,17 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             page.fill('input[name="txtParticipantID"]',     "")
             page.fill('input[name="txtParticipantName"]',   "")
 
-            # Click the search button (it's an <a> tag with id="btnSearch").
-            # The postback updates the page in-place (no full reload), so we
-            # just wait a fixed 8s for the AJAX response to render.
-            page.click('a#btnSearch')
-            page.wait_for_timeout(8_000)
-            page.screenshot(path=f"debug_after_{code5}.png")
+            # Trigger the ASP.NET postback directly via JavaScript.
+            # Setting __EVENTTARGET and submitting the form is more reliable
+            # than clicking the link, which may not fire the postback handler.
+            page.evaluate("""
+                document.getElementById('__EVENTTARGET').value = 'btnSearch';
+                document.getElementById('__EVENTARGUMENT').value = '';
+                document.forms[0].submit();
+            """)
+            # Wait for the page to reload with results
+            page.wait_for_load_state("domcontentloaded", timeout=20_000)
+            page.wait_for_timeout(3_000)
 
 
             result = _parse_html(page.content(), code5, date_str)
