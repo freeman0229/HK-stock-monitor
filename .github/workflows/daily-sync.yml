@@ -49,6 +49,7 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
+      - run: playwright install chromium
 
       - name: Fetch today's turnover data
         run: python build_turnover.py
@@ -213,6 +214,7 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
+      - run: playwright install chromium
       - name: Check SFC library files exist
         run: |
           if ! ls sfc_20*.json 1>/dev/null 2>&1; then
@@ -257,6 +259,7 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
+      - run: playwright install chromium
       - name: Fetch latest Friday SDW data for range ${{ matrix.range }}
         env:
           SDW_PROXY: ${{ secrets.SDW_PROXY }}
