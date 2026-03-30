@@ -451,9 +451,10 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
                 document.getElementById('__EVENTARGUMENT').value = '';
                 document.forms[0].submit();
             """)
-            # Wait for the page to reload with results
+            # Wait for the full page reload with results
             page.wait_for_load_state("domcontentloaded", timeout=20_000)
-            page.wait_for_timeout(3_000)
+            page.wait_for_load_state("load", timeout=20_000)
+            page.wait_for_timeout(2_000)
 
 
             result = _parse_html(page.content(), code5, date_str)
