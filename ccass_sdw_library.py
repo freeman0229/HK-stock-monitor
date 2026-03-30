@@ -429,9 +429,10 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
 
     for attempt in range(1, 4):
         try:
-            # Navigate to SDW if not already there (first call or post-error recovery)
-            if SDW_URL not in page.url:
-                page.goto(SDW_URL, wait_until="domcontentloaded", timeout=30_000)
+            # Fresh GET every stock — __EVENTVALIDATION is single-use in ASP.NET.
+            # Reusing a stale token causes silent failure (blank page returned).
+            page.goto(SDW_URL, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(500)
 
             # Set date via JS to bypass the datepicker widget
             page.evaluate(
@@ -439,13 +440,12 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
                 f".value = '{date_str}'"
             )
             # Fill stock code and clear participant fields
-            page.fill('input[name="txtStockCode"]',         code5)
-            page.fill('input[name="txtParticipantID"]',     "")
-            page.fill('input[name="txtParticipantName"]',   "")
+            page.fill('input[name="txtStockCode"]',       code5)
+            page.fill('input[name="txtParticipantID"]',   "")
+            page.fill('input[name="txtParticipantName"]', "")
 
-            # Trigger the ASP.NET postback via form submit.
-            # Use expect_navigation to capture the navigation BEFORE it fires.
-            with page.expect_navigation(wait_until="load", timeout=25_000):
+            # Submit — expect_navigation registers BEFORE submit fires
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=25_000):
                 page.evaluate("""
                     document.getElementById('__EVENTTARGET').value = 'btnSearch';
                     document.getElementById('__EVENTARGUMENT').value = '';
