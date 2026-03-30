@@ -435,14 +435,17 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             page.fill('input[name="txtParticipantID"]',     "")
             page.fill('input[name="txtParticipantName"]',   "")
 
-            # Submit via JavaScript — most reliable for ASP.NET postbacks.
-            # __doPostBack is the standard ASP.NET postback mechanism.
-            page.evaluate("__doPostBack('btnSearch', '')")
-            page.wait_for_timeout(5_000)   # 5s for postback to complete
-
-            # Debug: save screenshot on first attempt to verify page state
-            page.screenshot(path=f"debug_{code5}_{date_str.replace('/', '-')}.png")
-            log.info("  Debug screenshot saved for %s", code5)
+            # Click the 搜尋 button and wait for results table to appear.
+            page.click('input[value="搜尋"], input[value="Search"], input[id*="btnSearch"]')
+            # Wait for either results table or no-data indicator
+            page.wait_for_function(
+                """() => {
+                    const tables = document.querySelectorAll('table');
+                    const text = document.body.innerText;
+                    return tables.length > 2 || text.includes('總數') || text.includes('Grand Total') || text.includes('沒有');
+                }""",
+                timeout=20_000
+            )
 
             result = _parse_html(page.content(), code5, date_str)
             if own_page:
