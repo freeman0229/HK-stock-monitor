@@ -457,11 +457,9 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             html   = page.content()
             result = _parse_html(html, code5, date_str)
             if result is None:
-                # Log page snippet and screenshot so we can see what was returned
-                log.warning("fetch_stock (%s %s): parse=None, page[:500]=%s",
-                            code5, date_str, html[:500].replace("
-", " "))
-                page.screenshot(path=f"debug_result_{code5}.png")
+                snippet = " ".join(html[:500].split())
+                log.warning("fetch_stock (%s %s): parse=None page: %s", code5, date_str, snippet)
+                page.screenshot(path="debug_result_" + code5 + ".png")
             if own_page:
                 _close_page(page)
             return result
