@@ -435,10 +435,12 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             page.fill('input[name="txtParticipantID"]',     "")
             page.fill('input[name="txtParticipantName"]',   "")
 
-            # Click the search button (it's an <a> tag with id="btnSearch")
-            # then wait for the postback to complete.
+            # Click the search button (it's an <a> tag with id="btnSearch").
+            # networkidle never fires due to background requests, so we wait
+            # for the "load" event then give the postback 4s to render results.
             page.click('a#btnSearch')
-            page.wait_for_load_state("networkidle", timeout=25_000)
+            page.wait_for_load_state("load", timeout=15_000)
+            page.wait_for_timeout(4_000)
 
             result = _parse_html(page.content(), code5, date_str)
             if own_page:
