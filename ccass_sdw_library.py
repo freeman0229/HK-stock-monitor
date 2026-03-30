@@ -287,7 +287,7 @@ def _new_page() -> Page:
     page = ctx.new_page()
 
     log.info("  Warming up (Imperva challenge)... UA: %s", ua[:60])
-    page.goto(SDW_URL, wait_until="networkidle", timeout=30_000)
+    page.goto(SDW_URL, wait_until="domcontentloaded", timeout=30_000)
     log.info("  Page ready")
     return page
 
@@ -423,7 +423,7 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
         try:
             # Navigate to SDW if not already there (first call or post-error recovery)
             if SDW_URL not in page.url:
-                page.goto(SDW_URL, wait_until="networkidle", timeout=30_000)
+                page.goto(SDW_URL, wait_until="domcontentloaded", timeout=30_000)
 
             # Set date via JS to bypass the datepicker widget
             page.evaluate(
@@ -436,7 +436,7 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             page.fill('input[name="txtParticipantName"]',   "")
 
             # Submit — ASP.NET postback updates the page in-place
-            with page.expect_navigation(wait_until="networkidle", timeout=25_000):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=25_000):
                 page.click('input[name="btnSearch"], a[id*="btnSearch"]')
 
             result = _parse_html(page.content(), code5, date_str)
@@ -451,7 +451,7 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
                             code5, date_str, attempt, e, wait)
                 time.sleep(wait)
                 try:
-                    page.goto(SDW_URL, wait_until="networkidle", timeout=30_000)
+                    page.goto(SDW_URL, wait_until="domcontentloaded", timeout=30_000)
                 except Exception:
                     pass
             else:
