@@ -440,6 +440,9 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             # just wait a fixed 6s for the AJAX response to render.
             page.click('a#btnSearch')
             page.wait_for_timeout(6_000)
+            # Debug screenshot to verify results loaded
+            page.screenshot(path=f"debug_after_{code5}.png")
+            log.info("  Debug screenshot saved: debug_after_%s.png", code5)
 
             result = _parse_html(page.content(), code5, date_str)
             if own_page:
