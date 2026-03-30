@@ -443,18 +443,15 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             page.fill('input[name="txtParticipantID"]',     "")
             page.fill('input[name="txtParticipantName"]',   "")
 
-            # Trigger the ASP.NET postback directly via JavaScript.
-            # Setting __EVENTTARGET and submitting the form is more reliable
-            # than clicking the link, which may not fire the postback handler.
-            page.evaluate("""
-                document.getElementById('__EVENTTARGET').value = 'btnSearch';
-                document.getElementById('__EVENTARGUMENT').value = '';
-                document.forms[0].submit();
-            """)
-            # Wait for the full page reload with results
-            page.wait_for_load_state("domcontentloaded", timeout=20_000)
-            page.wait_for_load_state("load", timeout=20_000)
-            page.wait_for_timeout(2_000)
+            # Trigger the ASP.NET postback via form submit.
+            # Use expect_navigation to capture the navigation BEFORE it fires.
+            with page.expect_navigation(wait_until="load", timeout=25_000):
+                page.evaluate("""
+                    document.getElementById('__EVENTTARGET').value = 'btnSearch';
+                    document.getElementById('__EVENTARGUMENT').value = '';
+                    document.forms[0].submit();
+                """)
+            page.wait_for_timeout(1_000)
 
 
             result = _parse_html(page.content(), code5, date_str)
