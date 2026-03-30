@@ -440,10 +440,9 @@ def fetch_stock(stock_code: str, d: date, page: Page = None) -> dict | None:
             page.evaluate("__doPostBack('btnSearch', '')")
             page.wait_for_timeout(5_000)   # 5s for postback to complete
 
-            # Debug: save screenshot on first stock of each date to verify page state
-            if ci == 1:
-                page.screenshot(path=f"debug_{code5}_{date_str.replace('/', '-')}.png")
-                log.info("  Debug screenshot saved for %s", code5)
+            # Debug: save screenshot on first attempt to verify page state
+            page.screenshot(path=f"debug_{code5}_{date_str.replace('/', '-')}.png")
+            log.info("  Debug screenshot saved for %s", code5)
 
             result = _parse_html(page.content(), code5, date_str)
             if own_page:
