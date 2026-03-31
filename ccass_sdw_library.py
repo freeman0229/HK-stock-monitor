@@ -59,7 +59,7 @@ def _new_session() -> requests.Session:
     return sess
 
 START_DATE            = date(2025, 3, 23)
-SLEEP_SEC             = 2.0
+SLEEP_SEC             = 10.0
 SCHEMA_VERSION        = 2
 CIRCUIT_BREAKER_LIMIT = 20
 BLOCKED_COOLDOWN_SEC  = 300
