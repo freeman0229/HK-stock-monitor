@@ -2141,11 +2141,11 @@ function renderShort() {
   });
   const avg = sorted.reduce((a,s) => a + s.short_ratio, 0) / sorted.length;
 
-  // 日沽空 TOP — highest 金額($) from adj_short (short_st = short turnover HKD)
-  const topVol  = [...sorted].filter(s => s.short_st > 0)
+  // 日沽空 TOP — highest 金額($) from adj_short (short_st = short turnover HKD), exclude ETFs
+  const topVol  = [...sorted].filter(s => s.short_st > 0 && s.stock_type !== 'etf')
                              .sort((a,b) => (b.short_st||0) - (a.short_st||0))[0];
-  // 日沽空比率 TOP — highest (股數(SH) / 成交股數) = short_ratio
-  const topRatio = [...sorted].filter(s => s.short_ratio > 0)
+  // 日沽空比率 TOP — highest (股數(SH) / 成交股數) = short_ratio, exclude ETFs
+  const topRatio = [...sorted].filter(s => s.short_ratio > 0 && s.stock_type !== 'etf')
                               .sort((a,b) => b.short_ratio - a.short_ratio)[0];
   // 累積沽空 TOP — highest Aggregated Reportable Short Positions (HK$) from SFC
   const topSfc  = [...sorted].filter(s => s.sfc_hkd > 0)
@@ -2158,16 +2158,38 @@ function renderShort() {
                              .sort((a,b) => (a.sfc_hkd_delta||0) - (b.sfc_hkd_delta||0))[0];
 
   const el = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+
+  // Cache SFC card values — SFC data is published weekly (Fridays)
+  // On non-Friday days use last known values from localStorage
+  const SFC_CACHE_KEY = 'hk_sfc_cards_v1';
+  let sfcCache = {};
+  try { sfcCache = JSON.parse(localStorage.getItem(SFC_CACHE_KEY) || '{}'); } catch(e) {}
+
+  const sfcTopName  = topSfc  ? topSfc.name_chi  : null;
+  const sfcTopVal   = topSfc  ? fmtM(topSfc.sfc_hkd) : null;
+  const sfcIncName  = topInc  ? topInc.name_chi  : null;
+  const sfcIncVal   = topInc  ? '+' + fmtM(topInc.sfc_hkd_delta) : null;
+  const sfcDecName  = topDec  ? topDec.name_chi  : null;
+  const sfcDecVal   = topDec  ? fmtM(topDec.sfc_hkd_delta) : null;
+
+  // Save to cache whenever we have fresh values
+  if (sfcTopName)  { sfcCache.sfcTopName = sfcTopName;  sfcCache.sfcTopVal  = sfcTopVal; }
+  if (sfcIncName)  { sfcCache.sfcIncName = sfcIncName;  sfcCache.sfcIncVal  = sfcIncVal; }
+  if (sfcDecName)  { sfcCache.sfcDecName = sfcDecName;  sfcCache.sfcDecVal  = sfcDecVal; }
+  if (sfcTopName || sfcIncName || sfcDecName) {
+    try { localStorage.setItem(SFC_CACHE_KEY, JSON.stringify(sfcCache)); } catch(e) {}
+  }
+
   el('sh-vol-top-name',   topVol   ? topVol.name_chi   : '--');
   el('sh-vol-top-val',    topVol   ? fmtM(topVol.short_st) : '--');
   el('sh-ratio-top-name', topRatio ? topRatio.name_chi : '--');
   el('sh-ratio-top-val',  topRatio ? fmtPct(topRatio.short_ratio) : '--');
-  el('sh-sfc-top-name',   topSfc   ? topSfc.name_chi   : '--');
-  el('sh-sfc-top-val',    topSfc   ? fmtM(topSfc.sfc_hkd) : '--');
-  el('sh-inc-top-name',   topInc   ? topInc.name_chi   : '--');
-  el('sh-inc-top-val',    topInc   ? '+' + fmtM(topInc.sfc_hkd_delta) : '--');
-  el('sh-dec-top-name',   topDec   ? topDec.name_chi   : '--');
-  el('sh-dec-top-val',    topDec   ? fmtM(topDec.sfc_hkd_delta) : '--');
+  el('sh-sfc-top-name',   sfcTopName  || sfcCache.sfcTopName || '數據待更新');
+  el('sh-sfc-top-val',    sfcTopVal   || sfcCache.sfcTopVal  || 'SFC 每週五發布');
+  el('sh-inc-top-name',   sfcIncName  || sfcCache.sfcIncName || '數據待更新');
+  el('sh-inc-top-val',    sfcIncVal   || sfcCache.sfcIncVal  || 'SFC 每週五發布');
+  el('sh-dec-top-name',   sfcDecName  || sfcCache.sfcDecName || '數據待更新');
+  el('sh-dec-top-val',    sfcDecVal   || sfcCache.sfcDecVal  || 'SFC 每週五發布');
 
   const shortAvgStr = fmtPct(avg);
   ['tick-short','tick-short2'].forEach(id => {
