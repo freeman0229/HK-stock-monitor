@@ -59,10 +59,13 @@ def _new_session() -> requests.Session:
     return sess
 
 START_DATE            = date(2025, 3, 23)
-SLEEP_SEC             = 10.0
 SCHEMA_VERSION        = 2
-CIRCUIT_BREAKER_LIMIT = 20
-BLOCKED_COOLDOWN_SEC  = 300
+SLEEP_MIN = 3.5
+SLEEP_MAX = 6.5
+PRE_SLEEP_MIN = 1.0
+PRE_SLEEP_MAX = 2.5
+CIRCUIT_BREAKER_LIMIT = 8
+BLOCKED_COOLDOWN_SEC = 900
 
 # ── Code ranges ───────────────────────────────────────────────────────────────
 
@@ -463,49 +466,89 @@ def build(update_only: bool = False, specific_date: date = None,
         consec_errors = 0
         _dirty_ranges = set()
 
+        # ── Stealth session manager ───────────────────────────────
+
+def _rotate_session(sess):
+    try:
+        sess.close()
+    except:
+        pass
+    return _new_session()
+
+
         _shared_sess = _new_session()
+        last_rotate = 0
+
         log.info("  Session UA: %s", _shared_sess.headers["User-Agent"][:60])
 
         for ci, code in enumerate(todo, 1):
-            if deadline and time.monotonic() >= deadline:
-                log.info("  Time limit reached mid-date at stock [%d/%d] — saving progress",
-                         ci, len(todo))
-                timed_out = True
-                break
 
+    # ── TIME LIMIT ────────────────────────────────────────
+            if deadline and time.monotonic() >= deadline:
+            log.info("  Time limit reached mid-date at stock [%d/%d] — saving progress",
+                 ci, len(todo))
+            timed_out = True
+            break
+
+    # ── HUMAN-LIKE THINK TIME (before request) ────────────
+            time.sleep(random.uniform(1.0, 2.5))
+
+    # ── ROTATE SESSION (every 25–40 requests randomly) ───
+            if ci - last_rotate > random.randint(25, 40):
+            _shared_sess = _rotate_session(_shared_sess)
+            last_rotate = ci
+            log.info("  🔄 Rotated session at %d", ci)
+
+    # ── RANDOMISE USER AGENT PER REQUEST ─────────────────
+            _shared_sess.headers["User-Agent"] = random.choice(_USER_AGENTS)
+
+    # ── FETCH ────────────────────────────────────────────
             entry = fetch_stock(code, d, sess=_shared_sess)
 
             if entry:
-                rl = code_range(code)
-                range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
-                _dirty_ranges.add(rl)
-                fetched      += 1
-                consec_errors = 0
+            rl = code_range(code)
+            range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
+            _dirty_ranges.add(rl)
+            fetched += 1
+            consec_errors = 0
+
             else:
-                consec_errors += 1
-                if consec_errors >= CIRCUIT_BREAKER_LIMIT:
-                    log.error(
-                        "  Circuit breaker: %d consecutive errors — aborting date %s.",
-                        consec_errors, ds,
-                    )
-                    blocked = True
-                    break
-                if consec_errors % 3 == 0:
-                    backoff = min(30, 5 * (consec_errors // 3))
-                    log.warning("  %d consecutive errors — backing off %ds",
-                                consec_errors, backoff)
-                    time.sleep(backoff)
+            consec_errors += 1
 
-            time.sleep(SLEEP_SEC)
+        # ── EARLY WARNING BACKOFF ─────────────────────────
+            if consec_errors >= 5:
+            backoff = random.uniform(15, 40)
+            log.warning("  ⚠️ Early backoff (%d errors) — sleeping %.0fs",
+                        consec_errors, backoff)
+            time.sleep(backoff)
 
+        # ── CIRCUIT BREAKER ───────────────────────────────
+            if consec_errors >= 8:
+            log.error("  🚫 Circuit breaker: %d consecutive errors — likely blocked",
+                      consec_errors)
+            blocked = True
+            break
+
+    # ── BASE REQUEST DELAY (after request) ───────────────
+            time.sleep(random.uniform(3.5, 6.5))
+
+    # ── BURST PAUSE ──────────────────────────────────────
             if ci % 50 == 0:
-                for label in _dirty_ranges:
-                    if range_libs[label]["by_date"].get(ds):
-                        save_range(year, label, range_libs[label])
-                _dirty_ranges.clear()
-                log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
+            pause = random.uniform(20, 45)
+            log.info("  😴 Burst pause %.0fs at %d", pause, ci)
+            time.sleep(pause)
 
-        _shared_sess.close()
+            _shared_sess = _rotate_session(_shared_sess)
+            log.info("  🔄 Session refreshed after burst")
+
+            for label in _dirty_ranges:
+            if range_libs[label]["by_date"].get(ds):
+                save_range(year, label, range_libs[label])
+            _dirty_ranges.clear()
+
+            log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
+
+            _shared_sess.close()
 
         for label, lib in range_libs.items():
             if lib["by_date"].get(ds):
