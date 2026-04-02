@@ -2277,15 +2277,15 @@ function drawShortRiskMap(stocks) {
   }
   ctx.fillStyle='rgba(192,37,45,0.60)'; ctx.font='bold 10px sans-serif';
   ctx.textAlign='right'; ctx.textBaseline='top';
-  ctx.fillText('🔥 最高攪倉風險', PAD.left+cW-4, PAD.top+4);
+  ctx.fillText('🔥 最高擠壓風險', PAD.left+cW-4, PAD.top+4);
   if (!pts.length) {
     ctx.fillStyle='rgba(192,37,45,0.08)';
     ctx.beginPath(); ctx.roundRect(PAD.left+cW/2-180, PAD.top+cH/2-40, 360, 80, 8); ctx.fill();
     ctx.fillStyle='#c0252d'; ctx.font='bold 14px sans-serif';
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText('今日無攪倉風險股票', PAD.left+cW/2, PAD.top+cH/2-12);
+    ctx.fillText('今日無擠壓風險股票', PAD.left+cW/2, PAD.top+cH/2-12);
     ctx.fillStyle='#888'; ctx.font='12px sans-serif';
-    ctx.fillText('沿空比率及回補天數均未達到警戒水平', PAD.left+cW/2, PAD.top+cH/2+14);
+    ctx.fillText('沽空比率及回補天數均未達到警戒水平', PAD.left+cW/2, PAD.top+cH/2+14);
     return;
   }
   const SOLID  = { bluechip:'rgba(192,37,45,0.80)',  general:'rgba(37,99,235,0.75)',  stable:'rgba(22,163,74,0.75)',  etf:'rgba(184,134,11,0.72)' };
@@ -2327,11 +2327,11 @@ function drawShortRiskMap(stocks) {
     if (!hit || !TIP) { if (TIP) TIP.style.display='none'; return; }
     const {s, tier} = hit, excess = (s.short_ratio - shortHi(s)).toFixed(1);
     const badge = tier===1
-      ? '<span style="color:#c0252d;font-weight:500">🔥 活躍攪倉</span>'
-      : '<span style="color:#888">⚠️ 釞釀中</span>';
+      ? '<span style="color:#c0252d;font-weight:500">🔥 活躍擠壓</span>'
+      : '<span style="color:#888">⚠️ 醞釀中</span>';
     TIP.innerHTML = '<b>'+(s.name_chi||s.code)+' ('+s.code+')</b> '+badge+'<br>'
       +'DTC '+(s.days_to_cover||0).toFixed(1)+' 日 &nbsp; 成交量 '+(s.vol_ratio||0).toFixed(2)+'x<br>'
-      +'沿空比率 '+s.short_ratio.toFixed(1)+'% &nbsp; 均値 '+(s.short_avg||0).toFixed(1)+'% &nbsp; 超出上限 +'+excess+'pp';
+      +'沽空比率 '+s.short_ratio.toFixed(1)+'% &nbsp; 均值 '+(s.short_avg||0).toFixed(1)+'% &nbsp; 超出上限 +'+excess+'pp';
     TIP.style.left = Math.min(mx+12, W-220)+'px';
     TIP.style.top  = Math.max(my-72, 4)+'px';
     TIP.style.display = 'block';
