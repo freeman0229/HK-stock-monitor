@@ -1590,7 +1590,66 @@ async function loadSfcData() {
   return true;
 }
 
-// ── Load turnover_YYYY.json for a specific stock (lazy, cached by year) ───────
+// ── Compute 累積沽空 summary cards directly from sfcData ─────────────────────
+// This bypasses data.json so cards work even when main.py hasn't been re-run
+// with the latest sfc_YYYY.json. Called after loadSfcData() succeeds.
+function computeSfcCards() {
+  if (!sfcLoaded || !sfcDates.length) return;
+
+  const latestDs = sfcDates[sfcDates.length - 1];
+  const prevDs   = sfcDates.length >= 2 ? sfcDates[sfcDates.length - 2] : null;
+  const latest   = sfcData[latestDs] || {};
+  const prev     = prevDs ? (sfcData[prevDs] || {}) : {};
+
+  // Build flat array of {code, name, hkd, hkd_delta}, skip __total__
+  const entries = Object.entries(latest)
+    .filter(([c]) => c !== '__total__')
+    .map(([code, v]) => {
+      const prevHkd   = (prev[code] || {}).hkd || 0;
+      const hkd_delta = prevHkd > 0 ? v.hkd - prevHkd : 0;
+      // Match name from allStocks if available, fall back to SFC name field
+      const stock = allStocks.find(s => s.code === code || s.code === code.replace(/^0+/,'').padStart(5,'0'));
+      const name  = (stock && stock.name_chi) || v.name || code;
+      return { code, name, hkd: v.hkd || 0, hkd_delta };
+    })
+    .filter(e => e.hkd > 0);
+
+  if (!entries.length) return;
+
+  const topSfc = [...entries].sort((a,b) => b.hkd - a.hkd)[0];
+  const topInc = [...entries].filter(e => e.hkd_delta > 0).sort((a,b) => b.hkd_delta - a.hkd_delta)[0];
+  const topDec = [...entries].filter(e => e.hkd_delta < 0).sort((a,b) => a.hkd_delta - b.hkd_delta)[0];
+
+  const SFC_CACHE_KEY = 'hk_sfc_cards_v1';
+  let sfcCache = {};
+  try { sfcCache = JSON.parse(localStorage.getItem(SFC_CACHE_KEY) || '{}'); } catch(e) {}
+
+  const sfcTopName = topSfc ? topSfc.name : null;
+  const sfcTopVal  = topSfc ? fmtM(topSfc.hkd) : null;
+  const sfcIncName = topInc ? topInc.name : null;
+  const sfcIncVal  = topInc ? '+' + fmtM(topInc.hkd_delta) : null;
+  const sfcDecName = topDec ? topDec.name : null;
+  const sfcDecVal  = topDec ? fmtM(topDec.hkd_delta) : null;
+
+  if (sfcTopName) { sfcCache.sfcTopName = sfcTopName; sfcCache.sfcTopVal = sfcTopVal; }
+  if (sfcIncName) { sfcCache.sfcIncName = sfcIncName; sfcCache.sfcIncVal = sfcIncVal; }
+  if (sfcDecName) { sfcCache.sfcDecName = sfcDecName; sfcCache.sfcDecVal = sfcDecVal; }
+  if (sfcTopName || sfcIncName || sfcDecName) {
+    sfcCache.savedDate = latestDs;
+    try { localStorage.setItem(SFC_CACHE_KEY, JSON.stringify(sfcCache)); } catch(e) {}
+  }
+
+  const today      = new Date().toISOString().slice(0, 10);
+  const isStale    = latestDs < today;
+  const staleTag   = isStale ? ` <span style="font-size:10px;color:var(--muted)">(${latestDs.slice(5).replace('-','/')})</span>` : '';
+
+  elHtml('sh-sfc-top-name', (sfcTopName || sfcCache.sfcTopName || '數據待更新') + (sfcTopName ? staleTag : ''));
+  el('sh-sfc-top-val',      sfcTopVal  || sfcCache.sfcTopVal  || 'SFC 每週五發布');
+  elHtml('sh-inc-top-name', (sfcIncName || sfcCache.sfcIncName || '數據待更新') + (sfcIncName ? staleTag : ''));
+  el('sh-inc-top-val',      sfcIncVal  || sfcCache.sfcIncVal  || 'SFC 每週五發布');
+  elHtml('sh-dec-top-name', (sfcDecName || sfcCache.sfcDecName || '數據待更新') + (sfcDecName ? staleTag : ''));
+  el('sh-dec-top-val',      sfcDecVal  || sfcCache.sfcDecVal  || 'SFC 每週五發布');
+}
 async function loadTvYear(year) {
   if (tvCache[year]) return tvCache[year];
   try {
@@ -2085,6 +2144,8 @@ async function initSfcChart() {
 
   if (!ok) { document.getElementById('sfc-nodata').style.display = 'block'; return; }
 
+  computeSfcCards();  // populate summary cards directly from sfcData
+
   // Wire search input
   const inp = document.getElementById('sfc-search');
   inp.addEventListener('input',  () => sfcBuildDropdown(inp.value));
@@ -2157,46 +2218,27 @@ function renderShort() {
   const topDec  = [...sorted].filter(s => s.sfc_hkd_delta < 0)
                              .sort((a,b) => (a.sfc_hkd_delta||0) - (b.sfc_hkd_delta||0))[0];
 
-  const el    = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  const el     = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
   const elHtml = (id, v) => { const e = document.getElementById(id); if (e) e.innerHTML   = v; };
 
-  // SFC data is published every Friday — cache last known values so cards
-  // always show last week's data until fresh data arrives
+  el('sh-vol-top-name',   topVol   ? topVol.name_chi   : '--');
+  el('sh-vol-top-val',    topVol   ? fmtM(topVol.short_st) : '--');
+  el('sh-ratio-top-name', topRatio ? topRatio.name_chi : '--');
+  el('sh-ratio-top-val',  topRatio ? fmtPct(topRatio.short_ratio) : '--');
+
+  // SFC cards (累積沽空 TOP, 沽空增加最多, 空頭平倉最多) are driven by computeSfcCards()
+  // which reads directly from sfc_YYYY.json — only populate from cache here as initial state
   const SFC_CACHE_KEY = 'hk_sfc_cards_v1';
   let sfcCache = {};
   try { sfcCache = JSON.parse(localStorage.getItem(SFC_CACHE_KEY) || '{}'); } catch(e) {}
-
-  const sfcTopName = topSfc ? topSfc.name_chi : null;
-  const sfcTopVal  = topSfc ? fmtM(topSfc.sfc_hkd) : null;
-  const sfcIncName = topInc ? topInc.name_chi : null;
-  const sfcIncVal  = topInc ? '+' + fmtM(topInc.sfc_hkd_delta) : null;
-  const sfcDecName = topDec ? topDec.name_chi : null;
-  const sfcDecVal  = topDec ? fmtM(topDec.sfc_hkd_delta) : null;
-
-  // Save fresh values + the date they were captured
-  const today = new Date().toISOString().slice(0, 10);
-  if (sfcTopName || sfcIncName || sfcDecName) {
-    if (sfcTopName) { sfcCache.sfcTopName = sfcTopName; sfcCache.sfcTopVal = sfcTopVal; }
-    if (sfcIncName) { sfcCache.sfcIncName = sfcIncName; sfcCache.sfcIncVal = sfcIncVal; }
-    if (sfcDecName) { sfcCache.sfcDecName = sfcDecName; sfcCache.sfcDecVal = sfcDecVal; }
-    sfcCache.savedDate = today;
-    try { localStorage.setItem(SFC_CACHE_KEY, JSON.stringify(sfcCache)); } catch(e) {}
-  }
-
-  const usingCache = !sfcTopName && !!sfcCache.sfcTopName;
-  const staleTag   = usingCache
-    ? ` <span style="font-size:10px;color:var(--muted)">(上週)</span>` : '';
-
-  el('sh-vol-top-name',    topVol   ? topVol.name_chi   : '--');
-  el('sh-vol-top-val',     topVol   ? fmtM(topVol.short_st) : '--');
-  el('sh-ratio-top-name',  topRatio ? topRatio.name_chi : '--');
-  el('sh-ratio-top-val',   topRatio ? fmtPct(topRatio.short_ratio) : '--');
-  elHtml('sh-sfc-top-name', (sfcTopName || sfcCache.sfcTopName || '數據待更新') + staleTag);
-  el('sh-sfc-top-val',      sfcTopVal  || sfcCache.sfcTopVal  || 'SFC 每週五發布');
-  elHtml('sh-inc-top-name', (sfcIncName || sfcCache.sfcIncName || '數據待更新') + staleTag);
-  el('sh-inc-top-val',      sfcIncVal  || sfcCache.sfcIncVal  || 'SFC 每週五發布');
-  elHtml('sh-dec-top-name', (sfcDecName || sfcCache.sfcDecName || '數據待更新') + staleTag);
-  el('sh-dec-top-val',      sfcDecVal  || sfcCache.sfcDecVal  || 'SFC 每週五發布');
+  const usingCache = !!sfcCache.sfcTopName;
+  const staleTag   = usingCache ? ` <span style="font-size:10px;color:var(--muted)">(上週)</span>` : '';
+  elHtml('sh-sfc-top-name', sfcCache.sfcTopName || '數據待更新');
+  el('sh-sfc-top-val',      sfcCache.sfcTopVal  || 'SFC 每週五發布');
+  elHtml('sh-inc-top-name', (sfcCache.sfcIncName || '數據待更新') + (sfcCache.sfcIncName ? staleTag : ''));
+  el('sh-inc-top-val',      sfcCache.sfcIncVal  || 'SFC 每週五發布');
+  elHtml('sh-dec-top-name', (sfcCache.sfcDecName || '數據待更新') + (sfcCache.sfcDecName ? staleTag : ''));
+  el('sh-dec-top-val',      sfcCache.sfcDecVal  || 'SFC 每週五發布');
 
   const shortAvgStr = fmtPct(avg);
   ['tick-short','tick-short2'].forEach(id => {
