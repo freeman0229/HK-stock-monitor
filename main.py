@@ -609,6 +609,9 @@ def run_analysis():
                     # sfc_hist[0] = last Friday, sfc_hist[1..4] = prior Fridays
                     sfc_prev_pct    = sfc_hist[0].get("pct", 0.0) if sfc_hist else 0.0
                     sfc_week_delta  = round(sfc_pct - sfc_prev_pct, 4) if sfc_prev_pct > 0 else 0.0
+                    # HKD week-on-week delta — for 沽空增加最多 / 空頭平倉最多 cards
+                    sfc_prev_hkd    = sfc_hist[0].get("hkd", 0.0) if sfc_hist else 0.0
+                    sfc_hkd_delta   = round(sfc_hkd - sfc_prev_hkd, 0) if sfc_prev_hkd > 0 else 0.0
                     # 4-week rolling average (up to 4 prior Fridays)
                     prior_pcts      = [h.get("pct", 0.0) for h in sfc_hist[:4] if h.get("pct", 0.0) > 0]
                     sfc_avg4        = sum(prior_pcts) / len(prior_pcts) if prior_pcts else 0.0
@@ -617,6 +620,7 @@ def run_analysis():
                     sfc_map[code] = {
                         "sfc_sh":         sfc_sh,
                         "sfc_hkd":        sfc_hkd,
+                        "sfc_hkd_delta":  sfc_hkd_delta,
                         "sfc_pct":        sfc_pct,
                         "sfc_week_delta": sfc_week_delta,
                         "sfc_level_dev":  sfc_level_dev,
@@ -915,6 +919,7 @@ def run_analysis():
             "net_buy_ratio":  net_buy_ratio,
             "sfc_sh":         sfc_map.get(code, {}).get("sfc_sh",         0),
             "sfc_hkd":        sfc_map.get(code, {}).get("sfc_hkd",        0.0),
+            "sfc_hkd_delta":  sfc_map.get(code, {}).get("sfc_hkd_delta",  0.0),
             "sfc_pct":        sfc_map.get(code, {}).get("sfc_pct",        0.0),
             "sfc_week_delta": sfc_map.get(code, {}).get("sfc_week_delta", 0.0),
             "sfc_level_dev":  sfc_map.get(code, {}).get("sfc_level_dev",  0.0),
