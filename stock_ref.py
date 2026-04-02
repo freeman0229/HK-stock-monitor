@@ -75,7 +75,9 @@ STOCKS: dict[str, dict] = {
     "09888": {"en":"BAIDU-SW",              "zh":"百度集團",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "09999": {"en":"NETEASE-S",             "zh":"網易",              "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "03690": {"en":"MEITUAN-W",             "zh":"美團",              "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
-    "09626": {"en":"BILIBILI-SW",           "zh":"嗶哩嗶哩",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
+    "01024": {"en":"KUAISHOU-W",            "zh":"快手",              "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
+    "09961": {"en":"TRIP-SW",               "zh":"攜程集團",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
+    "09626": {"en":"BILIBILI-SW",           "zh":"嗶哩嗶哩",          "industry":"TEC","ind_zh":"科技",     "type":"general"},
     "00020": {"en":"SENSETIME-W",           "zh":"商湯科技",          "industry":"TEC","ind_zh":"科技",     "type":"general"},
     "02382": {"en":"SUNNY OPT.",            "zh":"舜宇光學科技",      "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "03750": {"en":"CATL",                  "zh":"寧德時代",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
@@ -126,19 +128,16 @@ STOCKS: dict[str, dict] = {
     # ── 醫療 ─────────────────────────────────────────────────────────────────
     "01177": {"en":"SINO BIOPHARM",         "zh":"中國生物製藥",      "industry":"HCR","ind_zh":"醫療",     "type":"general"},
     "01093": {"en":"CSPC PHARMA",           "zh":"石藥集團",          "industry":"HCR","ind_zh":"醫療",     "type":"general"},
-    "02269": {"en":"WUXI BIO",              "zh":"藥明生物",          "industry":"HCR","ind_zh":"醫療",     "type":"bluechip"},
-    "02359": {"en":"WUXI APPTEC",           "zh":"藥明康德",          "industry":"HCR","ind_zh":"醫療",     "type":"bluechip"},
-    "06160": {"en":"BEIGENE-SW",            "zh":"百濟神州",          "industry":"HCR","ind_zh":"醫療",     "type":"bluechip"},
+    "02269": {"en":"WUXI BIO",              "zh":"藥明生物",          "industry":"HCR","ind_zh":"醫療",     "type":"general"},
+    "02359": {"en":"WUXI APPTEC",           "zh":"藥明康德",          "industry":"HCR","ind_zh":"醫療",     "type":"general"},
+    "06160": {"en":"BEIGENE-SW",            "zh":"百濟神州",          "industry":"HCR","ind_zh":"醫療",     "type":"general"},
     "00013": {"en":"HUTCHMED",              "zh":"和黃醫藥",          "industry":"HCR","ind_zh":"醫療",     "type":"general"},
 
     # ── 工業 ─────────────────────────────────────────────────────────────────
     "06869": {"en":"YANGTZE OFC",             "zh":"長飛光纖光纜",       "industry":"IND","ind_zh":"工業",     "type":"general"},
     "00390": {"en":"CHINA RAILWAY",         "zh":"中國中鐵",          "industry":"IND","ind_zh":"工業",     "type":"stable"},
     "01186": {"en":"CR CONSTRUCTION",       "zh":"中國鐵建",          "industry":"IND","ind_zh":"工業",     "type":"stable"},
-    "00187": {"en":"JINGCHENG MAC",         "zh":"景成機械",          "industry":"IND","ind_zh":"工業",     "type":"general"},
-    "00038": {"en":"FIRST TRACTOR",         "zh":"中國一拖",          "industry":"IND","ind_zh":"工業",     "type":"general"},
     "06690": {"en":"HAIER SMART HOME",      "zh":"海爾智家",          "industry":"IND","ind_zh":"工業",     "type":"general"},
-    "00568": {"en":"SHANDONG MOLONG",       "zh":"山東墨龍",          "industry":"IND","ind_zh":"工業",     "type":"general"},
 
     # ── 金屬礦產 ─────────────────────────────────────────────────────────────
     "02899": {"en":"CHALCO",                  "zh":"中國鋁業",           "industry":"MET","ind_zh":"金屬礦產", "type":"general"},
@@ -152,6 +151,7 @@ STOCKS: dict[str, dict] = {
     "00144": {"en":"CM PORT",               "zh":"招商局港口",        "industry":"TRN","ind_zh":"運輸",     "type":"general"},
 
     # ── 零售消費 ─────────────────────────────────────────────────────────────
+    "02020": {"en":"ANTA SPORTS",            "zh":"安踏體育",          "industry":"RET","ind_zh":"零售消費", "type":"bluechip"},
     "02319": {"en":"MENGNIU",               "zh":"蒙牛乳業",          "industry":"RET","ind_zh":"零售消費", "type":"general"},
     "00151": {"en":"WANT WANT CHINA",       "zh":"旺旺中國",          "industry":"RET","ind_zh":"零售消費", "type":"general"},
     "00288": {"en":"WH GROUP",              "zh":"萬洲國際",          "industry":"RET","ind_zh":"零售消費", "type":"general"},
