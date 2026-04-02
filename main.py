@@ -636,7 +636,7 @@ def run_analysis():
                 "sb_buy":   s["buy"],
                 "sb_sell":  s["sell"],
                 "sb_net":   s["buy"] - s["sell"],
-                "sb_total": s.get("total", 0),
+                "sb_total": s.get("total", 0) or (s["buy"] + s["sell"]),
             }
         return m
 
