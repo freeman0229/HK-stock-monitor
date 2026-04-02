@@ -805,9 +805,10 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <tr>
           <th class="rank">#</th>
           <th>股票</th>
-          <th class="num-r" data-col="short_ratio">今日沽空%</th>
-          <th class="num-r mob-hide" data-col="sfc_pct">累積沽空%</th>
-          <th class="num-r mob-hide" data-col="short_avg">均值%</th>
+          <th class="num-r mob-hide" data-col="sfc_sh">累積沽空股數</th>
+          <th class="num-r mob-hide" data-col="sfc_pct">賣空比例</th>
+          <th class="num-r mob-hide" data-col="sfc_hkd">累積沽空金額</th>
+          <th class="num-r" data-col="short_ratio">日沽空%</th>
           <th class="num-r mob-hide" data-col="days_to_cover">回補天數</th>
           <th class="num-r mob-hide" data-col="turnover">成交額(萬)</th>
           <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔已發行股份合計%；超過鎖倉臨界點以紅色顯示">集中度%</th>
@@ -816,7 +817,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         </tr>
       </thead>
       <tbody id="body-short">
-        <tr><td colspan="10"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
+        <tr><td colspan="11"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
       </tbody>
     </table>
   </div>
@@ -2194,10 +2195,21 @@ function shortHi(s) { return (SHORT_THRESHOLDS[s.stock_type] || SHORT_THRESHOLDS
 function shortLo(s) { return (SHORT_THRESHOLDS[s.stock_type] || SHORT_THRESHOLDS.general).lo; }
 
 function renderShort() {
-  // Sort by SFC cumulative short position (sh) — falls back to daily short_ratio
-  const sorted = [...allStocks].sort((a,b) => {
-    const aSfc = (a.sfc_sh || 0), bSfc = (b.sfc_sh || 0);
-    if (bSfc !== aSfc) return bSfc - aSfc;
+  // Augment allStocks with SFC data directly from sfcData if available and data.json has zeros
+  const sfcLatestDs = sfcLoaded && sfcDates.length ? sfcDates[sfcDates.length - 1] : null;
+  const sfcLatest   = sfcLatestDs ? (sfcData[sfcLatestDs] || {}) : {};
+
+  const augmented = allStocks.map(s => {
+    if ((s.sfc_hkd || 0) > 0) return s;                         // data.json has it — use it
+    const rec = sfcLatest[s.code] || sfcLatest[s.code.replace(/^0+/,'').padStart(5,'0')] || {};
+    if (!rec.hkd) return s;
+    return { ...s, sfc_hkd: rec.hkd || 0, sfc_sh: rec.sh || 0 };
+  });
+
+  // Sort by Aggregated Reportable Short Positions (HK$) — falls back to short_ratio
+  const sorted = [...augmented].sort((a, b) => {
+    const aHkd = a.sfc_hkd || 0, bHkd = b.sfc_hkd || 0;
+    if (bHkd !== aHkd) return bHkd - aHkd;
     return b.short_ratio - a.short_ratio;
   });
   const avg = sorted.reduce((a,s) => a + s.short_ratio, 0) / sorted.length;
@@ -2249,15 +2261,16 @@ function renderShort() {
   drawShortRiskMap(sorted);
 
   // ── Table ─────────────────────────────────────────────────────────────────
-  const html = sorted.slice(0, 10).map((s,i) => {
+  const html = sorted.slice(0, 20).map((s,i) => {
     const diff      = s.short_ratio - s.short_avg;
     const diffClass = diff > 2 ? 'up-txt' : diff < -2 ? 'dn-txt' : '';
     const trend     = diff > 2 ? '📈 上升' : diff < -2 ? '📉 下降' : '→ 平穩';
     const dtc       = s.days_to_cover || 0;
     const dtcClass  = dtc > 5 ? 'up-txt' : dtc > 2 ? '' : 'na-txt';
     const dtcTxt    = dtc > 0 ? dtc.toFixed(1) + '日' : '—';
+    const sfcHkd    = s.sfc_hkd || 0;
+    const sfcSh     = s.sfc_sh  || 0;
     const sfcPct    = s.sfc_pct || 0;
-    const sfcPctTxt = sfcPct > 0 ? sfcPct.toFixed(2) + '%' : '—';
     const conc      = s.concentration || 0;
     const lockup    = s.lockup_threshold || 0;
     const concClass = (conc > 0 && lockup > 0 && conc >= lockup) ? 'up-txt' : '';
@@ -2265,9 +2278,10 @@ function renderShort() {
     return `<tr>
       <td class="rank">${i+1}</td>
       <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
+      <td class="num-r mob-hide">${sfcSh  > 0 ? sfcSh.toLocaleString('zh-HK') : '—'}</td>
+      <td class="num-r mob-hide">${sfcPct > 0 ? sfcPct.toFixed(2) + '%'       : '—'}</td>
+      <td class="num-r mob-hide">${sfcHkd > 0 ? fmtM(sfcHkd)                  : '—'}</td>
       <td class="num-r ${s.short_ratio > shortHi(s) ? 'up-txt' : ''}">${fmtPct(s.short_ratio)}</td>
-      <td class="num-r mob-hide">${sfcPctTxt}</td>
-      <td class="num-r mob-hide">${fmtPct(s.short_avg)}</td>
       <td class="num-r mob-hide ${dtcClass}">${dtcTxt}</td>
       <td class="num-r mob-hide">${fmtM(s.turnover)}</td>
       <td class="num-r mob-hide ${concClass}">${concTxt}</td>
