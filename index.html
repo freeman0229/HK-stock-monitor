@@ -674,13 +674,12 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th class="num-r mob-hide" data-col="sb_net">北水淨流入</th>
           <th class="num-r mob-hide" data-col="sb_buy">北水買入</th>
           <th class="num-r mob-hide" data-col="sb_sell">北水賣出</th>
-          <th class="num-r mob-hide" data-col="short_ratio">沽空%</th>
           <th class="num-r mob-hide" data-col="ccass_consec">連續日數</th>
           <th data-col="insight">信號</th>
         </tr>
       </thead>
       <tbody id="body-bshui">
-        <tr><td colspan="10"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
+        <tr><td colspan="9"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
       </tbody>
     </table>
   </div>
@@ -1246,7 +1245,7 @@ function drawSbChart(sorted) {
   const layout = getLayout();
   const ROW_H    = layout === 'portrait' ? 44 : layout === 'landscape' ? 32 : 36;
   const PAD_LEFT = layout === 'portrait' ? 110 : layout === 'landscape' ? 130 : 160;
-  const PAD_RIGHT= layout === 'portrait' ? 70  : layout === 'landscape' ? 80  : 100;
+  const PAD_RIGHT= layout === 'portrait' ? 4   : layout === 'landscape' ? 8   : 10;
   const PAD_TOP  = 12, PAD_BOT = 24;
 
   const stocks = sorted;
@@ -1378,54 +1377,6 @@ function drawSbChart(sorted) {
     // (value labels removed — shown on hover tooltip instead)
   });
 
-  // ── Short ratio line chart overlay ──────────────────────────────────────────
-  // Draw a line connecting each stock's short_ratio across all rows.
-  // Plotted in the right margin (PAD_RIGHT area): 0% at left edge, maxSr at right.
-  const srValues = stocks.map(s => s.short_ratio || 0);
-  const maxSr = Math.max(...srValues, 1);
-  // Place SR line chart in the gap between bar right edge and the text labels.
-  // The text labels start at labelX = W - PAD_RIGHT + 8.
-  // Use the 30px wide area just to the left of the right padding.
-  const srAreaLeft  = W - PAD_RIGHT - 34;
-  const srAreaWidth = 28;
-
-  // Draw axis line (left edge of sr area)
-  ctx.strokeStyle = 'rgba(150,150,150,0.25)';
-  ctx.lineWidth = 0.5;
-  ctx.beginPath();
-  ctx.moveTo(srAreaLeft, PAD_TOP);
-  ctx.lineTo(srAreaLeft, H - PAD_BOT);
-  ctx.stroke();
-
-  // Draw line connecting dots
-  ctx.save();
-  ctx.strokeStyle = 'rgba(180,100,20,0.7)';
-  ctx.lineWidth = 1.5;
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  stocks.forEach((s, i) => {
-    const cy = PAD_TOP + i * ROW_H + ROW_H / 2;
-    const sr  = s.short_ratio || 0;
-    const x   = srAreaLeft + (sr / maxSr) * srAreaWidth;
-    if (i === 0) ctx.moveTo(x, cy);
-    else ctx.lineTo(x, cy);
-  });
-  ctx.stroke();
-
-  // Draw dots
-  stocks.forEach((s, i) => {
-    const cy = PAD_TOP + i * ROW_H + ROW_H / 2;
-    const sr  = s.short_ratio || 0;
-    const x   = srAreaLeft + (sr / maxSr) * srAreaWidth;
-    const col = sr > shortHi(s) ? '#c0252d'
-              : sr > shortLo(s) ? '#b87010' : 'rgba(150,150,150,0.6)';
-    ctx.beginPath();
-    ctx.arc(x, cy, 3, 0, Math.PI * 2);
-    ctx.fillStyle = col;
-    ctx.fill();
-  });
-  ctx.restore();
-
   // x-axis labels
   ctx.textAlign = 'center'; ctx.fillStyle = '#aaa'; ctx.font = '11px sans-serif'; ctx.textBaseline = 'alphabetic';
   const maxM = fmtM(maxAbs);
@@ -1433,13 +1384,6 @@ function drawSbChart(sorted) {
   ctx.fillText(maxM, zeroX + chartW/2 * 0.92, H - 6);
   ctx.fillText('-'+maxM, zeroX - chartW/2 * 0.92, H - 6);
 
-  // Short ratio legend label at bottom of sr area
-  if (layout !== 'portrait') {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(180,100,20,0.7)';
-    ctx.font = '9px sans-serif';
-    ctx.fillText('沽空%', srAreaLeft + srAreaWidth / 2, H - 6);
-  }
 }
 
 function renderBshui() {
@@ -1462,7 +1406,7 @@ function renderBshui() {
     document.getElementById('sb-consec').textContent = '';
     document.getElementById('sb-consec-name').textContent = '';
     document.getElementById('body-bshui').innerHTML =
-      '<tr><td colspan="10"><div class="loading-box" style="padding:30px">📡 北水數據尚未發布，通常於每交易日 20:00 HKT 後更新</div></td></tr>';
+      '<tr><td colspan="9"><div class="loading-box" style="padding:30px">📡 北水數據尚未發布，通常於每交易日 20:00 HKT 後更新</div></td></tr>';
     // Keep last cached chart visible if available
     if (lastChartData.length) setTimeout(() => drawSbChart(lastChartData), 50);
     return;
@@ -1568,12 +1512,11 @@ function renderBshui() {
       <td class="num-r mob-hide ${netClass}">${s.sb_buy > 0 || s.sb_sell > 0 ? sign(s.sb_net)+fmtM(s.sb_net) : '<span class="na-txt">—</span>'}</td>
       <td class="num-r mob-hide">${s.sb_buy ? fmtM(s.sb_buy) : '<span class="na-txt">—</span>'}</td>
       <td class="num-r mob-hide">${s.sb_sell ? fmtM(s.sb_sell) : '<span class="na-txt">—</span>'}</td>
-      <td class="num-r mob-hide ${s.short_ratio > shortHi(s) ? 'up-txt' : ''}">${s.short_ratio > 0 ? fmtPct(s.short_ratio) : '<span class="na-txt">—</span>'}</td>
       <td class="num-r mob-hide ${s.ccass_consec>0?'up-txt':s.ccass_consec<0?'dn-txt':''}">${fmtConsec(s)}</td>
       <td>${insightBadge(s.insight)}</td>
     </tr>`;
   }).join('');
-  document.getElementById('body-bshui').innerHTML = html || '<tr><td colspan="10" class="loading-box">無北水數據</td></tr>';
+  document.getElementById('body-bshui').innerHTML = html || '<tr><td colspan="9" class="loading-box">無北水數據</td></tr>';
 
   // Update ticker
   const sbNet = display.reduce((a,s) => a+s.sb_net, 0);
@@ -3259,9 +3202,6 @@ function renderCaiTable() {
     const net = s.sb_net || 0;
     const netStr = net === 0 ? '±0' : (net > 0 ? '+' : '') + fmtM(net);
     const netCol = net > 0 ? '#c0252d' : net < 0 ? '#1a7a3c' : '#888';
-    const srStr  = s.short_ratio > 0 ? s.short_ratio.toFixed(1) + '%' : '—';
-    const srCol  = s.short_ratio > shortHi(s) ? '#c0252d'
-                 : s.short_ratio > shortLo(s) ? '#b87010' : 'var(--muted)';
     const consec = s.sb_consec || 0;
     const consecStr = consec === 0 ? '' :
       consec > 0
@@ -3270,10 +3210,9 @@ function renderCaiTable() {
     TIP.innerHTML =
       `<b>${s.name_chi}</b> <span style="color:#888">${s.code}</span><br>` +
       `北水淨流入 <span style="color:${netCol};font-weight:600">${netStr}</span>` +
-      (consecStr ? `  ${consecStr}` : '') + `<br>` +
-      `沽空比率 <span style="color:${srCol};font-weight:600">${srStr}</span>`;
+      (consecStr ? `  ${consecStr}` : '');
     TIP.style.display = 'block';
-    const tipW = 200, tipH = 80;
+    const tipW = 200, tipH = 60;
     const tx = Math.min(e.clientX + 14, window.innerWidth  - tipW - 8);
     const ty = Math.min(e.clientY + 14, window.innerHeight - tipH - 8);
     TIP.style.left = tx + 'px';
