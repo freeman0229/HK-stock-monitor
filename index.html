@@ -2848,15 +2848,28 @@ function renderSdwPanel() {
   }
 
   const nameMap  = {};
-  allStocks.forEach(s => { nameMap[s.code] = s.name_chi; });
-  const name     = nameMap[sdwCurCode] || sdwCurCode;
-  const prevNote = prevDs ? `上期：${prevDs}` : '無上期數據';
+  allStocks.forEach(s => {
+    nameMap[s.code] = s.name_chi;
+    nameMap[s.code.padStart(5,'0')] = s.name_chi;  // also index by 5-digit padded
+  });
+  const name     = nameMap[sdwCurCode] || nameMap[sdwCurCode.replace(/^0+/,'')] || '';
+  const nameStr  = name ? `${sdwCurCode} ${name}` : sdwCurCode;
 
-  document.getElementById('sdw-chart-title').textContent = `${sdwCurCode} ${name} — 持倉集中度趨勢`;
+  // Show prev date with week gap if large
+  let prevNote = '無上期數據';
+  if (prevDs) {
+    const daysDiff = Math.round((new Date(ds) - new Date(prevDs)) / 86400000);
+    const weekGap  = Math.round(daysDiff / 7);
+    prevNote = weekGap <= 2
+      ? `上期：${prevDs}`
+      : `上期：${prevDs}（相隔 ${weekGap} 週）`;
+  }
+
+  document.getElementById('sdw-chart-title').textContent = `${nameStr} — 持倉集中度趨勢`;
   document.getElementById('sdw-chart-sub').textContent   = `前10大機構合計持股% ｜ 資料截至 ${ds}`;
-  document.getElementById('sdw-tbl-title').textContent   = `${sdwCurCode} ${name} — 持倉明細`;
-  document.getElementById('sdw-tbl-sub').textContent     = `${ds} 共 ${holders.length} 個機構 ｜ ${prevNote}`;
-  document.getElementById('sdw-detail-title').textContent = `${sdwCurCode} ${name} — 持倉明細`;
+  document.getElementById('sdw-tbl-title').textContent   = `前5大持倉人明細（${ds}）`;
+  document.getElementById('sdw-tbl-sub').textContent     = `${nameStr} ｜ 共 ${holders.length} 個機構 ｜ ${prevNote}`;
+  document.getElementById('sdw-detail-title').textContent = nameStr;
   document.getElementById('sdw-detail-sub').textContent   = `資料日期：${ds}`;
 
   // ── Table ────────────────────────────────────────────────────────────────
