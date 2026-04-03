@@ -885,23 +885,19 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div id="sdw-group-bars"></div>
     </div>
 
-    <!-- Detail section -->
-    <div id="sdw-detail-sec" style="display:none">
-      <div style="display:flex;align-items:baseline;gap:8px;margin:14px 0 4px;flex-wrap:wrap">
-        <span id="sdw-detail-title" style="font-size:13px;font-weight:600;color:var(--text)"></span>
-        <span id="sdw-detail-sub" style="font-size:11px;color:var(--muted)"></span>
-      </div>
-    </div>
-    <!-- sdw chart -->
+    <!-- Group history chart (持倉比例趨勢 — FIRST) -->
     <div style="display:flex;align-items:baseline;gap:8px;margin:14px 0 4px">
-      <span id="sdw-chart-title" style="font-size:12px;font-weight:500;color:var(--muted)">持倉集中度趨勢</span>
+      <span style="font-size:12px;font-weight:500;color:var(--muted)">持倉比例趨勢（週度）</span>
+    </div>
+    <canvas id="sdwGroupCanvas" style="width:100%;display:block"></canvas>
+    <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);justify-content:center"></div>
+
+    <!-- sdw concentration chart (持倉集中度趨勢 — SECOND) -->
+    <div style="display:flex;align-items:baseline;gap:8px;margin:18px 0 4px;flex-wrap:wrap">
+      <span style="font-size:12px;font-weight:500;color:var(--muted)">持倉集中度趨勢</span>
       <span id="sdw-chart-sub" style="font-size:11px;color:var(--muted)"></span>
     </div>
     <canvas id="sdwCanvas" style="width:100%;display:block;margin-bottom:12px"></canvas>
-    <!-- Group history chart -->
-    <div style="font-size:12px;font-weight:500;color:var(--muted);margin:0 0 4px">持倉比例趨勢（週度）</div>
-    <canvas id="sdwGroupCanvas" style="width:100%;display:block"></canvas>
-    <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);justify-content:center"></div>
 
     <!-- Top-5 table -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin:16px 0 7px">
@@ -2887,12 +2883,9 @@ function renderSdwPanel() {
       : `上期：${prevDs}（相隔 ${weekGap} 週）`;
   }
 
-  document.getElementById('sdw-chart-title').textContent = `${nameStr} — 持倉集中度趨勢`;
-  document.getElementById('sdw-chart-sub').textContent   = `前10大機構合計持股% ｜ 資料截至 ${ds}`;
+  document.getElementById('sdw-chart-sub').textContent   = `${nameStr} 前5大機構合計持股% ｜ 資料截至 ${ds}`;
   document.getElementById('sdw-top5-label').textContent  = '持倉人明細';
   document.getElementById('sdw-tbl-sub').textContent     = `${nameStr}（${ds}）｜ 共 ${holders.length} 個機構 ｜ ${prevNote}`;
-  document.getElementById('sdw-detail-title').textContent = nameStr;
-  document.getElementById('sdw-detail-sub').textContent   = `資料日期：${ds}`;
 
   // ── Table ────────────────────────────────────────────────────────────────
   const rows = holders.slice(0, topN).map((h, i) => {
@@ -3092,9 +3085,6 @@ function drawSdwChart(code, selectedDs) {
 
 // ── 持倉明細 detail card renderer ─────────────────────────────────────────────
 function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders) {
-  const sec = document.getElementById('sdw-detail-sec');
-  if (!sec) return;
-  sec.style.display = holders.length ? 'block' : 'none';
   if (!holders.length) return;
 
   // Stock metrics from allStocks
