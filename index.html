@@ -1748,9 +1748,7 @@ function sfcSetRange(r) {
 function sfcBuildDropdown(query) {
   const dd = document.getElementById('sfc-dropdown');
   const q  = query.trim().toLowerCase();
-
-  // Require at least 1 character to avoid dumping 2000+ stocks
-  if (!q) { dd.style.display = 'none'; return; }
+  if (!q) { dd.style.display = 'none'; return; }  // require ≥1 char
 
   // Use SFC dataset when available; fall back to allStocks
   let sfcCodes;
@@ -1761,47 +1759,38 @@ function sfcBuildDropdown(query) {
     });
     sfcCodes = [...sfcCodeSet].sort();
   } else {
-    // No SFC files loaded yet — use the daily allStocks list as fallback
     sfcCodes = allStocks.map(s => s.code.padStart(5, '0'));
   }
 
-  // Build a name lookup from allStocks (codes are 5-digit)
   const nameMap = {};
-  allStocks.forEach(s => {
-    nameMap[s.code.padStart(5, '0')] = { chi: s.name_chi, eng: s.name || '' };
-  });
+  allStocks.forEach(s => { nameMap[s.code.padStart(5,'0')] = { chi: s.name_chi, eng: s.name || '' }; });
 
-  const latestDs = sfcDates[sfcDates.length - 1] || '';
-
-  const matches = sfcCodes.filter(code => {
+  const latestDs = sfcDates[sfcDates.length-1] || '';
+  const matches  = sfcCodes.filter(code => {
     const info = nameMap[code] || {};
-    return code.includes(q)
-      || (info.chi || '').includes(q)
-      || (info.eng || '').toLowerCase().includes(q);
+    return code.includes(q) || (info.chi||'').includes(q) || (info.eng||'').toLowerCase().includes(q);
   });
 
   if (!matches.length) { dd.style.display = 'none'; return; }
-
   dd.style.maxHeight = '280px'; dd.style.overflowY = 'auto';
   dd.innerHTML = matches.slice(0, 50).map(code => {
     const info = nameMap[code] || {};
-    const rec  = (sfcData[latestDs] || {})[code] || {};
-    const sub  = rec.hkd ? `HKD ${(rec.hkd / 1e8).toFixed(1)}億` : '';
+    const rec  = (sfcData[latestDs]||{})[code] || {};
+    const sub  = rec.hkd ? `HKD ${(rec.hkd/1e8).toFixed(1)}億` : '';
     return `<div class="sdw-dd-item" data-code="${code}">
       <span class="dd-code">${code}</span>
       <span class="dd-name">${info.chi || rec.name || code}</span>
       <span class="dd-sub">${sub}</span>
     </div>`;
   }).join('');
-
   dd.querySelectorAll('.sdw-dd-item').forEach(item => {
     item.addEventListener('mousedown', e => {
       e.preventDefault();
       sfcCurCode = item.dataset.code;
-      const match = allStocks.find(s => s.code.padStart(5, '0') === item.dataset.code);
-      document.getElementById('sfc-search').value =
-        `${item.dataset.code}  ${match ? match.name_chi : ''}`;
+      const match = allStocks.find(s => s.code.padStart(5,'0') === item.dataset.code);
+      document.getElementById('sfc-search').value = `${item.dataset.code}  ${match ? match.name_chi : ''}`;
       dd.style.display = 'none';
+      sfcSetMode('stock');
       drawSfcChart();
     });
   });
@@ -1809,47 +1798,55 @@ function sfcBuildDropdown(query) {
 }
 
 // ── Main chart draw ───────────────────────────────────────────────────────────
+// Draw-lock prevents concurrent calls from clearing each other's canvas
+let _sfcDrawing = false;
 async function drawSfcChart() {
-  const wrap   = document.getElementById('sfc-chart-wrap');
-  const canvas = document.getElementById('sfcCanvas');
-  wrap.style.display = 'block';
-  await new Promise(r => requestAnimationFrame(r));
-  const W = (wrap.clientWidth || 680);
-  const H = Math.max(260, Math.min(380, W * 0.45));
-  canvas.width  = W;
-  canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, W, H);
-
-  // No SFC data — draw instructional message and stop
-  if (!sfcLoaded || !sfcDates.length) {
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#bbb'; ctx.font = '14px sans-serif';
-    ctx.fillText('⚠️ 找不到 SFC 數據檔案', W / 2, H / 2 - 16);
-    ctx.fillStyle = '#ccc'; ctx.font = '12px sans-serif';
-    ctx.fillText('請先執行 python sfc_library.py 並部署 sfc_YYYY.json', W / 2, H / 2 + 14);
-    return;
-  }
-
-  const dates = sfcFilterDates();
-  if (!dates.length) return;
-
-  if (sfcMode === 'total') {
-    _sfcDrawTotal(ctx, W, H, dates, canvas);
-  } else {
-    // Individual stock — needs async price load
-    if (!sfcCurCode) {
-      ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
-      ctx.textAlign = 'center'; ctx.fillText('請選擇股票', W/2, H/2);
+  if (_sfcDrawing) return;
+  _sfcDrawing = true;
+  try {
+    const wrap   = document.getElementById('sfc-chart-wrap');
+    const canvas = document.getElementById('sfcCanvas');
+    wrap.style.display = 'block';
+    // Defer measurement to next frame so wrap has a real clientWidth after display:block
+    await new Promise(r => requestAnimationFrame(r));
+    const W = (wrap.clientWidth || 680);
+    const H = Math.max(260, Math.min(380, W * 0.45));
+    canvas.width  = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    // No SFC data — draw instructional message
+    if (!sfcLoaded || !sfcDates.length) {
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#bbb'; ctx.font = '14px sans-serif';
+      ctx.fillText('⚠️ 找不到 SFC 數據檔案', W / 2, H / 2 - 16);
+      ctx.fillStyle = '#ccc'; ctx.font = '12px sans-serif';
+      ctx.fillText('請先執行 python sfc_library.py 並部署 sfc_YYYY.json', W / 2, H / 2 + 14);
       return;
     }
-    // Show loading text while fetching price data
-    ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
-    ctx.textAlign = 'center'; ctx.fillText('載入價格數據…', W/2, H/2);
-    const priceMap = await buildStockPriceSeries(sfcCurCode, dates);
-    canvas.width = W; canvas.height = H;
-    ctx.clearRect(0, 0, W, H);
-    _sfcDrawStock(ctx, W, H, dates, sfcCurCode, priceMap);
+    const dates = sfcFilterDates();
+    if (!dates.length) return;
+    if (sfcMode === 'total') {
+      _sfcDrawTotal(ctx, W, H, dates, canvas);
+    } else {
+      // Individual stock — needs async price load
+      if (!sfcCurCode) {
+        ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('請選擇股票', W/2, H/2);
+        return;
+      }
+      // Show loading text while fetching price data
+      ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('載入價格數據…', W/2, H/2);
+      const priceMap = await buildStockPriceSeries(sfcCurCode, dates);
+      canvas.width = W; canvas.height = H;
+      ctx.clearRect(0, 0, W, H);
+      _sfcDrawStock(ctx, W, H, dates, sfcCurCode, priceMap);
+    }
+  } finally {
+    _sfcDrawing = false;
   }
 }
 
@@ -2162,7 +2159,7 @@ function _sfcWireTip(canvas, pts, xFn, yFn, stepW, labelFn) {
 // ── Init (called when short tab is clicked) ────────────────────────────────────
 async function initSfcChart() {
   if (sfcInited && sfcLoaded) {
-    // Data already attempted — ensure correct div visibility and draw
+    // Data already attempted — ensure correct div visibility then draw
     document.getElementById('sfc-loading').style.display    = 'none';
     document.getElementById('sfc-nodata').style.display     = 'none';
     document.getElementById('sfc-chart-wrap').style.display = 'block';
@@ -2175,12 +2172,12 @@ async function initSfcChart() {
   document.getElementById('sfc-nodata').style.display     = 'none';
 
   const ok = await loadSfcData();
-  sfcLoaded = true;  // mark attempted regardless of outcome
-  document.getElementById('sfc-loading').style.display = 'none';
+  sfcLoaded = true;
+  document.getElementById('sfc-loading').style.display    = 'none';
   document.getElementById('sfc-chart-wrap').style.display = 'block';
 
   if (!ok) {
-    // No SFC files — draw canvas message, update table message
+    // No SFC files — show canvas message and correct table state
     drawSfcChart();
     sfcInited = true;
     if (allStocks.length) renderShort();
@@ -2220,9 +2217,10 @@ async function initSfcChart() {
 
     const onDateChange = () => {
       const f = fromEl.value, t = toEl.value;
-      if (!f || !t || f > t) return;
+      if (!f || !t || f > t) return;   // invalid range — wait for both
       sfcCustomFrom = f;
       sfcCustomTo   = t;
+      // Deactivate all pills — user is in custom mode
       document.querySelectorAll('.sfc-pill').forEach(b => b.classList.remove('active'));
       drawSfcChart();
     };
@@ -2312,8 +2310,8 @@ function renderShort() {
   drawShortRiskMap(sorted);
 
   // ── Table ─────────────────────────────────────────────────────────────────
-  // Always show top 20 stocks. When SFC data is available, sorted by sfc_hkd desc.
-  // When SFC data is absent (all sfc_hkd=0), sorted by short_ratio — SFC columns show "—".
+  // Always show top 20. When SFC data available: sorted by sfc_hkd desc.
+  // When absent: sorted by short_ratio — SFC columns show "—".
   const display = sorted.slice(0, 20);
   if (!display.length) {
     document.getElementById('body-short').innerHTML =
@@ -3451,17 +3449,19 @@ setInterval(updateTicker, 3600000);
 document.getElementById('hdr-time').textContent = new Date().toLocaleString('zh-HK');
 if (lastChartData.length) setTimeout(() => drawSbChart(lastChartData), 100);
 loadData();
+// Re-fetch data.json every 5 minutes
+setInterval(loadData, 5 * 60 * 1000);
 
-// Eagerly load SFC data at boot — populates table + chart without tab click.
+// Eagerly load SFC data at boot so table and chart work without requiring a tab click.
 (async () => {
   const ok = await loadSfcData();
-  sfcLoaded = true;   // mark attempted regardless of outcome
+  sfcLoaded = true;   // mark attempted regardless of success
   sfcInited = true;   // prevent initSfcChart() from redundantly re-fetching
 
-  // Re-render table with correct state now that SFC load is settled
+  // Re-render table now that SFC state is settled (allStocks may already be loaded)
   if (allStocks.length) renderShort();
 
-  // If 累積沽空 tab is already active, update the chart area
+  // If 累積沽空 tab is already active, show and draw the chart
   const shortBtn  = document.querySelector('.tab-btn[data-tab="short"]');
   const tabActive = shortBtn && shortBtn.classList.contains('active');
   if (tabActive) {
@@ -3471,15 +3471,13 @@ loadData();
     drawSfcChart();
   }
 
-  if (ok) computeSfcCards();
+  if (ok) computeSfcCards();   // populate summary cards from sfcData
 })();
-// Re-fetch data.json every 5 minutes — picks up new data.json without page reload
-setInterval(loadData, 5 * 60 * 1000);
 window.addEventListener('resize', () => {
   setTimeout(() => {
     if (document.querySelector('.tab-btn[data-tab="cai"]').classList.contains('active')) drawCai();
     if (document.querySelector('.tab-btn[data-tab="bshui"]').classList.contains('active')) renderBshui();
-    if (document.querySelector('.tab-btn[data-tab="short"]').classList.contains('active')) drawShortRiskMap(allStocks);
+    if (document.querySelector('.tab-btn[data-tab="short"]').classList.contains('active')) { drawShortRiskMap(allStocks); drawSfcChart(); }
     if (document.querySelector('.tab-btn[data-tab="ccass"]').classList.contains('active')) renderSdwPanel();
   }, 200);
 });
