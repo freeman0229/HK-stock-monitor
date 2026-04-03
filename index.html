@@ -720,8 +720,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
   <!-- ── Risk map ── -->
   <div class="sec-head" style="margin-top:4px">
-    <div class="sec-title">沽空風險圖 <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">泡泡大小 = 沽空比率%</span></div>
-    <div class="sec-sub">X軸：回補天數 DTC（日）｜ Y軸：成交量倍數 ｜ 泡泡大小：沽空比率% ｜ 實心 = 活躍擠壓 ｜ 虛線 = 醞釀中</div>
+    <div class="sec-title">沽空風險圖 <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">泡泡大小 = 沽空比率</span></div>
+    <div class="sec-sub">X軸：回補天數 DTC（日）｜ Y軸：成交量倍數 ｜ 泡泡大小：沽空比率 ｜ 實心 = 活躍擠壓 ｜ 虛線 = 醞釀中</div>
   </div>
   <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:12px 12px 8px;margin-bottom:16px;position:relative;">
     <canvas id="shortRiskCanvas" style="cursor:crosshair;display:block;width:100%"></canvas>
@@ -731,7 +731,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(22,163,74,0.75)"></span>穩健</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(184,134,11,0.72)"></span>ETF</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(37,99,235,0.11);border:1.5px dashed rgba(37,99,235,0.5);box-sizing:border-box"></span>醞釀中</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:16px;height:8px;border-radius:2px;background:rgba(150,150,150,0.25)"></span>大小 = 沽空比率%</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:16px;height:8px;border-radius:2px;background:rgba(150,150,150,0.25)"></span>大小 = 沽空比率</span>
     </div>
     <div id="short-risk-tip" style="display:none;position:absolute;background:#fff;border:0.5px solid #ddd;border-radius:8px;padding:8px 12px;font-size:12px;pointer-events:none;line-height:1.6;color:#1a1a1a;z-index:200;box-shadow:0 2px 8px rgba(0,0,0,0.08);white-space:nowrap"></div>
   </div>
@@ -739,7 +739,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <!-- ── SFC 累積沽空持倉趨勢 ── -->
   <div class="sec-head" style="margin-top:4px">
     <div class="sec-title">累積沽空持倉趨勢</div>
-    <div class="sec-sub" id="sfc-sub">數據來源：SFC 證監會 ｜ 每週五申報 ｜ 申報門檻：持股量 0.02% 或以上</div>
+    <div class="sec-sub" id="sfc-sub">數據來源：SFC 證監會 ｜ 每週五申報</div>
   </div>
   <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:14px 14px 10px;margin-bottom:16px;">
 
@@ -807,11 +807,11 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th>股票</th>
           <th class="num-r" data-col="sfc_sh">累積沽空股數</th>
           <th class="num-r" data-col="sfc_hkd">累積沽空金額</th>
-          <th class="num-r" data-col="short_ratio">日沽空%</th>
+          <th class="num-r" data-col="short_ratio">日沽空</th>
           <th class="num-r mob-hide" data-col="days_to_cover">回補天數</th>
           <th class="num-r mob-hide" data-col="sfc_pct">賣空比例</th>
           <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔已發行股份合計%；超過鎖倉臨界點以紅色顯示">持倉集中度</th>
-          <th class="num-r mob-hide" data-col="turnover">成交額(萬)</th>
+          <th class="num-r mob-hide" data-col="turnover">成交金額</th>
           <th>沽空趨勢</th>
           <th data-col="insight">信號</th>
         </tr>
