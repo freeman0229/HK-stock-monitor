@@ -1573,7 +1573,7 @@ async function loadSfcData() {
   const curYear = new Date().getFullYear();
   const merged  = {};
   let   fetched = 0;
-  for (let y = 2025; y <= curYear; y++) {
+  for (let y = 2018; y <= curYear; y++) {
     try {
       const r = await fetch(`sfc_${y}.json`, { cache: 'no-cache' });
       if (!r.ok) continue;
@@ -3408,6 +3408,27 @@ document.getElementById('hdr-time').textContent = new Date().toLocaleString('zh-
 // Draw chart from cache immediately if available
 if (lastChartData.length) setTimeout(() => drawSbChart(lastChartData), 100);
 loadData();
+
+// Eagerly load SFC data at boot — don't wait for the tab click.
+// This ensures the 累積沽空排行 table and summary cards are populated
+// on first render (renderShort / computeSfcCards both need sfcLoaded=true).
+(async () => {
+  const ok = await loadSfcData();
+  if (ok) {
+    sfcInited = true;       // skip redundant reload when tab is clicked later
+    computeSfcCards();      // populate summary cards + re-render table
+    // If the short tab is already active when the page first opens, draw the chart too
+    const shortBtn = document.querySelector('.tab-btn[data-tab="short"]');
+    if (shortBtn && shortBtn.classList.contains('active')) drawSfcChart();
+  } else {
+    // Files missing — show the no-data message if the tab is currently active
+    const shortBtn = document.querySelector('.tab-btn[data-tab="short"]');
+    if (shortBtn && shortBtn.classList.contains('active')) {
+      document.getElementById('sfc-loading').style.display = 'none';
+      document.getElementById('sfc-nodata').style.display  = 'block';
+    }
+  }
+})();
 // Re-fetch data.json every 5 minutes — picks up new data.json without page reload
 setInterval(loadData, 5 * 60 * 1000);
 window.addEventListener('resize', () => {
