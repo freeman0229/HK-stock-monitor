@@ -786,6 +786,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     </div>
     <div id="sfc-chart-wrap" style="display:none">
       <canvas id="sfcCanvas"></canvas>
+      <div id="sfc-sub-wrap" style="display:none;border-top:1px solid #f0ede8;margin-top:3px;">
+        <canvas id="sfcSubCanvas"></canvas>
+      </div>
       <div id="sfc-legend" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:11px;color:var(--muted)"></div>
     </div>
 
@@ -1826,15 +1829,21 @@ async function drawSfcChart() {
   if (_sfcDrawing) return;
   _sfcDrawing = true;
   try {
-    const wrap   = document.getElementById('sfc-chart-wrap');
-    const canvas = document.getElementById('sfcCanvas');
+    const wrap      = document.getElementById('sfc-chart-wrap');
+    const canvas    = document.getElementById('sfcCanvas');
+    const subCanvas = document.getElementById('sfcSubCanvas');
+    const subWrap   = document.getElementById('sfc-sub-wrap');
     wrap.style.display = 'block';
-    // Defer measurement to next frame so wrap has a real clientWidth after display:block
     await new Promise(r => requestAnimationFrame(r));
-    const W = (wrap.clientWidth || 680);
-    const H = Math.max(260, Math.min(380, W * 0.45));
+    const W    = (wrap.clientWidth || 680);
+    const H    = Math.max(260, Math.min(380, W * 0.45));
+    const H_sub = 85;
     canvas.width  = W;
     canvas.height = H;
+    const inStockMode = sfcMode === 'stock' && sfcCurCode;
+    subWrap.style.display   = inStockMode ? 'block' : 'none';
+    subCanvas.width  = W;
+    subCanvas.height = H_sub;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, W, H);
     // No SFC data — draw instructional message
@@ -1858,7 +1867,7 @@ async function drawSfcChart() {
         ctx.fillText('請選擇股票', W/2, H/2);
         return;
       }
-      _sfcDrawStock(ctx, W, H, dates, sfcCurCode, canvas);
+      _sfcDrawStock(ctx, W, H, dates, sfcCurCode, canvas, subCanvas);
     }
   } finally {
     _sfcDrawing = false;
@@ -2004,11 +2013,10 @@ function _sfcDrawTotal(ctx, W, H, dates, canvas) {
 }
 
 // ── Individual stock view ─────────────────────────────────────────────────────
-function _sfcDrawStock(ctx, W, H, dates, code, canvas) {
+function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
   const code5 = code.padStart(5, '0');
   const sinfo = allStocks.find(s => s.code === code || s.code === code5) || {};
 
-  // Build series from SFC data only
   const series = dates
     .map(ds => { const r = (sfcData[ds] || {})[code5] || {}; return { ds, hkd: r.hkd || 0, sh: r.sh || 0, pct: r.pct || 0 }; })
     .filter(s => s.hkd > 0);
@@ -2020,8 +2028,8 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas) {
     return;
   }
 
-  const P      = _sfcLayout(W, H);
-  const n      = series.length;
+  const P    = _sfcLayout(W, H);
+  const n    = series.length;
   const maxHKD = Math.max(...series.map(s => s.hkd)) * 1.1;
   const maxSH  = Math.max(...series.map(s => s.sh)) || 1;
 
@@ -2029,7 +2037,7 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas) {
   const yHkd = v => P.top + P.cH - (v / maxHKD) * P.cH;
   const yBar = v => Math.max(1, (v / maxSH) * (P.cH * 0.45));
 
-  // Grid + left axis (HKD)
+  // Grid + left axis
   ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
   niceTicks(maxHKD, 5).forEach(t => {
     const y = yHkd(t);
@@ -2040,7 +2048,7 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas) {
   });
   _sfcXLabels(ctx, P, H, series.map(s => s.ds));
 
-  // Bars — share count, right axis, capped at 45%
+  // Bars — share count
   const bw = Math.max(2, Math.min(6, P.cW / n * 0.35));
   series.forEach((s, i) => {
     const bh = yBar(s.sh);
@@ -2092,11 +2100,73 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas) {
   ctx.save(); ctx.translate(11, P.top + P.cH / 2); ctx.rotate(-Math.PI / 2);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('累積沽空金額 (HKD)', 0, 0); ctx.restore();
-
   ctx.save(); ctx.translate(W - 8, P.top + P.cH / 2); ctx.rotate(Math.PI / 2);
   ctx.fillStyle = '#bbb'; ctx.font = '10px sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('累積沽空股數', 0, 0); ctx.restore();
+
+  // ── Sub-panel: 賣空比例 ────────────────────────────────────────────────────
+  const pctSeries = series.filter(s => s.pct > 0);
+  if (subCanvas && pctSeries.length >= 2) {
+    const sCtx   = subCanvas.getContext('2d');
+    const sW     = subCanvas.width;
+    const sH     = subCanvas.height;
+    // Same left/right as main chart — guarantees x-alignment
+    const SP     = { top: 8, right: P.right, bottom: 22, left: P.left,
+                     get cW() { return sW - this.left - this.right; },
+                     get cH() { return sH - this.top  - this.bottom; } };
+    sCtx.clearRect(0, 0, sW, sH);
+
+    const maxPct = Math.max(...pctSeries.map(s => s.pct)) * 1.15;
+    const minPct = Math.min(...pctSeries.map(s => s.pct)) * 0.85;
+    const yPct   = v => SP.top + SP.cH - ((v - minPct) / (maxPct - minPct || 1)) * SP.cH;
+    const xPctAt = i => SP.left + (n > 1 ? i / (n - 1) : 0.5) * SP.cW;
+
+    // Grid line
+    sCtx.strokeStyle = '#f0ede8'; sCtx.lineWidth = 1;
+    const midPct = (maxPct + minPct) / 2;
+    [minPct, midPct, maxPct].forEach(t => {
+      const y = yPct(t);
+      sCtx.beginPath(); sCtx.moveTo(SP.left, y); sCtx.lineTo(SP.left + SP.cW, y); sCtx.stroke();
+      sCtx.fillStyle = '#bbb'; sCtx.font = '10px sans-serif';
+      sCtx.textAlign = 'right'; sCtx.textBaseline = 'middle';
+      sCtx.fillText(t.toFixed(1) + '%', SP.left - 4, y);
+    });
+
+    // Right axis label
+    sCtx.save(); sCtx.translate(sW - 8, SP.top + SP.cH / 2); sCtx.rotate(Math.PI / 2);
+    sCtx.fillStyle = '#bbb'; sCtx.font = '10px sans-serif';
+    sCtx.textAlign = 'center'; sCtx.textBaseline = 'middle';
+    sCtx.fillText('賣空比例', 0, 0); sCtx.restore();
+
+    // Area fill
+    sCtx.save();
+    const sGrad = sCtx.createLinearGradient(0, SP.top, 0, SP.top + SP.cH);
+    sGrad.addColorStop(0, 'rgba(26,122,60,0.15)'); sGrad.addColorStop(1, 'rgba(26,122,60,0.02)');
+    sCtx.beginPath();
+    series.forEach((s, i) => {
+      const x = xPctAt(i), y = s.pct > 0 ? yPct(s.pct) : SP.top + SP.cH;
+      i === 0 ? sCtx.moveTo(x, y) : sCtx.lineTo(x, y);
+    });
+    sCtx.lineTo(xPctAt(n - 1), SP.top + SP.cH); sCtx.lineTo(xPctAt(0), SP.top + SP.cH);
+    sCtx.closePath(); sCtx.fillStyle = sGrad; sCtx.fill(); sCtx.restore();
+
+    // Line + dots
+    sCtx.save(); sCtx.strokeStyle = '#1a7a3c'; sCtx.lineWidth = 1.5;
+    sCtx.beginPath();
+    series.forEach((s, i) => {
+      if (!s.pct) return;
+      const x = xPctAt(i), y = yPct(s.pct);
+      i === 0 || !series[i-1].pct ? sCtx.moveTo(x, y) : sCtx.lineTo(x, y);
+    });
+    sCtx.stroke(); sCtx.restore();
+    series.forEach((s, i) => {
+      if (!s.pct) return;
+      sCtx.beginPath(); sCtx.arc(xPctAt(i), yPct(s.pct), 2.5, 0, Math.PI * 2);
+      sCtx.fillStyle = '#fff'; sCtx.strokeStyle = '#1a7a3c'; sCtx.lineWidth = 1.5;
+      sCtx.fill(); sCtx.stroke();
+    });
+  }
 
   // Legend
   document.getElementById('sfc-legend').innerHTML = `
@@ -2105,15 +2175,68 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas) {
     </span>
     <span style="display:flex;align-items:center;gap:5px">
       <span style="width:10px;height:10px;background:rgba(192,37,45,0.28);display:inline-block;border-radius:2px"></span>累積沽空股數（右軸）
+    </span>
+    <span style="display:flex;align-items:center;gap:5px">
+      <span style="width:22px;height:3px;background:#1a7a3c;display:inline-block;border-radius:2px"></span>賣空比例（下方）
     </span>`;
 
-  // Tooltip
-  const pts = series.map((s, i) => ({ ...s, x: xAt(i), y: yHkd(s.hkd) }));
-  _sfcWireTip(canvas, pts, p => p.x, p => p.y, P.cW / Math.max(n - 1, 1), p =>
-    `<b>${p.ds}</b><br>` +
-    `累積沽空金額 ${_sfcFmtHKD(p.hkd)}<br>` +
-    `累積沽空股數 ${_sfcFmtHKD(p.sh)}`
-  );
+  // ── Unified tooltip for both canvases ─────────────────────────────────────
+  const pts  = series.map((s, i) => ({ ...s, x: xAt(i) }));
+  const stepW = P.cW / Math.max(n - 1, 1);
+
+  function _getOrCreateTip(cvs) {
+    if (!cvs._sfcTip) {
+      const tip = document.createElement('div');
+      tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
+        'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
+      cvs.parentElement.style.position = 'relative';
+      cvs.parentElement.appendChild(tip);
+      cvs._sfcTip = tip;
+    }
+    return cvs._sfcTip;
+  }
+
+  // Share one tip div — anchor it to the main canvas parent
+  const tip = _getOrCreateTip(canvas);
+
+  function _showTip(cvs, mx, my) {
+    let best = null, bestDist = Infinity;
+    pts.forEach(p => {
+      const d = Math.abs(mx - p.x);
+      if (d < bestDist && d < stepW * 0.6) { bestDist = d; best = p; }
+    });
+    if (!best) { tip.style.display = 'none'; return; }
+    tip.innerHTML =
+      `<b>${best.ds}</b><br>` +
+      `累積沽空金額 ${_sfcFmtHKD(best.hkd)}<br>` +
+      `累積沽空股數 ${_sfcFmtHKD(best.sh)}` +
+      (best.pct > 0 ? `<br>賣空比例 ${best.pct.toFixed(2)}%` : '');
+    const tipW = 200;
+    // Position tip relative to main canvas parent
+    const mainRect  = canvas.getBoundingClientRect();
+    const wrapRect  = canvas.parentElement.getBoundingClientRect();
+    const cvsRect   = cvs.getBoundingClientRect();
+    const absX = cvsRect.left - wrapRect.left + mx;
+    const absY = cvs === canvas
+      ? my
+      : (cvsRect.top - wrapRect.top + my);
+    tip.style.left    = Math.min(absX + 8, canvas.width - tipW) + 'px';
+    tip.style.top     = Math.max(absY - 60, 4) + 'px';
+    tip.style.display = 'block';
+  }
+
+  [canvas, subCanvas].forEach(cvs => {
+    if (!cvs) return;
+    cvs._sfcPts = pts;
+    if (!cvs._sfcWired) {
+      cvs._sfcWired = true;
+      cvs.addEventListener('mousemove', e => {
+        const rect = cvs.getBoundingClientRect();
+        _showTip(cvs, e.clientX - rect.left, e.clientY - rect.top);
+      });
+      cvs.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+    }
+  });
 }
 
 // ── Tooltip helper ────────────────────────────────────────────────────────────
