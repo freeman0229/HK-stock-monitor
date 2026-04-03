@@ -2112,8 +2112,7 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas) {
   _sfcWireTip(canvas, pts, p => p.x, p => p.y, P.cW / Math.max(n - 1, 1), p =>
     `<b>${p.ds}</b><br>` +
     `累積沽空金額 ${_sfcFmtHKD(p.hkd)}<br>` +
-    `累積沽空股數 ${_sfcFmtHKD(p.sh)}` +
-    (p.pct > 0 ? `<br>佔已發行股份 ${p.pct.toFixed(2)}%` : '')
+    `累積沽空股數 ${_sfcFmtHKD(p.sh)}`
   );
 }
 
