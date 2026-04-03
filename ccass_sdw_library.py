@@ -70,13 +70,13 @@ BLOCKED_COOLDOWN_SEC = 900
 # ── Code ranges ───────────────────────────────────────────────────────────────
 
 RANGES = [
-    ("0001_1000",    1,  1000),
-    ("1001_2000", 1001,  2000),
-    ("2001_3000", 2001,  3000),
-    ("3001_4000", 3001,  4000),
-    ("4001_7000", 4001,  7000),
-    ("7001_9999", 7001,  9999),
-    ("10000plus",10000, 99999),
+    ("0001_1000",    1,   1000),
+    ("1001_2000", 1001,   2000),
+    ("2001_3000", 2001,   3000),
+    ("3001_4000", 3001,   4000),
+    ("4001_7000", 4001,   7000),
+    ("7001_9999", 7001,   9999),
+    ("10000plus", 10000, 99999),   # covers 30xxx ChiNext + 31xxx China ETFs
 ]
 
 def code_range(code: str) -> str:
@@ -193,7 +193,27 @@ def _to_v2(raw) -> dict:
 
 # ── Stock universe ────────────────────────────────────────────────────────────
 
+def get_stock_universe(date_str: str = None) -> list[str]:
+    """
+    Return the authoritative stock universe from ccass_universe.
+    Falls back to the SFC library if ccass_universe is unavailable.
+    date_str: "YYYYMMDD" — defaults to today.
+    """
+    try:
+        from ccass_universe import get_universe_codes
+        codes = get_universe_codes(date_str)
+        if codes:
+            log.info("SDW stock universe: %d codes from ccass_universe", len(codes))
+            return codes
+    except Exception as e:
+        log.warning("ccass_universe unavailable (%s) — falling back to SFC library", e)
+    return get_sfc_universe()
+
 def get_sfc_universe() -> list[str]:
+    """
+    Fallback: return codes from the SFC short-position library.
+    Prefer get_stock_universe() in new code.
+    """
     codes = set()
     try:
         from sfc_library import lib_path as sfc_lib_path
@@ -396,7 +416,7 @@ def build(update_only: bool = False, specific_date: date = None,
                      len(all_dates), last.isoformat() if last else "none")
 
         if range_label:
-            universe_all = get_sfc_universe()
+            universe_all = get_stock_universe()
             owned_lo, owned_hi = owned_ranges[0][1], owned_ranges[0][2]
             range_universe = [c for c in universe_all if owned_lo <= int(c) <= owned_hi]
             threshold = max(1, int(len(range_universe) * 0.95))
@@ -424,7 +444,7 @@ def build(update_only: bool = False, specific_date: date = None,
         log.info("Already up to date")
         return
 
-    universe = get_sfc_universe()
+    universe = get_stock_universe()
     if not universe:
         log.error("Empty stock universe — aborting")
         return

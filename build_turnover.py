@@ -36,6 +36,7 @@ from datetime import date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
+from ccass_universe import is_included as _is_included
 
 try:
     import holidays as _hol
@@ -186,8 +187,9 @@ def _has_cjk(s: str) -> bool:
 def parse(body: str) -> dict:
     """
     Parse the quotation section of d{YYMMDD}c.htm.
-    Returns {code5: record} for codes 1–9999 with vol > 0.
+    Returns {code5: record} for universe-eligible stocks with vol > 0.
     TRADING SUSPENDED lines are silently skipped.
+    Stock eligibility determined by ccass_universe.is_included().
 
     Record schema:
         name_en    (str)    NAME OF STOCK
@@ -206,9 +208,9 @@ def parse(body: str) -> dict:
         if not m:
             continue
         code_int = int(m.group(1))
-        if not (1 <= code_int <= 9999):
-            continue
         code        = str(code_int).zfill(5)
+        if not _is_included(code):
+            continue
         name_en     = m.group(2).strip()
         name_zh_raw = re.sub(r"[\u3000\uff20\uff64\s]+$", "", m.group(3)).strip()
         name_zh     = name_zh_raw if _has_cjk(name_zh_raw) else name_en

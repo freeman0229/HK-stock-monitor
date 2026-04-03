@@ -5,6 +5,7 @@ import holidays
 from bs4 import BeautifulSoup
 from datetime import date, datetime, timedelta
 from stock_ref import get_zh_name, get_industry, get_type, STOCKS
+from ccass_universe import is_included as _universe_included
 from ccass_library import get_pct_history, get_sh_history
 from short_library import (get_short_history, get_short_ratio_history,
                             load_year as sl_load_year)
@@ -549,11 +550,14 @@ def run_analysis():
 
     # ── 4. Full stock universe ────────────────────────────────────────────────
     # Union of: short sell (800+), CCASS (917), quotation (500+)
+    # Filtered by ccass_universe.is_included() to exclude debt, GEM,
+    # warrants, RMB counters etc. consistently across all data sources.
     # Ranked by: turnover from quotation where available;
     #            short_turnover (st) as proxy for the rest
-    stock_universe = (set(short_vol_map.keys()) |
-                      set(ccass_sh_map.keys()) |
-                      set(quote_map.keys()))
+    stock_universe = {c for c in (set(short_vol_map.keys()) |
+                                   set(ccass_sh_map.keys()) |
+                                   set(quote_map.keys()))
+                      if _universe_included(c)}
 
     # Sort: quotation stocks (have real tv) first by tv desc,
     #       then remaining by short_turnover desc

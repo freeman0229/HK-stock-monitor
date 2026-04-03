@@ -43,6 +43,7 @@ from datetime import date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
+from ccass_universe import is_included as _is_included
 
 try:
     import holidays as _hol
@@ -193,7 +194,8 @@ def parse(body: str) -> dict:
     Parse the short selling section of d{YYMMDD}c.htm.
 
     Section starts after the column header line containing 股數 AND 'SH'.
-    Returns {code5: record} for codes 1–9999 with sv > 0.
+    Returns {code5: record} for universe-eligible stocks with sv > 0.
+    Stock eligibility determined by ccass_universe.is_included().
 
     Record schema:
         name  (str)   股票名稱
@@ -223,10 +225,10 @@ def parse(body: str) -> dict:
             continue
 
         code_int = int(m.group(1))
-        if not (1 <= code_int <= 9999):
+        code = str(code_int).zfill(5)
+        if not _is_included(code):
             continue
 
-        code = str(code_int).zfill(5)
         name = m.group(2).strip()
 
         if name in _SKIP_NAMES or not name:

@@ -81,6 +81,7 @@ STOCKS: dict[str, dict] = {
     "00020": {"en":"SENSETIME-W",           "zh":"商湯科技",          "industry":"TEC","ind_zh":"科技",     "type":"general"},
     "02382": {"en":"SUNNY OPT.",            "zh":"舜宇光學科技",      "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "03750": {"en":"CATL",                  "zh":"寧德時代",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
+    "09660": {"en":"HORIZONROBOT-W",         "zh":"地平線機器人-W",    "industry":"TEC","ind_zh":"科技",     "type":"general"},
 
     # ── 軟件服務 ─────────────────────────────────────────────────────────────
     "00241": {"en":"ALI HEALTH",            "zh":"阿里健康",          "industry":"SNS","ind_zh":"軟件服務", "type":"bluechip"},
