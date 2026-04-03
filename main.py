@@ -609,7 +609,7 @@ def run_analysis():
                     # sfc_hist[0] = last Friday, sfc_hist[1..4] = prior Fridays
                     sfc_prev_pct    = sfc_hist[0].get("pct", 0.0) if sfc_hist else 0.0
                     sfc_week_delta  = round(sfc_pct - sfc_prev_pct, 4) if sfc_prev_pct > 0 else 0.0
-                    # HKD week-on-week delta — for 沽空增加最多 / 空頭平倉最多 cards
+                    # HKD week-on-week delta for 沽空增加最多/空頭平倉最多 cards
                     sfc_prev_hkd    = sfc_hist[0].get("hkd", 0.0) if sfc_hist else 0.0
                     sfc_hkd_delta   = round(sfc_hkd - sfc_prev_hkd, 0) if sfc_prev_hkd > 0 else 0.0
                     # 4-week rolling average (up to 4 prior Fridays)
@@ -640,7 +640,7 @@ def run_analysis():
                 "sb_buy":   s["buy"],
                 "sb_sell":  s["sell"],
                 "sb_net":   s["buy"] - s["sell"],
-                "sb_total": s.get("total", 0) or (s["buy"] + s["sell"]),
+                "sb_total": s.get("total", 0),
             }
         return m
 
@@ -858,14 +858,19 @@ def run_analysis():
         else:
             vwap = 0.0
 
-        # 持倉集中度 — top-5 holder % sum from latest SDW snapshot
-        # Uses get_holders() which reads from the range-split SDW files
+        # 持倉集中度 — sum(top 5 持股量) / 總數 × 100
+        # 總數 = CCASS Grand Total (_sdw_total_sh_map); fallback to 佔已發行% sum
         _holders = sdw_get_holders(code, today_ds) if _SDW_AVAILABLE else []
         if not _holders:
             # Try latest available SDW date if today not yet fetched
             _holders = sdw_get_holders(code, (trading_day - timedelta(days=8)).strftime('%Y-%m-%d')) \
                        if _SDW_AVAILABLE else []
-        concentration = round(sum(h.get('pct', 0) for h in _holders[:5]), 2)
+        _total_sh_conc = _sdw_total_sh_map.get(code.zfill(5), 0)
+        if _holders and _total_sh_conc > 0:
+            top5_sh = sum(h.get('sh', 0) for h in _holders[:5])
+            concentration = round(top5_sh / _total_sh_conc * 100, 2)
+        else:
+            concentration = round(sum(h.get('pct', 0) for h in _holders[:5]), 2)
 
         stock_type = classify_stock(code, name_eng)
         _, ind_zh  = get_industry(code)
