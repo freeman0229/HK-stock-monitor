@@ -1795,23 +1795,29 @@ function sfcBuildDropdown(query) {
 
 // ── Main chart draw ───────────────────────────────────────────────────────────
 async function drawSfcChart() {
-  if (!sfcLoaded) return;
-  const dates = sfcFilterDates();
-  if (!dates.length) return;
-
   const wrap   = document.getElementById('sfc-chart-wrap');
   const canvas = document.getElementById('sfcCanvas');
   wrap.style.display = 'block';
-
-  // Defer measurement to next frame so wrap has a real clientWidth after display:block
   await new Promise(r => requestAnimationFrame(r));
-
   const W = (wrap.clientWidth || 680);
   const H = Math.max(260, Math.min(380, W * 0.45));
   canvas.width  = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
+
+  // No SFC data — draw instructional message and stop
+  if (!sfcLoaded || !sfcDates.length) {
+    ctx.fillStyle = '#bbb'; ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('⚠️ 找不到 SFC 數據檔案', W/2, H/2 - 16);
+    ctx.font = '12px sans-serif'; ctx.fillStyle = '#ccc';
+    ctx.fillText('請先執行 python sfc_library.py 並部署 sfc_YYYY.json', W/2, H/2 + 14);
+    return;
+  }
+
+  const dates = sfcFilterDates();
+  if (!dates.length) return;
 
   if (sfcMode === 'total') {
     _sfcDrawTotal(ctx, W, H, dates, canvas);
@@ -2141,10 +2147,11 @@ function _sfcWireTip(canvas, pts, xFn, yFn, stepW, labelFn) {
 // ── Init (called when short tab is clicked) ────────────────────────────────────
 async function initSfcChart() {
   if (sfcInited && sfcLoaded) {
-    document.getElementById('sfc-loading').style.display   = 'none';
-    document.getElementById('sfc-nodata').style.display    = sfcDates.length ? 'none' : 'block';
-    document.getElementById('sfc-chart-wrap').style.display = sfcDates.length ? 'block' : 'none';
-    if (sfcDates.length) drawSfcChart();
+    // Data already attempted — just ensure correct div visibility and draw
+    document.getElementById('sfc-loading').style.display    = 'none';
+    document.getElementById('sfc-nodata').style.display     = 'none';
+    document.getElementById('sfc-chart-wrap').style.display = 'block';
+    drawSfcChart();
     return;
   }
 
@@ -2166,6 +2173,16 @@ async function initSfcChart() {
   inp.addEventListener('blur',   () => setTimeout(() => {
     document.getElementById('sfc-dropdown').style.display = 'none';
   }, 150));
+  inp.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    // Extract the code token (first word) from whatever was typed
+    const q = inp.value.trim().split(/[\s\u3000]+/)[0];
+    if (!q) return;
+    sfcCurCode = q.padStart(5, '0');
+    document.getElementById('sfc-dropdown').style.display = 'none';
+    sfcSetMode('stock');   // ensure 個股 mode is active
+    drawSfcChart();
+  });
 
   // Wire custom date inputs
   const fromEl = document.getElementById('sfc-from');
@@ -2274,20 +2291,18 @@ function renderShort() {
   drawShortRiskMap(sorted);
 
   // ── Table ─────────────────────────────────────────────────────────────────
-  // Only show stocks with SFC cumulative position data (sfc_hkd > 0)
-  // If sfcData not yet loaded, the table will be re-rendered by computeSfcCards()
-  const sfcStocks = sorted.filter(s => (s.sfc_hkd || 0) > 0);
-  if (!sfcStocks.length) {
-    const msg = !sfcLoaded
-      ? '📡 SFC 數據載入中…請稍候'
-      : sfcDates.length
-        ? '⚠️ 無累積沽空數據'
-        : `⚠️ 找不到 SFC 數據文件<br><span style="font-size:12px;color:var(--muted)">請先執行：<code style="background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border)">python sfc_library.py</code>，然後將生成的 <code style="background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border)">sfc_YYYY.json</code> 部署到與 index.html 相同目錄</span>`;
+  // Show top 20 stocks. When SFC data is available, sorted by sfc_hkd (already done above).
+  // When SFC data is absent (all sfc_hkd=0), sorted by short_ratio — SFC columns show "—".
+  const hasSfcData = sfcLoaded && sfcDates.length > 0;
+  const display    = sorted.slice(0, 20);
+  if (!display.length) {
     document.getElementById('body-short').innerHTML =
-      `<tr><td colspan="11"><div class="loading-box" style="padding:24px">${msg}</div></td></tr>`;
+      `<tr><td colspan="11"><div class="loading-box" style="padding:24px">
+        ${sfcLoaded ? '⚠️ 無數據' : '📡 數據載入中…請稍候'}
+      </div></td></tr>`;
     return;
   }
-  const html = sfcStocks.slice(0, 20).map((s,i) => {
+  const html = display.map((s,i) => {
     const diff      = s.short_ratio - s.short_avg;
     const diffClass = diff > 2 ? 'up-txt' : diff < -2 ? 'dn-txt' : '';
     const trend     = diff > 2 ? '📈 上升' : diff < -2 ? '📉 下降' : '→ 平穩';
@@ -3417,33 +3432,30 @@ document.getElementById('hdr-time').textContent = new Date().toLocaleString('zh-
 if (lastChartData.length) setTimeout(() => drawSbChart(lastChartData), 100);
 loadData();
 
-// Eagerly load SFC JSON at boot so the table and chart work without
-// requiring the user to click the 累積沽空 tab first.
+// Eagerly load SFC data at boot so table and chart are populated without
+// needing the user to click the 累積沽空 tab first.
 (async () => {
+  const ok = await loadSfcData();
+
+  // Always mark as attempted so renderShort() shows the right message
+  sfcLoaded = true;    // already true if ok=true; set explicitly if ok=false
+  sfcInited = true;    // prevent initSfcChart() from redundantly re-fetching
+
+  // Re-render table now that SFC state is known (allStocks may already be populated)
+  if (allStocks.length) renderShort();
+
+  // If the 累積沽空 tab is already active, update chart area
   const shortBtn  = document.querySelector('.tab-btn[data-tab="short"]');
   const tabActive = shortBtn && shortBtn.classList.contains('active');
-
-  const ok = await loadSfcData();   // sets sfcLoaded=true + populates sfcData/sfcDates on success
-
-  if (!ok) {
-    // Files not found — mark as attempted so renderShort() shows the correct error
-    sfcLoaded = true;   // switches message from "載入中" to "找不到文件"
-    // sfcDates stays [] → renderShort shows the "run sfc_library.py" message
-  }
-
-  sfcInited = true;    // prevent initSfcChart() from re-fetching when tab is clicked
-
-  // Update chart area if the tab is already active
   if (tabActive) {
-    document.getElementById('sfc-loading').style.display   = 'none';
-    document.getElementById('sfc-nodata').style.display    = ok ? 'none' : 'block';
-    document.getElementById('sfc-chart-wrap').style.display = ok ? 'block' : 'none';
-    if (ok) drawSfcChart();
+    document.getElementById('sfc-loading').style.display    = 'none';
+    document.getElementById('sfc-nodata').style.display     = 'none';
+    document.getElementById('sfc-chart-wrap').style.display = 'block';
+    drawSfcChart();
   }
 
-  // Repopulate summary cards and re-render table now that sfcData is known
+  // Populate summary cards if SFC data is available
   if (ok) computeSfcCards();
-  else if (allStocks.length) renderShort();   // re-render with error message
 })();
 // Re-fetch data.json every 5 minutes — picks up new data.json without page reload
 setInterval(loadData, 5 * 60 * 1000);
