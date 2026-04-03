@@ -2945,15 +2945,15 @@ function drawSdwChart(code, selectedDs) {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
-  // Collect time series: for each date that has data for this code
+  // Collect time series: last 1 year only
+  const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
   const series = sdwDates
-    .filter(ds => (sdwData[ds]||{})[code])
+    .filter(ds => ds >= cutoff && (sdwData[ds]||{})[code])
     .map(ds => {
       const _raw = sdwData[ds][code];
       const h = _raw ? (Array.isArray(_raw) ? _raw : (_raw.p || [])) : [];
-      const top10sum = h.slice(0, 10).reduce((s, x) => s + (x.pct||0), 0);
-      // Individual top-5 participants (by latest date order, tracked by pid)
-      return { ds, top10sum, holders: h };
+      const top5sum = h.slice(0, 5).reduce((s, x) => s + (x.pct||0), 0);
+      return { ds, top5sum, holders: h };
     });
 
   if (series.length < 2) {
@@ -2982,8 +2982,8 @@ function drawSdwChart(code, selectedDs) {
   const cH    = H - PAD.top  - PAD.bottom;
   const n     = series.length;
 
-  // y-range: 0 to max top10sum + 5%
-  const maxY = Math.max(...series.map(s => s.top10sum), ...pidSeries.flat().filter(v=>v!=null)) * 1.1;
+  // y-range: 0 to max top5sum + 5%
+  const maxY = Math.max(...series.map(s => s.top5sum), ...pidSeries.flat().filter(v=>v!=null)) * 1.1;
   const xAt  = i => PAD.left + (i / (n-1)) * cW;
   const yAt  = v => PAD.top + cH - (v / maxY) * cH;
 
@@ -3025,8 +3025,8 @@ function drawSdwChart(code, selectedDs) {
   ctx.setLineDash([]);
   ctx.beginPath();
   series.forEach((s, i) => {
-    if (i === 0) ctx.moveTo(xAt(i), yAt(s.top10sum));
-    else         ctx.lineTo(xAt(i), yAt(s.top10sum));
+    if (i === 0) ctx.moveTo(xAt(i), yAt(s.top5sum));
+    else         ctx.lineTo(xAt(i), yAt(s.top5sum));
   });
   ctx.stroke();
 
@@ -3034,7 +3034,7 @@ function drawSdwChart(code, selectedDs) {
   series.forEach((s, i) => {
     const isSel = s.ds === selectedDs;
     ctx.beginPath();
-    ctx.arc(xAt(i), yAt(s.top10sum), isSel ? 5 : 3, 0, Math.PI*2);
+    ctx.arc(xAt(i), yAt(s.top5sum), isSel ? 5 : 3, 0, Math.PI*2);
     ctx.fillStyle   = isSel ? SDW_COLORS[0] : '#fff';
     ctx.strokeStyle = SDW_COLORS[0];
     ctx.lineWidth   = 2;
@@ -3045,7 +3045,7 @@ function drawSdwChart(code, selectedDs) {
       ctx.font         = 'bold 11px sans-serif';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(s.top10sum.toFixed(1) + '%', xAt(i), yAt(s.top10sum) - 5);
+      ctx.fillText(s.top5sum.toFixed(1) + '%', xAt(i), yAt(s.top5sum) - 5);
     }
   });
   ctx.restore();
