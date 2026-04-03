@@ -28,7 +28,7 @@ Usage:
 """
 
 import os, json, re, time, logging, argparse, random
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
 
@@ -45,38 +45,49 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
 
-_PROXY = os.getenv("SDW_PROXY", "").strip() or None
+_ACCEPT_LANGUAGES = [
+    "en-GB,en;q=0.9",
+    "en-US,en;q=0.9",
+    "zh-HK,zh;q=0.9,en;q=0.8",
+]
 
-def _new_session() -> requests.Session:
-    sess = requests.Session()
-    sess.headers.update({
-        "User-Agent": random.choice(_USER_AGENTS),
-        "Referer":    "https://www3.hkexnews.hk/",
-    })
-    if _PROXY:
-        sess.proxies = {"http": _PROXY, "https": _PROXY}
-        log.info("Session proxy: %s", _PROXY.split("@")[-1])
-    return sess
+# Strings that indicate the server has blocked or rate-limited us
+BLOCK_PATTERNS = [
+    "Access Denied",
+    "Too many requests",
+    "Request blocked",
+    "Service unavailable",
+    "403 Forbidden",
+    "429 Too Many",
+]
+
+_PROXY = os.getenv("SDW_PROXY", "").strip() or None
 
 START_DATE            = date(2025, 3, 23)
 SCHEMA_VERSION        = 2
-SLEEP_MIN = 3.5
-SLEEP_MAX = 6.5
-PRE_SLEEP_MIN = 1.0
-PRE_SLEEP_MAX = 2.5
+SLEEP_MIN             = 3.5
+SLEEP_MAX             = 6.5
+PRE_SLEEP_MIN         = 1.0
+PRE_SLEEP_MAX         = 2.5
 CIRCUIT_BREAKER_LIMIT = 8
-BLOCKED_COOLDOWN_SEC = 900
+BLOCKED_COOLDOWN_SEC  = 900
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def human_sleep(a: float, b: float):
+    """Sleep for a random duration in [a, b] plus a small extra jitter."""
+    time.sleep(random.uniform(a, b) + random.random() * 0.5)
 
 # ── Code ranges ───────────────────────────────────────────────────────────────
 
 RANGES = [
-    ("0001_1000",    1,   1000),
-    ("1001_2000", 1001,   2000),
-    ("2001_3000", 2001,   3000),
-    ("3001_4000", 3001,   4000),
-    ("4001_7000", 4001,   7000),
-    ("7001_9999", 7001,   9999),
-    ("10000plus", 10000, 99999),   # covers 30xxx ChiNext + 31xxx China ETFs
+    ("0001_1000",    1,  1000),
+    ("1001_2000", 1001,  2000),
+    ("2001_3000", 2001,  3000),
+    ("3001_4000", 3001,  4000),
+    ("4001_7000", 4001,  7000),
+    ("7001_9999", 7001,  9999),
+    ("10000plus",10000, 99999),
 ]
 
 def code_range(code: str) -> str:
@@ -193,27 +204,7 @@ def _to_v2(raw) -> dict:
 
 # ── Stock universe ────────────────────────────────────────────────────────────
 
-def get_stock_universe(date_str: str = None) -> list[str]:
-    """
-    Return the authoritative stock universe from ccass_universe.
-    Falls back to the SFC library if ccass_universe is unavailable.
-    date_str: "YYYYMMDD" — defaults to today.
-    """
-    try:
-        from ccass_universe import get_universe_codes
-        codes = get_universe_codes(date_str)
-        if codes:
-            log.info("SDW stock universe: %d codes from ccass_universe", len(codes))
-            return codes
-    except Exception as e:
-        log.warning("ccass_universe unavailable (%s) — falling back to SFC library", e)
-    return get_sfc_universe()
-
 def get_sfc_universe() -> list[str]:
-    """
-    Fallback: return codes from the SFC short-position library.
-    Prefer get_stock_universe() in new code.
-    """
     codes = set()
     try:
         from sfc_library import lib_path as sfc_lib_path
@@ -251,6 +242,35 @@ def get_sfc_universe() -> list[str]:
     log.warning("No SFC universe available — returning empty list")
     return []
 
+# ── Session management ────────────────────────────────────────────────────────
+
+def _new_session() -> cloudscraper.CloudScraper:
+    """
+    Create a cloudscraper session (handles Cloudflare JS challenges automatically)
+    with randomised headers to mimic a real browser.
+    """
+    scraper = cloudscraper.create_scraper()
+    scraper.headers.update({
+        "User-Agent":      random.choice(_USER_AGENTS),
+        "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": random.choice(_ACCEPT_LANGUAGES),
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer":         "https://www.hkexnews.hk/",   # root domain, not www3
+        "Connection":      "keep-alive",
+        "DNT":             "1",
+    })
+    if _PROXY:
+        scraper.proxies = {"http": _PROXY, "https": _PROXY}
+        log.info("Session proxy: %s", _PROXY.split("@")[-1])
+    return scraper
+
+def _rotate_session(sess) -> cloudscraper.CloudScraper:
+    try:
+        sess.close()
+    except Exception:
+        pass
+    return _new_session()
+
 # ── SDW fetch for one stock ───────────────────────────────────────────────────
 
 def _parse_num(s) -> int:
@@ -260,11 +280,11 @@ def _parse_num(s) -> int:
         return 0
 
 def fetch_stock(stock_code: str, d: date,
-                sess: requests.Session = None) -> dict | None:
+                sess: cloudscraper.CloudScraper = None) -> dict | None:
     """
     Fetch CCASS participant holdings for one stock on one date.
     GET to get fresh ASP.NET tokens, then POST with stock code + date.
-    Returns {p, total_sh, issued_sh} or None if no data found.
+    Returns {p, total_sh, issued_sh} or None if no data / blocked.
     """
     code5    = stock_code.zfill(5)
     date_str = d.strftime("%Y/%m/%d")
@@ -274,16 +294,34 @@ def fetch_stock(stock_code: str, d: date,
 
     for attempt in range(1, 4):
         try:
-            # GET — fresh ASP.NET tokens (__EVENTVALIDATION is single-use)
+            # ── Pre-warm: visit root homepage ~70% of the time to look natural ──
+            if random.random() < 0.7:
+                sess.get("https://www.hkexnews.hk/eng/index.htm", timeout=10)
+                human_sleep(0.5, 1.5)
+
+            # ── Rotate UA on each attempt ─────────────────────────────────────
+            sess.headers["User-Agent"] = random.choice(_USER_AGENTS)
+
+            # ── GET — fresh ASP.NET tokens (__EVENTVALIDATION is single-use) ──
             r1 = sess.get(SDW_URL, timeout=15)
             r1.raise_for_status()
+
+            if any(p in r1.text for p in BLOCK_PATTERNS):
+                log.warning("⚠️ Block detected on GET for %s %s (attempt %d)",
+                            code5, date_str, attempt)
+                if attempt < 3:
+                    human_sleep(10, 20)
+                    continue
+                if own_sess: sess.close()
+                return None
+
             soup1 = BeautifulSoup(r1.text, "html.parser")
 
             def hv(name):
                 tag = soup1.find("input", {"name": name})
                 return tag["value"] if tag else ""
 
-            # POST with stock code and date
+            # ── POST with stock code and date ─────────────────────────────────
             r2 = sess.post(SDW_URL, data={
                 "__EVENTTARGET":        "btnSearch",
                 "__EVENTARGUMENT":      "",
@@ -297,10 +335,19 @@ def fetch_stock(stock_code: str, d: date,
             }, timeout=20)
             r2.raise_for_status()
 
+            if any(p in r2.text for p in BLOCK_PATTERNS):
+                log.warning("⚠️ Block detected on POST for %s %s (attempt %d)",
+                            code5, date_str, attempt)
+                if attempt < 3:
+                    human_sleep(15, 30)
+                    continue
+                if own_sess: sess.close()
+                return None
+
             soup2     = BeautifulSoup(r2.text, "html.parser")
             full_text = soup2.get_text(" ", strip=True)
 
-            # 已發行股份/權證/單位
+            # ── 已發行股份/權證/單位 ──────────────────────────────────────────
             issued_sh = 0
             for pat in [
                 r"已發行股份[^\d]{0,30}([\d,]{6,})",
@@ -313,7 +360,7 @@ def fetch_stock(stock_code: str, d: date,
                     if issued_sh > 0:
                         break
 
-            # Participant rows
+            # ── Participant rows ──────────────────────────────────────────────
             def clean(s):
                 return re.sub(r'^[^:：]+[:：]\s*', '', s).strip()
 
@@ -343,7 +390,7 @@ def fetch_stock(stock_code: str, d: date,
                 except (ValueError, TypeError):
                     continue
 
-            # 總數
+            # ── 總數 ──────────────────────────────────────────────────────────
             total_sh = 0
             for pat in [r"總數[^\d]{0,20}([\d,]{6,})", r"Grand\s+Total[^\d]{0,20}([\d,]{6,})"]:
                 m = re.search(pat, full_text)
@@ -416,7 +463,7 @@ def build(update_only: bool = False, specific_date: date = None,
                      len(all_dates), last.isoformat() if last else "none")
 
         if range_label:
-            universe_all = get_stock_universe()
+            universe_all = get_sfc_universe()
             owned_lo, owned_hi = owned_ranges[0][1], owned_ranges[0][2]
             range_universe = [c for c in universe_all if owned_lo <= int(c) <= owned_hi]
             threshold = max(1, int(len(range_universe) * 0.95))
@@ -444,7 +491,7 @@ def build(update_only: bool = False, specific_date: date = None,
         log.info("Already up to date")
         return
 
-    universe = get_stock_universe()
+    universe = get_sfc_universe()
     if not universe:
         log.error("Empty stock universe — aborting")
         return
@@ -486,42 +533,32 @@ def build(update_only: bool = False, specific_date: date = None,
         consec_errors = 0
         _dirty_ranges = set()
 
-                # ── Stealth session manager ───────────────────────────────
-
-        def _rotate_session(sess):
-            try:
-                sess.close()
-            except:
-                pass
-            return _new_session()
-
         _shared_sess = _new_session()
-        last_rotate = 0
+        last_rotate  = 0
+        session_life = random.randint(25, 40)
 
         log.info("  Session UA: %s", _shared_sess.headers["User-Agent"][:60])
 
         for ci, code in enumerate(todo, 1):
 
-            # ── TIME LIMIT ────────────────────────────────────────
+            # ── TIME LIMIT ────────────────────────────────────────────────────
             if deadline and time.monotonic() >= deadline:
                 log.info("  Time limit reached mid-date at stock [%d/%d] — saving progress",
                          ci, len(todo))
                 timed_out = True
                 break
 
-            # ── HUMAN-LIKE THINK TIME (before request) ────────────
-            time.sleep(random.uniform(1.0, 2.5))
+            # ── HUMAN-LIKE THINK TIME (before request) ────────────────────────
+            human_sleep(PRE_SLEEP_MIN, PRE_SLEEP_MAX)
 
-            # ── ROTATE SESSION ───────────────────────────────────
-            if ci - last_rotate > random.randint(25, 40):
+            # ── ROTATE SESSION ────────────────────────────────────────────────
+            if ci - last_rotate >= session_life:
                 _shared_sess = _rotate_session(_shared_sess)
-                last_rotate = ci
-                log.info("  🔄 Rotated session at %d", ci)
+                last_rotate  = ci
+                session_life = random.randint(25, 40)
+                log.info("  🔄 Rotated session at %d (next in ~%d)", ci, session_life)
 
-            # ── RANDOMISE USER AGENT ─────────────────────────────
-            _shared_sess.headers["User-Agent"] = random.choice(_USER_AGENTS)
-
-            # ── FETCH ────────────────────────────────────────────
+            # ── FETCH ─────────────────────────────────────────────────────────
             entry = fetch_stock(code, d, sess=_shared_sess)
 
             if entry:
@@ -534,30 +571,32 @@ def build(update_only: bool = False, specific_date: date = None,
             else:
                 consec_errors += 1
 
-                # ── EARLY BACKOFF ────────────────────────────────
+                # ── EARLY BACKOFF ─────────────────────────────────────────────
                 if consec_errors >= 5:
                     backoff = random.uniform(15, 40)
                     log.warning("  ⚠️ Early backoff (%d errors) — sleeping %.0fs",
                                 consec_errors, backoff)
                     time.sleep(backoff)
 
-                # ── CIRCUIT BREAKER ─────────────────────────────
+                # ── CIRCUIT BREAKER ───────────────────────────────────────────
                 if consec_errors >= CIRCUIT_BREAKER_LIMIT:
                     log.error("  🚫 Circuit breaker: %d consecutive errors — likely blocked",
                               consec_errors)
                     blocked = True
                     break
 
-            # ── BASE DELAY ──────────────────────────────────────
-            time.sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
+            # ── BASE DELAY ────────────────────────────────────────────────────
+            human_sleep(SLEEP_MIN, SLEEP_MAX)
 
-            # ── BURST PAUSE ─────────────────────────────────────
+            # ── BURST PAUSE every 50 stocks ───────────────────────────────────
             if ci % 50 == 0:
                 pause = random.uniform(20, 45)
                 log.info("  😴 Burst pause %.0fs at %d", pause, ci)
                 time.sleep(pause)
 
                 _shared_sess = _rotate_session(_shared_sess)
+                last_rotate  = ci
+                session_life = random.randint(25, 40)
                 log.info("  🔄 Session refreshed after burst")
 
                 for label in _dirty_ranges:
@@ -568,7 +607,7 @@ def build(update_only: bool = False, specific_date: date = None,
                 log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
 
         _shared_sess.close()
-      
+
         for label, lib in range_libs.items():
             if lib["by_date"].get(ds):
                 save_range(year, label, lib)
@@ -592,7 +631,7 @@ def build(update_only: bool = False, specific_date: date = None,
 
     log.info("Build complete")
 
-# ── Migration ────────────────────────────────────────────────────────────────
+# ── Migration ─────────────────────────────────────────────────────────────────
 
 def migrate_to_range_split():
     for year in range(START_DATE.year, date.today().year + 1):
