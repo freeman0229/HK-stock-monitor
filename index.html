@@ -910,15 +910,13 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <div style="font-size:11px;color:var(--label);margin-top:2px" id="sdw-tbl-sub"></div>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
-        <button id="sdw-toggle-detail" onclick="sdwToggleDetail()"
-          style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">持倉明細 ▼</button>
         <button id="sdw-top5-btn-5"  onclick="sdwSetTopN(5)"
           style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--red);background:var(--red);color:#fff;cursor:pointer;font-family:inherit">前5位</button>
         <button id="sdw-top5-btn-10" onclick="sdwSetTopN(10)"
           style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">前10位</button>
       </div>
     </div>
-    <div id="sdw-detail-tbl-wrap" class="tbl-wrap">
+    <div class="tbl-wrap">
       <table id="tbl-sdw" class="detail-holder-tbl" style="width:100%;font-size:12px;border-collapse:collapse;table-layout:fixed">
         <colgroup>
           <col style="width:30px">
@@ -2667,13 +2665,6 @@ let sdwCurDate    = '';   // currently selected date
 let sdwInitDone   = false;
 let sdwLoaded     = false;
 let sdwTopN       = 5;    // current top-n selection
-let sdwDetailOpen = true; // toggle state for 明細
-
-function sdwToggleDetail() {
-  sdwDetailOpen = !sdwDetailOpen;
-  document.getElementById('sdw-detail-tbl-wrap').style.display = sdwDetailOpen ? '' : 'none';
-  document.getElementById('sdw-toggle-detail').textContent = sdwDetailOpen ? '持倉明細 ▲' : '持倉明細 ▼';
-}
 
 function sdwSetTopN(n) {
   sdwTopN = n;
@@ -2898,8 +2889,8 @@ function renderSdwPanel() {
 
   document.getElementById('sdw-chart-title').textContent = `${nameStr} — 持倉集中度趨勢`;
   document.getElementById('sdw-chart-sub').textContent   = `前10大機構合計持股% ｜ 資料截至 ${ds}`;
-  document.getElementById('sdw-top5-label').textContent  = nameStr;
-  document.getElementById('sdw-tbl-sub').textContent     = `持倉人明細（${ds}）｜ 共 ${holders.length} 個機構 ｜ ${prevNote}`;
+  document.getElementById('sdw-top5-label').textContent  = '持倉人明細';
+  document.getElementById('sdw-tbl-sub').textContent     = `${nameStr}（${ds}）｜ 共 ${holders.length} 個機構 ｜ ${prevNote}`;
   document.getElementById('sdw-detail-title').textContent = nameStr;
   document.getElementById('sdw-detail-sub').textContent   = `資料日期：${ds}`;
 
