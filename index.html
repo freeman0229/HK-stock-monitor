@@ -326,6 +326,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 .up-txt { color: var(--up); font-weight: 600; }
 .dn-txt { color: var(--dn); font-weight: 600; }
 .na-txt { color: #bbb; }
+.conc-elevated { color: #b8860b; font-weight: 600; }
+.conc-high     { color: #e07020; font-weight: 600; }
+.conc-extreme  { color: var(--up); font-weight: 600; }
 
 /* insight badge */
 .insight {
@@ -813,7 +816,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th class="num-r" data-col="short_ratio">日沽空</th>
           <th class="num-r mob-hide" data-col="days_to_cover">回補天數</th>
           <th class="num-r mob-hide" data-col="sfc_pct">賣空比例</th>
-          <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔已發行股份合計%；超過鎖倉臨界點以紅色顯示">持倉集中度</th>
+          <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔總數%｜0–5% 正常｜5–10% 留意｜10–20% 偏高｜20–30% 高度集中｜30%+ 極端">持倉集中度</th>
           <th class="num-r mob-hide" data-col="turnover">成交金額</th>
           <th>沽空趨勢</th>
           <th data-col="insight">信號</th>
@@ -2375,6 +2378,16 @@ const SHORT_THRESHOLDS = {
 function shortHi(s) { return (SHORT_THRESHOLDS[s.stock_type] || SHORT_THRESHOLDS.general).hi; }
 function shortLo(s) { return (SHORT_THRESHOLDS[s.stock_type] || SHORT_THRESHOLDS.general).lo; }
 
+// 持倉集中度 tier — highlight at ≥10%
+// 0–5% Normal | 5–10% Watch Zone | 10–20% Elevated | 20–30% High | 30%+ Extreme
+function concTier(conc) {
+  if (conc >= 30) return { cls: 'conc-extreme',  color: '#c0252d', label: 'Extreme (Squeeze Territory)' };
+  if (conc >= 20) return { cls: 'conc-high',      color: '#e07020', label: 'High (Crowded Trade)'       };
+  if (conc >= 10) return { cls: 'conc-elevated',  color: '#b8860b', label: 'Elevated (Active Interest)' };
+  if (conc >=  5) return { cls: '',               color: '',        label: 'Watch Zone'                  };
+  return                  { cls: '',               color: '',        label: 'Normal'                      };
+}
+
 function renderShort() {
   // Augment allStocks with SFC data directly from sfcData if available and data.json has zeros
   const sfcLatestDs = sfcLoaded && sfcDates.length ? sfcDates[sfcDates.length - 1] : null;
@@ -2465,7 +2478,7 @@ function renderShort() {
     const sfcPct    = s.sfc_pct || 0;
     const conc      = s.concentration || 0;
     const lockup    = s.lockup_threshold || 0;
-    const concClass = (conc > 0 && lockup > 0 && conc >= lockup) ? 'up-txt' : '';
+    const tier      = concTier(conc);
     const concTxt   = conc > 0 ? conc.toFixed(1) + '%' : '—';
     return `<tr>
       <td class="rank">${i+1}</td>
@@ -2475,7 +2488,7 @@ function renderShort() {
       <td class="num-r ${s.short_ratio > shortHi(s) ? 'up-txt' : ''}">${fmtPct(s.short_ratio)}</td>
       <td class="num-r mob-hide ${dtcClass}">${dtcTxt}</td>
       <td class="num-r mob-hide">${sfcPct > 0 ? sfcPct.toFixed(2) + '%' : '—'}</td>
-      <td class="num-r mob-hide ${concClass}">${concTxt}</td>
+      <td class="num-r mob-hide ${tier.cls}">${concTxt}</td>
       <td class="num-r mob-hide">${fmtM(s.turnover)}</td>
       <td class="${diffClass}">${trend}</td>
       <td>${insightBadge(s.insight)}</td>
@@ -3084,21 +3097,21 @@ function renderDetailCard(code, ds, holders) {
   }
 
   // 7 metric cards: 今日沽空%, 累積沽空, 回補天數, 成交均價VWAP, 換手率, 持倉集中度, 鎖倉臨界點
-  const mc = (lbl, val, sub, red) =>
+  const mc = (lbl, val, sub, color) =>
     `<div style="background:var(--card);border:0.5px solid var(--border);border-radius:10px;padding:11px 12px">` +
     `<div style="font-size:11px;color:var(--muted);margin-bottom:5px">${lbl}</div>` +
-    `<div style="font-size:18px;font-weight:500;${red?'color:#c0252d':''}">${val}</div>` +
+    `<div style="font-size:18px;font-weight:500;${color?'color:'+color:''}">${val}</div>` +
     (sub ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${sub}</div>` : '') +
     `</div>`;
   const detMetrics = document.getElementById('sdw-det-metrics');
   if (detMetrics) detMetrics.innerHTML =
-    mc('今日沽空%',   sr>0 ? sr.toFixed(1)+'%'           : '—',  '',                       sr > shortHi({stock_type:stockType})) +
-    mc('累積沽空',    sfcHkd>0 ? fmtM(sfcHkd)             : '—',  'SFC 港元',               false) +
-    mc('回補天數',    dtc>0 ? dtc.toFixed(1)+' 日'         : '—',  'DTC',                    dtc>3) +
-    mc('成交均價 VWAP',vwap>0 ? 'HK$'+vwap.toFixed(2)     : '—',  '',                       false) +
-    mc('換手率',      tv5d>0 ? tv5d.toFixed(2)+'%'         : '—',  tv20d>0?'20日：'+tv20d.toFixed(1)+'%':'', false) +
-    mc('持倉集中度',  conc>0 ? conc.toFixed(1)+'%'         : '—',  '前5大合計',              exceeded) +
-    mc('鎖倉臨界點',  conc>0 ? (gap>=0?'+':'')+gap.toFixed(1)+'%':'—', '臨界 '+lockup+'%',  exceeded);
+    mc('今日沽空%',   sr>0 ? sr.toFixed(1)+'%'           : '—',  '',                       sr > shortHi({stock_type:stockType}) ? '#c0252d' : '') +
+    mc('累積沽空',    sfcHkd>0 ? fmtM(sfcHkd)             : '—',  'SFC 港元',               '') +
+    mc('回補天數',    dtc>0 ? dtc.toFixed(1)+' 日'         : '—',  'DTC',                    dtc>3 ? '#c0252d' : '') +
+    mc('成交均價 VWAP',vwap>0 ? 'HK$'+vwap.toFixed(2)     : '—',  '',                       '') +
+    mc('換手率',      tv5d>0 ? tv5d.toFixed(2)+'%'         : '—',  tv20d>0?'20日：'+tv20d.toFixed(1)+'%':'', '') +
+    mc('持倉集中度',  conc>0 ? conc.toFixed(1)+'%'         : '—',  '前5大合計 — '+concTier(conc).label, concTier(conc).color) +
+    mc('鎖倉臨界點',  conc>0 ? (gap>=0?'+':'')+gap.toFixed(1)+'%':'—', '臨界 '+lockup+'%',  exceeded ? '#c0252d' : '');
 
   // 持倉比例 bars
   const grp = groupHoldings(holders);
