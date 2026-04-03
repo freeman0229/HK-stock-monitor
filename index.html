@@ -2899,7 +2899,7 @@ function renderSdwPanel() {
   document.getElementById('body-sdw').innerHTML = rows;
 
   // ── 持倉明細 detail card ────────────────────────────────────────────────
-  renderDetailCard(sdwCurCode, ds, holders);
+  renderDetailCard(sdwCurCode, ds, holders, raw, _prevRaw, prevHolders);
 
   // ── Chart ────────────────────────────────────────────────────────────────
   drawSdwChart(sdwCurCode, ds);
@@ -3056,7 +3056,7 @@ function drawSdwChart(code, selectedDs) {
 
 
 // ── 持倉明細 detail card renderer ─────────────────────────────────────────────
-function renderDetailCard(code, ds, holders) {
+function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders) {
   const sec = document.getElementById('sdw-detail-sec');
   if (!sec) return;
   sec.style.display = holders.length ? 'block' : 'none';
@@ -3096,22 +3096,42 @@ function renderDetailCard(code, ds, holders) {
       (sizeLabel? `<span style="font-size:12px;padding:3px 10px;border-radius:20px;border:0.5px solid var(--border);color:var(--muted)">${sizeLabel}</span>` : '');
   }
 
-  // 7 metric cards: 今日沽空%, 累積沽空, 回補天數, 成交均價VWAP, 換手率, 持倉集中度, 鎖倉臨界點
+  // 6 metric cards: 中央結算總數, 中央結算增減, 大戶增持, 前5大增持, 持倉集中度, 鎖倉臨界點
   const mc = (lbl, val, sub, color) =>
     `<div style="background:var(--card);border:0.5px solid var(--border);border-radius:10px;padding:11px 12px">` +
     `<div style="font-size:11px;color:var(--muted);margin-bottom:5px">${lbl}</div>` +
-    `<div style="font-size:18px;font-weight:500;${color?'color:'+color:''}">${val}</div>` +
+    `<div style="font-size:18px;font-weight:500;${color?'color:'+color:''}">` + val + `</div>` +
     (sub ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${sub}</div>` : '') +
     `</div>`;
+
+  // ── New card values ───────────────────────────────────────────────────────
+  const totalSh      = rawEntry    ? (rawEntry.total_sh    || 0) : 0;
+  const prevTotalSh  = prevRawEntry ? (prevRawEntry.total_sh || 0) : 0;
+  const totalShDelta = totalSh > 0 && prevTotalSh > 0 ? totalSh - prevTotalSh : null;
+  const totalShDeltaStr   = totalShDelta !== null ? (totalShDelta >= 0 ? '+' : '') + fmtM(totalShDelta) : '—';
+  const totalShDeltaColor = totalShDelta === null ? '' : totalShDelta > 0 ? '#c0252d' : '#1a7a3c';
+
+  const grpNow  = groupHoldings(holders);
+  const grpPrev = prevHolders && prevHolders.length ? groupHoldings(prevHolders) : null;
+  const bigDelta      = grpPrev ? grpNow['大戶'].sh - grpPrev['大戶'].sh : null;
+  const bigDeltaStr   = bigDelta !== null ? (bigDelta >= 0 ? '+' : '') + fmtM(bigDelta) : '—';
+  const bigDeltaColor = bigDelta === null ? '' : bigDelta > 0 ? '#c0252d' : '#1a7a3c';
+
+  const top5Now  = holders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0);
+  const top5Prev = prevHolders && prevHolders.length
+    ? prevHolders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0) : null;
+  const top5Delta      = top5Prev !== null ? top5Now - top5Prev : null;
+  const top5DeltaStr   = top5Delta !== null ? (top5Delta >= 0 ? '+' : '') + top5Delta.toFixed(2) + 'pp' : '—';
+  const top5DeltaColor = top5Delta === null ? '' : top5Delta > 0 ? '#c0252d' : '#1a7a3c';
+
   const detMetrics = document.getElementById('sdw-det-metrics');
   if (detMetrics) detMetrics.innerHTML =
-    mc('今日沽空%',   sr>0 ? sr.toFixed(1)+'%'           : '—',  '',                       sr > shortHi({stock_type:stockType}) ? '#c0252d' : '') +
-    mc('累積沽空',    sfcHkd>0 ? fmtM(sfcHkd)             : '—',  'SFC 港元',               '') +
-    mc('回補天數',    dtc>0 ? dtc.toFixed(1)+' 日'         : '—',  'DTC',                    dtc>3 ? '#c0252d' : '') +
-    mc('成交均價 VWAP',vwap>0 ? 'HK$'+vwap.toFixed(2)     : '—',  '',                       '') +
-    mc('換手率',      tv5d>0 ? tv5d.toFixed(2)+'%'         : '—',  tv20d>0?'20日：'+tv20d.toFixed(1)+'%':'', '') +
-    mc('持倉集中度',  conc>0 ? conc.toFixed(1)+'%'         : '—',  '前5大合計 — '+concTier(conc).label, concTier(conc).color) +
-    mc('鎖倉臨界點',  conc>0 ? (gap>=0?'+':'')+gap.toFixed(1)+'%':'—', '臨界 '+lockup+'%',  exceeded ? '#c0252d' : '');
+    mc('中央結算總數',  totalSh > 0 ? fmtM(totalSh) : '—',  '本週 CCASS 總數',            '') +
+    mc('中央結算增減',  totalShDeltaStr,  prevTotalSh > 0 ? '較上週' : '需兩期數據',        totalShDeltaColor) +
+    mc('大戶增持',      bigDeltaStr,      grpPrev ? '大戶持股變化' : '需兩期數據',           bigDeltaColor) +
+    mc('前5大增持',     top5DeltaStr,     top5Prev !== null ? '前5大合計%變化' : '需兩期數據', top5DeltaColor) +
+    mc('持倉集中度',    conc>0 ? conc.toFixed(1)+'%' : '—',  '前5大合計 — '+concTier(conc).label, concTier(conc).color) +
+    mc('鎖倉臨界點',    conc>0 ? (gap>=0?'+':'')+gap.toFixed(1)+'%':'—', '臨界 '+lockup+'%', exceeded ? '#c0252d' : '');
 
   // 持倉比例 bars
   const grp = groupHoldings(holders);
