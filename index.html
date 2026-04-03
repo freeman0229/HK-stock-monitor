@@ -1939,7 +1939,7 @@ function _sfcDrawTotal(ctx, W, H, dates, canvas) {
   _sfcXLabels(ctx, P, H, dates);
 
   // Bars — capped at 45% of chart height
-  const bw = Math.max(2, Math.min(12, P.cW / n * 0.6));
+  const bw = Math.max(2, Math.min(6, P.cW / n * 0.35));
   series.forEach((s, i) => {
     const bh = yBar(s.sh);
     ctx.fillStyle = 'rgba(192,37,45,0.28)';
@@ -2041,7 +2041,7 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas) {
   _sfcXLabels(ctx, P, H, series.map(s => s.ds));
 
   // Bars — share count, right axis, capped at 45%
-  const bw = Math.max(2, Math.min(12, P.cW / n * 0.6));
+  const bw = Math.max(2, Math.min(6, P.cW / n * 0.35));
   series.forEach((s, i) => {
     const bh = yBar(s.sh);
     ctx.fillStyle = 'rgba(192,37,45,0.28)';
