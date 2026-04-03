@@ -886,16 +886,17 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     </div>
 
     <!-- Group history chart (持倉比例趨勢 — FIRST) -->
-    <div style="display:flex;align-items:baseline;gap:8px;margin:14px 0 4px">
-      <span style="font-size:12px;font-weight:500;color:var(--muted)">持倉比例趨勢（週度）</span>
+    <div style="margin:14px 0 6px">
+      <div style="font-size:13px;font-weight:500;color:var(--text)">持倉比例趨勢（週度）</div>
+      <div id="sdw-group-sub" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
     </div>
     <canvas id="sdwGroupCanvas" style="width:100%;display:block"></canvas>
     <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);justify-content:center"></div>
 
     <!-- sdw concentration chart (持倉集中度趨勢 — SECOND) -->
-    <div style="display:flex;align-items:baseline;gap:8px;margin:18px 0 4px;flex-wrap:wrap">
-      <span style="font-size:12px;font-weight:500;color:var(--muted)">持倉集中度趨勢</span>
-      <span id="sdw-chart-sub" style="font-size:11px;color:var(--muted)"></span>
+    <div style="margin:18px 0 6px">
+      <div style="font-size:13px;font-weight:500;color:var(--text)">持倉集中度趨勢</div>
+      <div id="sdw-chart-sub" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
     </div>
     <canvas id="sdwCanvas" style="width:100%;display:block;margin-bottom:12px"></canvas>
 
@@ -2883,9 +2884,10 @@ function renderSdwPanel() {
       : `上期：${prevDs}（相隔 ${weekGap} 週）`;
   }
 
+  document.getElementById('sdw-group-sub').textContent   = `${nameStr} ｜ 大戶 / 北水 / 散戶`;
   document.getElementById('sdw-chart-sub').textContent   = `${nameStr} 前5大機構合計持股% ｜ 資料截至 ${ds}`;
   document.getElementById('sdw-top5-label').textContent  = '持倉人明細';
-  document.getElementById('sdw-tbl-sub').textContent     = `${nameStr}（${ds}）｜ 共 ${holders.length} 個機構 ｜ ${prevNote}`;
+  document.getElementById('sdw-tbl-sub').textContent     = `${nameStr} ｜ 共 ${holders.length} 個機構 ｜ 資料截至 ${ds}`;
 
   // ── Table ────────────────────────────────────────────────────────────────
   const rows = holders.slice(0, topN).map((h, i) => {
@@ -2964,26 +2966,13 @@ function drawSdwChart(code, selectedDs) {
     return;
   }
 
-  // Identify top-5 participants by latest-date shareholding
-  const latestHolders = series[series.length-1].holders.slice(0, 5);
-  const top5pids      = latestHolders.map(h => h.pid);
-  const top5names     = latestHolders.map(h => h.name);
-
-  // Build per-pid time series
-  const pidSeries = top5pids.map(pid =>
-    series.map(s => {
-      const found = s.holders.find(h => h.pid === pid);
-      return found ? found.pct : null;
-    })
-  );
-
   const PAD   = { top: 18, right: 16, bottom: 34, left: 44 };
   const cW    = W - PAD.left - PAD.right;
   const cH    = H - PAD.top  - PAD.bottom;
   const n     = series.length;
 
-  // y-range: 0 to max top5sum + 5%
-  const maxY = Math.max(...series.map(s => s.top5sum), ...pidSeries.flat().filter(v=>v!=null)) * 1.1;
+  // y-range: 0 to max top5sum + 10%
+  const maxY = Math.max(...series.map(s => s.top5sum)) * 1.1;
   const xAt  = i => PAD.left + (i / (n-1)) * cW;
   const yAt  = v => PAD.top + cH - (v / maxY) * cH;
 
@@ -3000,25 +2989,7 @@ function drawSdwChart(code, selectedDs) {
     ctx.fillText((maxY * f).toFixed(1) + '%', PAD.left - 4, y);
   });
 
-  // ── Individual top-5 participant lines (dashed, muted) ───────────────────
-  top5pids.forEach((pid, pi) => {
-    const pts = pidSeries[pi];
-    ctx.save();
-    ctx.strokeStyle = SDW_COLORS[pi + 1] + '88';
-    ctx.lineWidth   = 1.5;
-    ctx.setLineDash([4, 3]);
-    ctx.beginPath();
-    let started = false;
-    pts.forEach((v, i) => {
-      if (v == null) { started = false; return; }
-      if (!started) { ctx.moveTo(xAt(i), yAt(v)); started = true; }
-      else            ctx.lineTo(xAt(i), yAt(v));
-    });
-    ctx.stroke();
-    ctx.restore();
-  });
-
-  // ── Top-10 aggregate line (solid, bold) ──────────────────────────────────
+  // ── Top-5 aggregate line (solid, bold) ──────────────────────────────────
   ctx.save();
   ctx.strokeStyle = SDW_COLORS[0];
   ctx.lineWidth   = 2.5;
@@ -3065,21 +3036,10 @@ function drawSdwChart(code, selectedDs) {
 
   // ── Legend ────────────────────────────────────────────────────────────────
   const legend = document.getElementById('sdw-group-legend');
-  const items  = [
-    { color: SDW_COLORS[0], label: '前10大合計%', dash: false },
-    ...top5names.map((name, i) => ({
-      color: SDW_COLORS[i+1],
-      label: name.length > 16 ? name.slice(0,15)+'…' : name,
-      dash: true,
-    })),
-  ];
-  legend.innerHTML = items.map((it, i) => `
-    <span class="sdw-leg-item">
-      <span class="sdw-leg-dot" style="background:${it.color};opacity:${it.dash?0.6:1};
-        ${it.dash ? 'background: repeating-linear-gradient(90deg,'+it.color+' 0,'+it.color+' 4px,transparent 4px,transparent 7px)' : ''}">
-      </span>
-      ${it.label}
-    </span>`).join('');
+  legend.innerHTML = `<span class="sdw-leg-item">
+    <span class="sdw-leg-dot" style="background:${SDW_COLORS[0]}"></span>
+    前5大合計%
+  </span>`;
 }
 
 
