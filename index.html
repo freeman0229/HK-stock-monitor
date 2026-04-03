@@ -2141,11 +2141,10 @@ function _sfcWireTip(canvas, pts, xFn, yFn, stepW, labelFn) {
 // ── Init (called when short tab is clicked) ────────────────────────────────────
 async function initSfcChart() {
   if (sfcInited && sfcLoaded) {
-    // Data already loaded — just ensure correct div visibility and draw
-    document.getElementById('sfc-loading').style.display  = 'none';
-    document.getElementById('sfc-nodata').style.display   = 'none';
-    document.getElementById('sfc-chart-wrap').style.display = 'block';
-    drawSfcChart();
+    document.getElementById('sfc-loading').style.display   = 'none';
+    document.getElementById('sfc-nodata').style.display    = sfcDates.length ? 'none' : 'block';
+    document.getElementById('sfc-chart-wrap').style.display = sfcDates.length ? 'block' : 'none';
+    if (sfcDates.length) drawSfcChart();
     return;
   }
 
@@ -2279,10 +2278,13 @@ function renderShort() {
   // If sfcData not yet loaded, the table will be re-rendered by computeSfcCards()
   const sfcStocks = sorted.filter(s => (s.sfc_hkd || 0) > 0);
   if (!sfcStocks.length) {
+    const msg = !sfcLoaded
+      ? '📡 SFC 數據載入中…請稍候'
+      : sfcDates.length
+        ? '⚠️ 無累積沽空數據'
+        : `⚠️ 找不到 SFC 數據文件<br><span style="font-size:12px;color:var(--muted)">請先執行：<code style="background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border)">python sfc_library.py</code>，然後將生成的 <code style="background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border)">sfc_YYYY.json</code> 部署到與 index.html 相同目錄</span>`;
     document.getElementById('body-short').innerHTML =
-      `<tr><td colspan="11"><div class="loading-box" style="padding:24px">
-        ${sfcLoaded ? '⚠️ 無累積沽空數據' : '📡 SFC 數據載入中…請稍候'}
-      </div></td></tr>`;
+      `<tr><td colspan="11"><div class="loading-box" style="padding:24px">${msg}</div></td></tr>`;
     return;
   }
   const html = sfcStocks.slice(0, 20).map((s,i) => {
@@ -3412,34 +3414,36 @@ setInterval(updateTicker, 3600000);
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 document.getElementById('hdr-time').textContent = new Date().toLocaleString('zh-HK');
-// Draw chart from cache immediately if available
 if (lastChartData.length) setTimeout(() => drawSbChart(lastChartData), 100);
 loadData();
 
-// Eagerly load SFC data at boot — don't wait for the tab click.
-// This ensures the 累積沽空排行 table and summary cards are populated
-// on first render, and the spinner is never stuck visible.
+// Eagerly load SFC JSON at boot so the table and chart work without
+// requiring the user to click the 累積沽空 tab first.
 (async () => {
-  // Show spinner only if the short tab is already active
-  const shortBtn = document.querySelector('.tab-btn[data-tab="short"]');
+  const shortBtn  = document.querySelector('.tab-btn[data-tab="short"]');
   const tabActive = shortBtn && shortBtn.classList.contains('active');
-  if (tabActive) document.getElementById('sfc-loading').style.display = 'block';
 
-  const ok = await loadSfcData();
+  const ok = await loadSfcData();   // sets sfcLoaded=true + populates sfcData/sfcDates on success
 
-  // Always hide spinner after load attempt
-  document.getElementById('sfc-loading').style.display = 'none';
-
-  if (ok) {
-    sfcInited = true;   // skip redundant reload when tab is clicked later
-    computeSfcCards();  // populate summary cards + re-render table
-    if (tabActive) {
-      document.getElementById('sfc-chart-wrap').style.display = 'block';
-      drawSfcChart();
-    }
-  } else if (tabActive) {
-    document.getElementById('sfc-nodata').style.display = 'block';
+  if (!ok) {
+    // Files not found — mark as attempted so renderShort() shows the correct error
+    sfcLoaded = true;   // switches message from "載入中" to "找不到文件"
+    // sfcDates stays [] → renderShort shows the "run sfc_library.py" message
   }
+
+  sfcInited = true;    // prevent initSfcChart() from re-fetching when tab is clicked
+
+  // Update chart area if the tab is already active
+  if (tabActive) {
+    document.getElementById('sfc-loading').style.display   = 'none';
+    document.getElementById('sfc-nodata').style.display    = ok ? 'none' : 'block';
+    document.getElementById('sfc-chart-wrap').style.display = ok ? 'block' : 'none';
+    if (ok) drawSfcChart();
+  }
+
+  // Repopulate summary cards and re-render table now that sfcData is known
+  if (ok) computeSfcCards();
+  else if (allStocks.length) renderShort();   // re-render with error message
 })();
 // Re-fetch data.json every 5 minutes — picks up new data.json without page reload
 setInterval(loadData, 5 * 60 * 1000);
