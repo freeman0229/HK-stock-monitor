@@ -1851,21 +1851,14 @@ async function drawSfcChart() {
     if (sfcMode === 'total') {
       _sfcDrawTotal(ctx, W, H, dates, canvas);
     } else {
-      // Individual stock — needs async price load
+      // Individual stock
       if (!sfcCurCode) {
         ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText('請選擇股票', W/2, H/2);
         return;
       }
-      // Show loading text while fetching price data
-      ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('載入價格數據…', W/2, H/2);
-      const priceMap = await buildStockPriceSeries(sfcCurCode, dates);
-      canvas.width = W; canvas.height = H;
-      ctx.clearRect(0, 0, W, H);
-      _sfcDrawStock(ctx, W, H, dates, sfcCurCode, priceMap, canvas);
+      _sfcDrawStock(ctx, W, H, dates, sfcCurCode, canvas);
     }
   } finally {
     _sfcDrawing = false;
@@ -2011,127 +2004,117 @@ function _sfcDrawTotal(ctx, W, H, dates, canvas) {
 }
 
 // ── Individual stock view ─────────────────────────────────────────────────────
-function _sfcDrawStock(ctx, W, H, dates, code, priceMap, canvas) {
+function _sfcDrawStock(ctx, W, H, dates, code, canvas) {
   const code5 = code.padStart(5, '0');
-  const sinfo = allStocks.find(s => s.code === code) || {};
+  const sinfo = allStocks.find(s => s.code === code || s.code === code5) || {};
 
-  // Only include dates where this stock actually has SFC data (skip hkd=0 gaps)
-  const sfcSeries = dates
-    .map(ds => { const r=(sfcData[ds]||{})[code5]||{}; return {ds,hkd:r.hkd||0,sh:r.sh||0,pct:r.pct||0}; })
+  // Build series from SFC data only
+  const series = dates
+    .map(ds => { const r = (sfcData[ds] || {})[code5] || {}; return { ds, hkd: r.hkd || 0, sh: r.sh || 0, pct: r.pct || 0 }; })
     .filter(s => s.hkd > 0);
 
-  if (!sfcSeries.length) {
-    ctx.fillStyle='#aaa'; ctx.font='13px sans-serif';
-    ctx.textAlign='center'; ctx.fillText('此股票在選定期間內無SFC沽空數據', W/2, H/2);
+  if (!series.length) {
+    ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('此股票在選定期間內無SFC沽空數據', W / 2, H / 2);
     return;
   }
 
-  const rangeStart = sfcSeries[0].ds;
-  const rangeEnd   = sfcSeries[sfcSeries.length-1].ds;
-  const priceDates = Object.keys(priceMap).filter(d=>d>=rangeStart&&d<=rangeEnd).sort();
-  const priceData  = priceDates.map(d=>({ds:d,...priceMap[d]}));
-
   const P      = _sfcLayout(W, H);
-  const maxHKD = Math.max(...sfcSeries.map(s=>s.hkd), 1) * 1.12;
-  const validClose = priceData.filter(p=>p.close>0);
-  const maxClose = validClose.length ? Math.max(...validClose.map(p=>p.close)) * 1.08 : 1;
-  const minClose = validClose.length ? Math.min(...validClose.map(p=>p.close)) * 0.94 : 0;
-  const maxVol   = Math.max(...priceData.map(p=>p.vol||0), 1);
+  const n      = series.length;
+  const maxHKD = Math.max(...series.map(s => s.hkd)) * 1.1;
+  const maxSH  = Math.max(...series.map(s => s.sh)) || 1;
 
-  // Use price dates for x axis (daily), SFC mapped onto same scale
-  const allDates = priceDates.length ? priceDates : sfcSeries.map(s=>s.ds);
-  const n = allDates.length;
-  const xAt  = ds => { const i=allDates.indexOf(ds); return i<0?null:P.left+(n>1?i/(n-1):0.5)*P.cW; };
-  const yHkd = v => P.top + P.cH - (v/maxHKD)*P.cH;
-  const yPx  = v => P.top + P.cH - ((v-minClose)/(maxClose-minClose||1))*P.cH;
-  const yBar = v => Math.max(1, (v/maxVol)*(P.cH*0.45));  // bars max 45%
+  const xAt  = i => P.left + (n > 1 ? i / (n - 1) : 0.5) * P.cW;
+  const yHkd = v => P.top + P.cH - (v / maxHKD) * P.cH;
+  const yBar = v => Math.max(1, (v / maxSH) * (P.cH * 0.45));
 
-
-  // Grid (left: HKD)
-  ctx.strokeStyle='#f0ede8'; ctx.lineWidth=1;
+  // Grid + left axis (HKD)
+  ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
   niceTicks(maxHKD, 5).forEach(t => {
-    const y=yHkd(t);
-    ctx.beginPath(); ctx.moveTo(P.left,y); ctx.lineTo(P.left+P.cW,y); ctx.stroke();
-    ctx.fillStyle='#bbb'; ctx.font='10px sans-serif';
-    ctx.textAlign='right'; ctx.textBaseline='middle';
-    ctx.fillText(_sfcFmtHKD(t), P.left-4, y);
+    const y = yHkd(t);
+    ctx.beginPath(); ctx.moveTo(P.left, y); ctx.lineTo(P.left + P.cW, y); ctx.stroke();
+    ctx.fillStyle = '#bbb'; ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(_sfcFmtHKD(t), P.left - 4, y);
   });
-  _sfcXLabels(ctx, P, H, allDates);
+  _sfcXLabels(ctx, P, H, series.map(s => s.ds));
 
-  // Volume bars (capped at 45% height)
-  const bw = Math.max(1, Math.min(8, P.cW/Math.max(n,1)*0.6));
-  priceData.forEach(p => {
-    const x=xAt(p.ds); if (x==null) return;
-    ctx.fillStyle='rgba(100,116,139,0.35)';
-    ctx.fillRect(x-bw/2, P.top+P.cH-yBar(p.vol||0), bw, yBar(p.vol||0));
+  // Bars — share count, right axis, capped at 45%
+  const bw = Math.max(2, Math.min(12, P.cW / n * 0.6));
+  series.forEach((s, i) => {
+    const bh = yBar(s.sh);
+    ctx.fillStyle = 'rgba(192,37,45,0.28)';
+    ctx.fillRect(xAt(i) - bw / 2, P.top + P.cH - bh, bw, bh);
   });
 
-  // Right axis: close price
-  if (validClose.length) {
-    ctx.fillStyle='#b8860b'; ctx.font='10px sans-serif';
-    ctx.textAlign='left'; ctx.textBaseline='middle';
-    niceTicks(maxClose-minClose, 4).forEach(t => {
-      const v=minClose+t, y=yPx(v);
-      if (y>=P.top && y<=P.top+P.cH)
-        ctx.fillText(v.toFixed(2), P.left+P.cW+4, y);
-    });
-    // Close line
-    ctx.save(); ctx.strokeStyle='#b8860b'; ctx.lineWidth=1.5;
-    ctx.beginPath(); let started=false;
-    priceData.forEach(p=>{
-      if(!p.close){started=false;return;}
-      const x=xAt(p.ds),y=yPx(p.close);
-      if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);
-    });
-    ctx.stroke(); ctx.restore();
-  }
+  // Right axis (share count)
+  ctx.fillStyle = '#bbb'; ctx.font = '10px sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  niceTicks(maxSH, 4).forEach(t => {
+    const y = P.top + P.cH - yBar(t);
+    ctx.fillText(_sfcFmtHKD(t), P.left + P.cW + 4, y);
+  });
 
-  // SFC area + line (connect actual data points, skip gaps)
+  // Area fill
   ctx.save();
-  const grad=ctx.createLinearGradient(0,P.top,0,P.top+P.cH);
-  grad.addColorStop(0,'rgba(192,37,45,0.18)'); grad.addColorStop(1,'rgba(192,37,45,0.02)');
-  const sfcPts=sfcSeries.map(s=>({...s,x:xAt(s.ds),y:yHkd(s.hkd)})).filter(p=>p.x!=null);
-  if (sfcPts.length>=2) {
-    ctx.beginPath();
-    sfcPts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
-    ctx.lineTo(sfcPts[sfcPts.length-1].x,P.top+P.cH);
-    ctx.lineTo(sfcPts[0].x,P.top+P.cH);
-    ctx.closePath(); ctx.fillStyle=grad; ctx.fill();
-    ctx.beginPath();
-    sfcPts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
-    ctx.strokeStyle='#c0252d'; ctx.lineWidth=2; ctx.stroke();
-    sfcPts.forEach(p=>{
-      ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2);
-      ctx.fillStyle='#fff'; ctx.strokeStyle='#c0252d'; ctx.lineWidth=1.5;
-      ctx.fill(); ctx.stroke();
-    });
-  }
-  ctx.restore();
+  const grad = ctx.createLinearGradient(0, P.top, 0, P.top + P.cH);
+  grad.addColorStop(0, 'rgba(192,37,45,0.18)'); grad.addColorStop(1, 'rgba(192,37,45,0.02)');
+  ctx.beginPath();
+  series.forEach((s, i) => { const x = xAt(i), y = yHkd(s.hkd); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.lineTo(xAt(n - 1), P.top + P.cH); ctx.lineTo(xAt(0), P.top + P.cH); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill(); ctx.restore();
+
+  // HKD line + dots
+  ctx.save(); ctx.strokeStyle = '#c0252d'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  series.forEach((s, i) => { const x = xAt(i), y = yHkd(s.hkd); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.stroke(); ctx.restore();
+  series.forEach((s, i) => {
+    ctx.beginPath(); ctx.arc(xAt(i), yHkd(s.hkd), 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#c0252d'; ctx.lineWidth = 1.5;
+    ctx.fill(); ctx.stroke();
+  });
+
+  // Last value label
+  const last = series[n - 1];
+  ctx.fillStyle = '#c0252d'; ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(_sfcFmtHKD(last.hkd), xAt(n - 1) + 4, yHkd(last.hkd));
 
   // Title
-  ctx.fillStyle='#444'; ctx.font='bold 12px sans-serif';
-  ctx.textAlign='left'; ctx.textBaseline='top';
-  ctx.fillText(`${code5} ${sinfo.name_chi||code5}`, P.left, 4);
+  ctx.fillStyle = '#444'; ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(`${code5} ${sinfo.name_chi || code5}`, P.left, 4);
 
+  // Axis labels
+  ctx.fillStyle = '#aaa'; ctx.font = '10px sans-serif';
+  ctx.save(); ctx.translate(11, P.top + P.cH / 2); ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('累積沽空金額 (HKD)', 0, 0); ctx.restore();
+
+  ctx.save(); ctx.translate(W - 8, P.top + P.cH / 2); ctx.rotate(Math.PI / 2);
+  ctx.fillStyle = '#bbb'; ctx.font = '10px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('累積沽空股數', 0, 0); ctx.restore();
+
+  // Legend
   document.getElementById('sfc-legend').innerHTML = `
     <span style="display:flex;align-items:center;gap:5px">
-      <span style="width:22px;height:3px;background:#c0252d;display:inline-block;border-radius:2px"></span>SFC 累計沽空持倉（港元，左軸）
+      <span style="width:22px;height:3px;background:#c0252d;display:inline-block;border-radius:2px"></span>累積沽空金額（港元，左軸）
     </span>
     <span style="display:flex;align-items:center;gap:5px">
-      <span style="width:22px;height:2px;background:#b8860b;display:inline-block;border-radius:2px"></span>收市價（右軸）
-    </span>
-    <span style="display:flex;align-items:center;gap:5px">
-      <span style="width:10px;height:10px;background:rgba(100,116,139,0.4);display:inline-block;border-radius:1px"></span>成交量（底部柱）
+      <span style="width:10px;height:10px;background:rgba(192,37,45,0.28);display:inline-block;border-radius:2px"></span>累積沽空股數（右軸）
     </span>`;
 
-  // Hover tooltip — wire on SFC weekly points only, show price if available
-  _sfcWireTip(canvas, sfcPts, p=>p.x, p=>p.y, P.cW/Math.max(sfcPts.length-1,1), p => {
-    const pr = priceMap[p.ds];
-    return `<b>${p.ds}</b><br>` +
-      `SFC沽空 ${_sfcFmtHKD(p.hkd)}<br>` +
-      `佔已發行股份 ${p.pct>0?p.pct.toFixed(2)+'%':'—'}` +
-      (pr&&pr.close?`<br>收市價 $${pr.close.toFixed(2)}`:'');
-  });
+  // Tooltip
+  const pts = series.map((s, i) => ({ ...s, x: xAt(i), y: yHkd(s.hkd) }));
+  _sfcWireTip(canvas, pts, p => p.x, p => p.y, P.cW / Math.max(n - 1, 1), p =>
+    `<b>${p.ds}</b><br>` +
+    `累積沽空金額 ${_sfcFmtHKD(p.hkd)}<br>` +
+    `累積沽空股數 ${_sfcFmtHKD(p.sh)}` +
+    (p.pct > 0 ? `<br>佔已發行股份 ${p.pct.toFixed(2)}%` : '')
+  );
 }
 
 // ── Tooltip helper ────────────────────────────────────────────────────────────
