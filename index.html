@@ -806,12 +806,12 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th class="rank">#</th>
           <th>股票</th>
           <th class="num-r" data-col="sfc_sh">累積沽空股數</th>
-          <th class="num-r" data-col="sfc_pct">賣空比例</th>
-          <th class="num-r mob-hide" data-col="sfc_hkd">累積沽空金額</th>
+          <th class="num-r" data-col="sfc_hkd">累積沽空金額</th>
           <th class="num-r" data-col="short_ratio">日沽空%</th>
           <th class="num-r mob-hide" data-col="days_to_cover">回補天數</th>
+          <th class="num-r mob-hide" data-col="sfc_pct">賣空比例</th>
+          <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔已發行股份合計%；超過鎖倉臨界點以紅色顯示">持倉集中度</th>
           <th class="num-r mob-hide" data-col="turnover">成交額(萬)</th>
-          <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔已發行股份合計%；超過鎖倉臨界點以紅色顯示">集中度%</th>
           <th>沽空趨勢</th>
           <th data-col="insight">信號</th>
         </tr>
@@ -2350,12 +2350,12 @@ function renderShort() {
       <td class="rank">${i+1}</td>
       <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
       <td class="num-r">${sfcSh  > 0 ? sfcSh.toLocaleString('zh-HK') : '—'}</td>
-      <td class="num-r">${sfcPct > 0 ? sfcPct.toFixed(2) + '%'       : '—'}</td>
-      <td class="num-r mob-hide">${sfcHkd > 0 ? fmtM(sfcHkd)                  : '—'}</td>
+      <td class="num-r">${sfcHkd > 0 ? fmtM(sfcHkd)                  : '—'}</td>
       <td class="num-r ${s.short_ratio > shortHi(s) ? 'up-txt' : ''}">${fmtPct(s.short_ratio)}</td>
       <td class="num-r mob-hide ${dtcClass}">${dtcTxt}</td>
-      <td class="num-r mob-hide">${fmtM(s.turnover)}</td>
+      <td class="num-r mob-hide">${sfcPct > 0 ? sfcPct.toFixed(2) + '%' : '—'}</td>
       <td class="num-r mob-hide ${concClass}">${concTxt}</td>
+      <td class="num-r mob-hide">${fmtM(s.turnover)}</td>
       <td class="${diffClass}">${trend}</td>
       <td>${insightBadge(s.insight)}</td>
     </tr>`;
