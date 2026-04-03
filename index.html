@@ -1562,8 +1562,9 @@ let sfcDates      = [];     // sorted asc
 let sfcMode       = 'total';
 let sfcRange      = '1y';
 let sfcCurCode    = '';
-let sfcInited     = false;
-let sfcLoaded     = false;
+let sfcInited       = false;
+let sfcLoaded       = false;
+let sfcEventsWired  = false;
 
 // turnover data cache: { year: { "YYYY-MM-DD": { code: {tv,vol,close} } } }
 let tvCache       = {};
@@ -1759,11 +1760,20 @@ function sfcBuildDropdown(query) {
   if (!q) {
     // Empty query — show top 20 stocks by HKD from latest SFC date
     const latestRecs = sfcData[latestDs] || {};
-    show = Object.entries(latestRecs)
+    const sfcTop = Object.entries(latestRecs)
       .filter(([c]) => c !== '__total__')
       .sort((a, b) => (b[1].hkd || 0) - (a[1].hkd || 0))
       .slice(0, 20)
       .map(([code]) => code);
+    if (sfcTop.length) {
+      show = sfcTop;
+    } else {
+      // No SFC data yet — fall back to allStocks sorted by short_ratio
+      show = [...allStocks]
+        .sort((a, b) => b.short_ratio - a.short_ratio)
+        .slice(0, 20)
+        .map(s => s.code.padStart(5, '0'));
+    }
     if (!show.length) { dd.style.display = 'none'; return; }
   } else {
     // Typing — filter across all SFC codes
@@ -2169,12 +2179,59 @@ function _sfcWireTip(canvas, pts, xFn, yFn, stepW, labelFn) {
 }
 
 // ── Init (called when short tab is clicked) ────────────────────────────────────
+function _sfcWireEvents() {
+  if (sfcEventsWired) return;
+  sfcEventsWired = true;
+
+  // Set date input values to match the default '1y' pill
+  const fromEl = document.getElementById('sfc-from');
+  const toEl   = document.getElementById('sfc-to');
+  if (fromEl && toEl) {
+    const today = new Date();
+    toEl.value   = today.toISOString().slice(0, 10);
+    fromEl.value = new Date(today - 365 * 86400000).toISOString().slice(0, 10);
+    if (sfcDates.length) {
+      fromEl.min = sfcDates[0];  fromEl.max = sfcDates[sfcDates.length-1];
+      toEl.min   = sfcDates[0];  toEl.max   = today.toISOString().slice(0, 10);
+    }
+    const onDateChange = () => {
+      const f = fromEl.value, t = toEl.value;
+      if (!f || !t || f > t) return;
+      sfcCustomFrom = f;
+      sfcCustomTo   = t;
+      document.querySelectorAll('.sfc-pill').forEach(b => b.classList.remove('active'));
+      drawSfcChart();
+    };
+    fromEl.addEventListener('change', onDateChange);
+    toEl.addEventListener('change',   onDateChange);
+  }
+
+  // Wire search input
+  const inp = document.getElementById('sfc-search');
+  if (!inp) return;
+  inp.addEventListener('input',  () => sfcBuildDropdown(inp.value));
+  inp.addEventListener('focus',  () => sfcBuildDropdown(inp.value));
+  inp.addEventListener('blur',   () => setTimeout(() => {
+    document.getElementById('sfc-dropdown').style.display = 'none';
+  }, 150));
+  inp.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const q = inp.value.trim().split(/[\s\u3000]+/)[0];
+    if (!q) return;
+    sfcCurCode = q.padStart(5, '0');
+    document.getElementById('sfc-dropdown').style.display = 'none';
+    sfcSetMode('stock');
+    drawSfcChart();
+  });
+}
+
 async function initSfcChart() {
   if (sfcInited && sfcLoaded) {
     // Data already attempted — ensure correct div visibility then draw
     document.getElementById('sfc-loading').style.display    = 'none';
     document.getElementById('sfc-nodata').style.display     = 'none';
     document.getElementById('sfc-chart-wrap').style.display = 'block';
+    _sfcWireEvents();   // safe to call again — guarded by sfcEventsWired flag
     drawSfcChart();
     return;
   }
@@ -2198,48 +2255,7 @@ async function initSfcChart() {
 
   computeSfcCards();  // populate summary cards directly from sfcData
 
-  // Wire search input
-  const inp = document.getElementById('sfc-search');
-  inp.addEventListener('input',  () => sfcBuildDropdown(inp.value));
-  inp.addEventListener('focus',  () => sfcBuildDropdown(inp.value));
-  inp.addEventListener('blur',   () => setTimeout(() => {
-    document.getElementById('sfc-dropdown').style.display = 'none';
-  }, 150));
-  inp.addEventListener('keydown', e => {
-    if (e.key !== 'Enter') return;
-    const q = inp.value.trim().split(/[\s\u3000]+/)[0];
-    if (!q) return;
-    sfcCurCode = q.padStart(5, '0');
-    document.getElementById('sfc-dropdown').style.display = 'none';
-    sfcSetMode('stock');
-    drawSfcChart();
-  });
-
-  // Wire custom date inputs
-  const fromEl = document.getElementById('sfc-from');
-  const toEl   = document.getElementById('sfc-to');
-  if (fromEl && toEl && sfcDates.length) {
-    // Set initial values matching the default '1y' pill
-    const today = new Date();
-    toEl.value  = today.toISOString().slice(0, 10);
-    fromEl.value = new Date(today - 365 * 86400000).toISOString().slice(0, 10);
-    // Set min/max bounds to available data range
-    fromEl.min = sfcDates[0];   fromEl.max = sfcDates[sfcDates.length-1];
-    toEl.min   = sfcDates[0];   toEl.max   = today.toISOString().slice(0, 10);
-
-    const onDateChange = () => {
-      const f = fromEl.value, t = toEl.value;
-      if (!f || !t || f > t) return;   // invalid range — wait for both
-      sfcCustomFrom = f;
-      sfcCustomTo   = t;
-      // Deactivate all pills — user is in custom mode
-      document.querySelectorAll('.sfc-pill').forEach(b => b.classList.remove('active'));
-      drawSfcChart();
-    };
-    fromEl.addEventListener('change', onDateChange);
-    toEl.addEventListener('change',   onDateChange);
-  }
-
+  _sfcWireEvents();
   sfcInited = true;
   drawSfcChart();
 }
@@ -3469,6 +3485,7 @@ setInterval(loadData, 5 * 60 * 1000);
   const ok = await loadSfcData();
   sfcLoaded = true;   // mark attempted regardless of success
   sfcInited = true;   // prevent initSfcChart() from redundantly re-fetching
+  _sfcWireEvents();   // wire events + populate date inputs now that data is ready
 
   // Re-render table now that SFC state is settled (allStocks may already be loaded)
   if (allStocks.length) renderShort();
