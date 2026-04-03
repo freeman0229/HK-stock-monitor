@@ -906,19 +906,28 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <!-- Top-5 table -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin:16px 0 7px">
       <div>
-        <div style="font-size:12px;font-weight:500;color:var(--muted)" id="sdw-top5-label">前5大持倉人明細</div>
-        <div style="font-size:11px;color:var(--muted)" id="sdw-tbl-title"></div>
-        <div style="font-size:11px;color:var(--label)" id="sdw-tbl-sub"></div>
+        <div style="font-size:13px;font-weight:500;color:var(--text)" id="sdw-top5-label"></div>
+        <div style="font-size:11px;color:var(--label);margin-top:2px" id="sdw-tbl-sub"></div>
       </div>
-      <div style="display:flex;gap:6px;">
+      <div style="display:flex;gap:6px;align-items:center">
+        <button id="sdw-toggle-detail" onclick="sdwToggleDetail()"
+          style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">持倉明細 ▼</button>
         <button id="sdw-top5-btn-5"  onclick="sdwSetTopN(5)"
           style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--red);background:var(--red);color:#fff;cursor:pointer;font-family:inherit">前5位</button>
         <button id="sdw-top5-btn-10" onclick="sdwSetTopN(10)"
           style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">前10位</button>
       </div>
     </div>
-    <div class="tbl-wrap">
-      <table id="tbl-sdw" class="detail-holder-tbl" style="width:100%;font-size:12px;border-collapse:collapse">
+    <div id="sdw-detail-tbl-wrap" class="tbl-wrap">
+      <table id="tbl-sdw" class="detail-holder-tbl" style="width:100%;font-size:12px;border-collapse:collapse;table-layout:fixed">
+        <colgroup>
+          <col style="width:30px">
+          <col>
+          <col style="width:110px">
+          <col style="width:90px">
+          <col style="width:130px" class="mob-hide">
+          <col style="width:100px" class="mob-hide">
+        </colgroup>
         <thead><tr>
           <th class="rank">#</th>
           <th>中央結算參與者</th>
@@ -2658,6 +2667,13 @@ let sdwCurDate    = '';   // currently selected date
 let sdwInitDone   = false;
 let sdwLoaded     = false;
 let sdwTopN       = 5;    // current top-n selection
+let sdwDetailOpen = true; // toggle state for 明細
+
+function sdwToggleDetail() {
+  sdwDetailOpen = !sdwDetailOpen;
+  document.getElementById('sdw-detail-tbl-wrap').style.display = sdwDetailOpen ? '' : 'none';
+  document.getElementById('sdw-toggle-detail').textContent = sdwDetailOpen ? '持倉明細 ▲' : '持倉明細 ▼';
+}
 
 function sdwSetTopN(n) {
   sdwTopN = n;
@@ -2882,8 +2898,8 @@ function renderSdwPanel() {
 
   document.getElementById('sdw-chart-title').textContent = `${nameStr} — 持倉集中度趨勢`;
   document.getElementById('sdw-chart-sub').textContent   = `前10大機構合計持股% ｜ 資料截至 ${ds}`;
-  document.getElementById('sdw-tbl-title').textContent   = `前5大持倉人明細（${ds}）`;
-  document.getElementById('sdw-tbl-sub').textContent     = `${nameStr} ｜ 共 ${holders.length} 個機構 ｜ ${prevNote}`;
+  document.getElementById('sdw-top5-label').textContent  = nameStr;
+  document.getElementById('sdw-tbl-sub').textContent     = `持倉人明細（${ds}）｜ 共 ${holders.length} 個機構 ｜ ${prevNote}`;
   document.getElementById('sdw-detail-title').textContent = nameStr;
   document.getElementById('sdw-detail-sub').textContent   = `資料日期：${ds}`;
 
@@ -3186,7 +3202,6 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
   document.getElementById('sdw-group-bars').innerHTML += lockupNote;
 
   // Top-5 table (no 組別 column)
-  document.getElementById('sdw-top5-label').textContent = `前5大持倉人明細（${ds}）`;
   const _topN = sdwTopN;
   const top5 = holders.slice(0, _topN);
   const others = holders.slice(_topN).reduce((a,h) => a + (h.pct||0), 0);
