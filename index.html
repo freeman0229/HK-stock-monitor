@@ -3113,8 +3113,8 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
 
   const grpNow  = groupHoldings(holders);
   const grpPrev = prevHolders && prevHolders.length ? groupHoldings(prevHolders) : null;
-  const bigDelta      = grpPrev ? grpNow['大戶'].sh - grpPrev['大戶'].sh : null;
-  const bigDeltaStr   = bigDelta !== null ? (bigDelta >= 0 ? '+' : '') + fmtM(bigDelta) : '—';
+  const bigDelta      = grpPrev ? grpNow['大戶'].pct - grpPrev['大戶'].pct : null;
+  const bigDeltaStr   = bigDelta !== null ? (bigDelta >= 0 ? '+' : '') + bigDelta.toFixed(2) + 'pp' : '—';
   const bigDeltaColor = bigDelta === null ? '' : bigDelta > 0 ? '#c0252d' : '#1a7a3c';
 
   const top5Now  = holders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0);
@@ -3128,7 +3128,7 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
   if (detMetrics) detMetrics.innerHTML =
     mc('中央結算總數',  totalSh > 0 ? fmtM(totalSh) : '—',  '本週 CCASS 總數',            '') +
     mc('中央結算增減',  totalShDeltaStr,  prevTotalSh > 0 ? '較上週' : '需兩期數據',        totalShDeltaColor) +
-    mc('大戶增持',      bigDeltaStr,      grpPrev ? '大戶持股變化' : '需兩期數據',           bigDeltaColor) +
+    mc('大戶增持',      bigDeltaStr,      grpPrev ? '大戶%變化' : '需兩期數據',              bigDeltaColor) +
     mc('前5大增持',     top5DeltaStr,     top5Prev !== null ? '前5大合計%變化' : '需兩期數據', top5DeltaColor) +
     mc('持倉集中度',    conc>0 ? conc.toFixed(1)+'%' : '—',  '前5大合計 — '+concTier(conc).label, concTier(conc).color) +
     mc('鎖倉臨界點',    conc>0 ? (gap>=0?'+':'')+gap.toFixed(1)+'%':'—', '臨界 '+lockup+'%', exceeded ? '#c0252d' : '');
