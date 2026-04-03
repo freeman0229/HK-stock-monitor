@@ -1748,32 +1748,44 @@ function sfcSetRange(r) {
 function sfcBuildDropdown(query) {
   const dd = document.getElementById('sfc-dropdown');
   const q  = query.trim().toLowerCase();
-  if (!q) { dd.style.display = 'none'; return; }  // require ≥1 char
 
-  // Use SFC dataset when available; fall back to allStocks
-  let sfcCodes;
-  if (sfcDates.length) {
-    const sfcCodeSet = new Set();
-    sfcDates.forEach(ds => {
-      Object.keys(sfcData[ds] || {}).forEach(c => { if (c !== '__total__') sfcCodeSet.add(c); });
-    });
-    sfcCodes = [...sfcCodeSet].sort();
-  } else {
-    sfcCodes = allStocks.map(s => s.code.padStart(5, '0'));
-  }
-
+  // Build name lookup from allStocks
   const nameMap = {};
   allStocks.forEach(s => { nameMap[s.code.padStart(5,'0')] = { chi: s.name_chi, eng: s.name || '' }; });
 
   const latestDs = sfcDates[sfcDates.length-1] || '';
-  const matches  = sfcCodes.filter(code => {
-    const info = nameMap[code] || {};
-    return code.includes(q) || (info.chi||'').includes(q) || (info.eng||'').toLowerCase().includes(q);
-  });
 
-  if (!matches.length) { dd.style.display = 'none'; return; }
+  let show;
+  if (!q) {
+    // Empty query — show top 20 stocks by HKD from latest SFC date
+    const latestRecs = sfcData[latestDs] || {};
+    show = Object.entries(latestRecs)
+      .filter(([c]) => c !== '__total__')
+      .sort((a, b) => (b[1].hkd || 0) - (a[1].hkd || 0))
+      .slice(0, 20)
+      .map(([code]) => code);
+    if (!show.length) { dd.style.display = 'none'; return; }
+  } else {
+    // Typing — filter across all SFC codes
+    let sfcCodes;
+    if (sfcDates.length) {
+      const sfcCodeSet = new Set();
+      sfcDates.forEach(ds => {
+        Object.keys(sfcData[ds] || {}).forEach(c => { if (c !== '__total__') sfcCodeSet.add(c); });
+      });
+      sfcCodes = [...sfcCodeSet].sort();
+    } else {
+      sfcCodes = allStocks.map(s => s.code.padStart(5, '0'));
+    }
+    show = sfcCodes.filter(code => {
+      const info = nameMap[code] || {};
+      return code.includes(q) || (info.chi||'').includes(q) || (info.eng||'').toLowerCase().includes(q);
+    }).slice(0, 50);
+    if (!show.length) { dd.style.display = 'none'; return; }
+  }
+
   dd.style.maxHeight = '280px'; dd.style.overflowY = 'auto';
-  dd.innerHTML = matches.slice(0, 50).map(code => {
+  dd.innerHTML = show.map(code => {
     const info = nameMap[code] || {};
     const rec  = (sfcData[latestDs]||{})[code] || {};
     const sub  = rec.hkd ? `HKD ${(rec.hkd/1e8).toFixed(1)}億` : '';
