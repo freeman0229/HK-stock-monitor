@@ -910,11 +910,12 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <div style="font-size:11px;color:var(--muted)" id="sdw-tbl-title"></div>
         <div style="font-size:11px;color:var(--label)" id="sdw-tbl-sub"></div>
       </div>
-      <select id="sdw-top5-n" onchange="renderSdwPanel()" style="font-size:11px;padding:3px 20px 3px 8px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--text);appearance:none;cursor:pointer">
-        <option value="5" selected>前5位</option>
-        <option value="10">前10位</option>
-        <option value="0">全部</option>
-      </select>
+      <div style="display:flex;gap:6px;">
+        <button id="sdw-top5-btn-5"  onclick="sdwSetTopN(5)"
+          style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--red);background:var(--red);color:#fff;cursor:pointer;font-family:inherit">前5位</button>
+        <button id="sdw-top5-btn-10" onclick="sdwSetTopN(10)"
+          style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">前10位</button>
+      </div>
     </div>
     <div class="tbl-wrap">
       <table id="tbl-sdw" class="detail-holder-tbl" style="width:100%;font-size:12px;border-collapse:collapse">
@@ -2656,6 +2657,20 @@ let sdwCurCode    = '';   // currently selected stock code
 let sdwCurDate    = '';   // currently selected date
 let sdwInitDone   = false;
 let sdwLoaded     = false;
+let sdwTopN       = 5;    // current top-n selection
+
+function sdwSetTopN(n) {
+  sdwTopN = n;
+  document.getElementById('sdw-top5-btn-5').style.cssText  =
+    `padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;` +
+    (n===5  ? 'border:0.5px solid var(--red);background:var(--red);color:#fff'
+             : 'border:0.5px solid var(--border);background:var(--card);color:var(--muted)');
+  document.getElementById('sdw-top5-btn-10').style.cssText =
+    `padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;` +
+    (n===10 ? 'border:0.5px solid var(--red);background:var(--red);color:#fff'
+             : 'border:0.5px solid var(--border);background:var(--card);color:var(--muted)');
+  renderSdwPanel();
+}
 const SDW_COLORS  = [
   '#c0252d','#2563eb','#16a34a','#b8860b','#7c3aed',
   '#0891b2','#b45309','#be185d','#64748b','#15803d',
@@ -3172,21 +3187,31 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
 
   // Top-5 table (no 組別 column)
   document.getElementById('sdw-top5-label').textContent = `前5大持倉人明細（${ds}）`;
-  const _topN = parseInt((document.getElementById('sdw-top5-n')||{}).value||5) || 5;
-  const _showAll = _topN === 0;
-  const top5 = _showAll ? holders : holders.slice(0, _topN);
-  const others = (_showAll ? 0 : holders.slice(_topN).reduce((a,h) => a + (h.pct||0), 0));
+  const _topN = sdwTopN;
+  const top5 = holders.slice(0, _topN);
+  const others = holders.slice(_topN).reduce((a,h) => a + (h.pct||0), 0);
   document.getElementById('body-sdw').innerHTML =
-    top5.map((h,i) => `<tr>
-      <td style="color:var(--muted)">${i+1}</td>
-      <td class="pid-cell">${h.pid}</td>
-      <td>${h.name}</td>
-      <td style="text-align:right;color:var(--muted);font-size:11px">${h.sh.toLocaleString('zh-HK')}</td>
-      <td>${h.pct.toFixed(1)}%</td>
-    </tr>`).join('') +
+    top5.map((h,i) => {
+      const prev    = prevHolders ? prevHolders.find(p => p.pid === h.pid) : null;
+      const dSh     = prev ? h.sh  - prev.sh  : null;
+      const dPct    = prev ? h.pct - prev.pct : null;
+      const dShStr  = dSh  !== null ? (dSh  >= 0 ? '+' : '') + dSh.toLocaleString('zh-HK')  : '—';
+      const dPctStr = dPct !== null ? (dPct >= 0 ? '+' : '') + dPct.toFixed(2) + '%'         : '—';
+      const dShCol  = dSh  !== null && dSh  !== 0 ? (dSh  > 0 ? 'color:#c0252d' : 'color:#1a7a3c') : 'color:var(--muted)';
+      const dPctCol = dPct !== null && dPct !== 0 ? (dPct > 0 ? 'color:#c0252d' : 'color:#1a7a3c') : 'color:var(--muted)';
+      return `<tr>
+        <td style="color:var(--muted)">${i+1}</td>
+        <td><span style="font-family:monospace;font-size:11px;color:var(--muted)">${h.pid}</span> ${h.name}</td>
+        <td style="text-align:right;color:var(--muted);font-size:11px">${h.sh.toLocaleString('zh-HK')}</td>
+        <td style="text-align:right;font-weight:600">${h.pct.toFixed(1)}%</td>
+        <td class="mob-hide" style="text-align:right;${dShCol}">${dShStr}</td>
+        <td class="mob-hide" style="text-align:right;${dPctCol}">${dPctStr}</td>
+      </tr>`;
+    }).join('') +
     `<tr style="background:var(--card-alt,var(--bg))">
-      <td colspan="4" style="color:var(--muted);font-size:11px">其餘持倉人合計</td>
-      <td>${others.toFixed(1)}%</td>
+      <td colspan="3" style="color:var(--muted);font-size:11px">其餘持倉人合計</td>
+      <td style="text-align:right;font-weight:600">${others.toFixed(1)}%</td>
+      <td colspan="2"></td>
     </tr>`;
 }
 
