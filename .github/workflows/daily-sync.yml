@@ -26,6 +26,7 @@ on:
           - sfc-build
           - turnover-build   # rebuild turnover library from scratch
           - short-build      # rebuild short selling library from scratch
+          - ccass-universe   # rebuild CCASS universe
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -460,3 +461,28 @@ jobs:
           for f in di_20*.json; do [ -f "$f" ] && git add "$f"; done
           git diff --staged --quiet || \
             (git commit -m "DI weekly: $(date +'%Y-%m-%d')" && git push)
+
+  # ── CCASS universe build (manual) ────────────────────────────────────────────
+  ccass-universe:
+    name: CCASS universe build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'ccass-universe'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Build CCASS universe
+        run: python ccass_universe.py
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          [ -f "ccass_universe.json" ] && git add "ccass_universe.json"
+          git diff --staged --quiet || \
+            (git commit -m "CCASS universe build: $(date +'%Y-%m-%d %H:%M')" && git push)
