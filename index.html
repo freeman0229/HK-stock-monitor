@@ -1609,7 +1609,7 @@ function computeSfcCards() {
       const prevHkd   = (prev[code] || {}).hkd || 0;
       const hkd_delta = prevHkd > 0 ? v.hkd - prevHkd : 0;
       // Match name from allStocks if available, fall back to SFC name field
-      const stock = allStocks.find(s => s.code === code || s.code === code.replace(/^0+/,'').padStart(5,'0'));
+      const stock = allStocks.find(s => s.code.padStart(5,'0') === code);
       const name  = (stock && stock.name_chi) || v.name || code;
       return { code, name, hkd: v.hkd || 0, hkd_delta };
     })
@@ -1650,6 +1650,9 @@ function computeSfcCards() {
   el('sh-inc-top-val',      sfcIncVal  || sfcCache.sfcIncVal  || 'SFC 每週五發布');
   elHtml('sh-dec-top-name', (sfcDecName || sfcCache.sfcDecName || '數據待更新') + (sfcDecName ? staleTag : ''));
   el('sh-dec-top-val',      sfcDecVal  || sfcCache.sfcDecVal  || 'SFC 每週五發布');
+
+  // Re-render the 累積沽空排行 table now that sfcData is loaded
+  if (allStocks.length) renderShort();
 }
 async function loadTvYear(year) {
   if (tvCache[year]) return tvCache[year];
@@ -1799,6 +1802,9 @@ async function drawSfcChart() {
   const wrap   = document.getElementById('sfc-chart-wrap');
   const canvas = document.getElementById('sfcCanvas');
   wrap.style.display = 'block';
+
+  // Defer measurement to next frame so wrap has a real clientWidth after display:block
+  await new Promise(r => requestAnimationFrame(r));
 
   const W = (wrap.clientWidth || 680);
   const H = Math.max(260, Math.min(380, W * 0.45));
@@ -2201,7 +2207,8 @@ function renderShort() {
 
   const augmented = allStocks.map(s => {
     if ((s.sfc_hkd || 0) > 0) return s;                         // data.json has it — use it
-    const rec = sfcLatest[s.code] || sfcLatest[s.code.replace(/^0+/,'').padStart(5,'0')] || {};
+    const code5 = s.code.padStart(5, '0');
+    const rec = sfcLatest[code5] || {};
     if (!rec.hkd) return s;
     return { ...s, sfc_hkd: rec.hkd || 0, sfc_sh: rec.sh || 0 };
   });
@@ -2261,7 +2268,17 @@ function renderShort() {
   drawShortRiskMap(sorted);
 
   // ── Table ─────────────────────────────────────────────────────────────────
-  const html = sorted.slice(0, 20).map((s,i) => {
+  // Only show stocks with SFC cumulative position data (sfc_hkd > 0)
+  // If sfcData not yet loaded, the table will be re-rendered by computeSfcCards()
+  const sfcStocks = sorted.filter(s => (s.sfc_hkd || 0) > 0);
+  if (!sfcStocks.length) {
+    document.getElementById('body-short').innerHTML =
+      `<tr><td colspan="11"><div class="loading-box" style="padding:24px">
+        ${sfcLoaded ? '⚠️ 無累積沽空數據' : '📡 SFC 數據載入中…請稍候'}
+      </div></td></tr>`;
+    return;
+  }
+  const html = sfcStocks.slice(0, 20).map((s,i) => {
     const diff      = s.short_ratio - s.short_avg;
     const diffClass = diff > 2 ? 'up-txt' : diff < -2 ? 'dn-txt' : '';
     const trend     = diff > 2 ? '📈 上升' : diff < -2 ? '📉 下降' : '→ 平穩';
