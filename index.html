@@ -777,7 +777,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     </div>
 
     <!-- Chart canvas -->
-    <div id="sfc-loading" style="padding:40px;text-align:center;color:var(--muted)">
+    <div id="sfc-loading" style="display:none;padding:40px;text-align:center;color:var(--muted)">
       <div class="spinner" style="display:inline-block;margin-right:8px"></div>載入 SFC 數據…
     </div>
     <div id="sfc-nodata" style="display:none;padding:40px;text-align:center;color:var(--muted);font-size:13px">
@@ -2140,7 +2140,14 @@ function _sfcWireTip(canvas, pts, xFn, yFn, stepW, labelFn) {
 
 // ── Init (called when short tab is clicked) ────────────────────────────────────
 async function initSfcChart() {
-  if (sfcInited && sfcLoaded) { drawSfcChart(); return; }
+  if (sfcInited && sfcLoaded) {
+    // Data already loaded — just ensure correct div visibility and draw
+    document.getElementById('sfc-loading').style.display  = 'none';
+    document.getElementById('sfc-nodata').style.display   = 'none';
+    document.getElementById('sfc-chart-wrap').style.display = 'block';
+    drawSfcChart();
+    return;
+  }
 
   document.getElementById('sfc-loading').style.display = 'block';
   document.getElementById('sfc-chart-wrap').style.display = 'none';
@@ -3411,22 +3418,27 @@ loadData();
 
 // Eagerly load SFC data at boot — don't wait for the tab click.
 // This ensures the 累積沽空排行 table and summary cards are populated
-// on first render (renderShort / computeSfcCards both need sfcLoaded=true).
+// on first render, and the spinner is never stuck visible.
 (async () => {
+  // Show spinner only if the short tab is already active
+  const shortBtn = document.querySelector('.tab-btn[data-tab="short"]');
+  const tabActive = shortBtn && shortBtn.classList.contains('active');
+  if (tabActive) document.getElementById('sfc-loading').style.display = 'block';
+
   const ok = await loadSfcData();
+
+  // Always hide spinner after load attempt
+  document.getElementById('sfc-loading').style.display = 'none';
+
   if (ok) {
-    sfcInited = true;       // skip redundant reload when tab is clicked later
-    computeSfcCards();      // populate summary cards + re-render table
-    // If the short tab is already active when the page first opens, draw the chart too
-    const shortBtn = document.querySelector('.tab-btn[data-tab="short"]');
-    if (shortBtn && shortBtn.classList.contains('active')) drawSfcChart();
-  } else {
-    // Files missing — show the no-data message if the tab is currently active
-    const shortBtn = document.querySelector('.tab-btn[data-tab="short"]');
-    if (shortBtn && shortBtn.classList.contains('active')) {
-      document.getElementById('sfc-loading').style.display = 'none';
-      document.getElementById('sfc-nodata').style.display  = 'block';
+    sfcInited = true;   // skip redundant reload when tab is clicked later
+    computeSfcCards();  // populate summary cards + re-render table
+    if (tabActive) {
+      document.getElementById('sfc-chart-wrap').style.display = 'block';
+      drawSfcChart();
     }
+  } else if (tabActive) {
+    document.getElementById('sfc-nodata').style.display = 'block';
   }
 })();
 // Re-fetch data.json every 5 minutes — picks up new data.json without page reload
