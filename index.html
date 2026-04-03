@@ -1865,7 +1865,7 @@ async function drawSfcChart() {
       const priceMap = await buildStockPriceSeries(sfcCurCode, dates);
       canvas.width = W; canvas.height = H;
       ctx.clearRect(0, 0, W, H);
-      _sfcDrawStock(ctx, W, H, dates, sfcCurCode, priceMap);
+      _sfcDrawStock(ctx, W, H, dates, sfcCurCode, priceMap, canvas);
     }
   } finally {
     _sfcDrawing = false;
@@ -2011,7 +2011,7 @@ function _sfcDrawTotal(ctx, W, H, dates, canvas) {
 }
 
 // ── Individual stock view ─────────────────────────────────────────────────────
-function _sfcDrawStock(ctx, W, H, dates, code, priceMap) {
+function _sfcDrawStock(ctx, W, H, dates, code, priceMap, canvas) {
   const code5 = code.padStart(5, '0');
   const sinfo = allStocks.find(s => s.code === code) || {};
 
