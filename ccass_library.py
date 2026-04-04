@@ -31,6 +31,7 @@ import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
+from ccass_universe import normalize_code
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)

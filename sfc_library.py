@@ -47,6 +47,7 @@ API:
 
 import os, json, re, time, logging, argparse, io
 from datetime import date, timedelta
+from ccass_universe import normalize_code
 
 import requests
 from bs4 import BeautifulSoup
