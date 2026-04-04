@@ -64,7 +64,7 @@ BLOCK_PATTERNS = [
 
 _PROXY = os.getenv("SDW_PROXY", "").strip() or None
 
-START_DATE            = date(2025, 3, 23)
+START_DATE            = date(2025, 4, 5)
 SCHEMA_VERSION        = 2
 SLEEP_MIN             = 3.5
 SLEEP_MAX             = 6.5
