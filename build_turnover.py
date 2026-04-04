@@ -17,7 +17,7 @@ Stored per stock per day in turnover_{YYYY}.json:
   tv         ← 成交金額 / TURNOVER ($)
 
 Rules:
-  • Codes 1–9999 only. * or % prefix before code is stripped.
+  • Codes 1–99999. * or % prefix before code is stripped.
   • TRADING SUSPENDED lines are skipped.
   • If code appears more than once, keep the higher-vol record.
   • Incremental by default — skips dates already in library.
@@ -36,7 +36,7 @@ from datetime import date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
-from ccass_universe import is_included as _is_included
+from ccass_universe import is_included as _is_included, normalize_code as _normalize_code
 
 try:
     import holidays as _hol
@@ -161,7 +161,7 @@ def fetch(d: date) -> str | None:
 # TRADING SUSPENDED / 暫停買賣 lines have no numeric data — skipped before regex.
 
 _PAT = re.compile(
-    r"^[*%\s]{0,8}(\d{1,4})\s+"           # g1  代號  (1–4 digits; * % prefix stripped; up to 7 leading spaces)
+    r"^[*%\s]{0,8}(\d{1,5})\s+"           # g1  代號  (1–5 digits; * % prefix stripped; up to 7 leading spaces)
     r"(\S[^\u3000\n]{1,25}?)\s{2,}"       # g2  NAME OF STOCK (ends at 2+ spaces)
     r"(.{1,35}?)\s*"                       # g3  股票名稱
     r"(?:HKD|USD|CNY|RMB|EUR|GBP|AUD|JPY|SGD)\s+"  # CUR (skip; RMB used for H-share dual-currency counters)
@@ -208,7 +208,7 @@ def parse(body: str) -> dict:
         if not m:
             continue
         code_int = int(m.group(1))
-        code        = str(code_int).zfill(5)
+        code        = _normalize_code(code_int)
         if not _is_included(code):
             continue
         name_en     = m.group(2).strip()

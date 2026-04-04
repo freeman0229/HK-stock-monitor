@@ -226,7 +226,7 @@ def fetch_ccass(d: date) -> dict | None:
             if not code_raw.isdigit() or not sh_raw.isdigit():
                 continue
 
-            code = str(int(code_raw)).zfill(5)
+            code = normalize_code(code_raw)
             records[code] = {
                 "sh":   int(sh_raw),
                 "pct":  float(pct_raw) if pct_raw else 0.0,
@@ -354,7 +354,7 @@ def build(update_only: bool = False, fix_names: bool = False):
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
 def stock_history(code: str) -> list:
-    code5 = code.zfill(5)
+    code5 = normalize_code(code)
     rows  = []
     for year in all_years():
         if not os.path.exists(lib_path(year)):
@@ -369,14 +369,14 @@ def stock_history(code: str) -> list:
 def query_stock(code: str, weeks: int = None):
     hist = stock_history(code)
     if not hist:
-        print(f"No CCASS data for {code.zfill(5)}")
+        print(f"No CCASS data for {normalize_code(code)}")
         return
     if weeks:
         cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
         hist = [(ds, d) for ds, d in hist if ds >= cutoff]
 
-    name = STOCKS.get(code.zfill(5), {}).get("zh", code.zfill(5))
-    print(f"\n{code.zfill(5)} — {name}  ({len(hist)} days)")
+    name = STOCKS.get(normalize_code(code), {}).get("zh", normalize_code(code))
+    print(f"\n{normalize_code(code)} — {name}  ({len(hist)} days)")
     print(f"{'Date':<12} {'Shareholding':>18} {'% Listed':>10} {'Δ':>14}")
     print("─" * 58)
     prev_sh = None
@@ -410,25 +410,25 @@ def query_date(ds: str):
 def export_stock_csv(code: str):
     hist = stock_history(code)
     if not hist:
-        print(f"No CCASS data for {code.zfill(5)}"); return
+        print(f"No CCASS data for {normalize_code(code)}"); return
     rows = []
     prev_sh = None
     for ds, data in hist:
         sh  = data.get("sh", 0)
         pct = data.get("pct", 0.0)
         delta = sh - prev_sh if prev_sh is not None else None
-        rows.append({"date": ds, "stock_code": code.zfill(5),
-                     "name_zh": STOCKS.get(code.zfill(5), {}).get("zh", ""),
+        rows.append({"date": ds, "stock_code": normalize_code(code),
+                     "name_zh": STOCKS.get(normalize_code(code), {}).get("zh", ""),
                      "shareholding": sh, "pct_listed": pct, "delta": delta})
         prev_sh = sh
-    path = f"{code.zfill(5)}_ccass_history.csv"
+    path = f"{normalize_code(code)}_ccass_history.csv"
     pd.DataFrame(rows).to_csv(path, index=False)
     print(f"Exported {len(rows)} rows to {path}")
 
 
 def get_ccass_name(code: str) -> str | None:
     """Return the most recent Chinese name for a stock from CCASS records."""
-    code5 = code.zfill(5)
+    code5 = normalize_code(code)
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
         if not os.path.exists(p): continue
@@ -468,7 +468,7 @@ def get_pct_history(code: str, n: int, before: str) -> list:
     Return the last n pct_listed values for a stock strictly before date `before`
     (YYYY-MM-DD), sorted newest-first. Used by main.py for pct_avg5/20.
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     # Scan from most recent year backwards
     for year in sorted(all_years(), reverse=True):
@@ -494,7 +494,7 @@ def get_sh_history(code: str, n: int, before: str) -> list:
     Return the last n shareholding values for a stock strictly before `before`,
     sorted newest-first. Used by main.py for delta and consec computation.
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)

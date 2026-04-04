@@ -1026,6 +1026,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 const fmt = (n, dp=0) => n == null ? '--' : Number(n).toLocaleString('zh-HK', {maximumFractionDigits:dp, minimumFractionDigits:dp});
 const fmtM = n => n == null ? '--' : (Math.abs(n) >= 1e8 ? (n/1e8).toFixed(2)+'億' : Math.round(n/1e4).toLocaleString('zh-HK')+'萬');
+const norm5 = c => String(c).replace(/^0+/, '').padStart(5, '0'); // mirrors normalize_code()
 const fmtPct = n => n == null ? '--' : n.toFixed(2)+'%';
 const sign = n => n > 0 ? '+' : '';
 
@@ -1598,7 +1599,7 @@ function computeSfcCards() {
       const prevHkd   = (prev[code] || {}).hkd || 0;
       const hkd_delta = prevHkd > 0 ? v.hkd - prevHkd : 0;
       // Match name from allStocks if available, fall back to SFC name field
-      const stock = allStocks.find(s => s.code.padStart(5,'0') === code);
+      const stock = allStocks.find(s => norm5(s.code) === code);
       const name  = (stock && stock.name_chi) || v.name || code;
       return { code, name, hkd: v.hkd || 0, hkd_delta };
     })
@@ -1718,7 +1719,7 @@ function sfcBuildDropdown(query) {
 
   // Build name lookup from allStocks
   const nameMap = {};
-  allStocks.forEach(s => { nameMap[s.code.padStart(5,'0')] = { chi: s.name_chi, eng: s.name || '' }; });
+  allStocks.forEach(s => { nameMap[norm5(s.code)] = { chi: s.name_chi, eng: s.name || '' }; });
 
   const latestDs = sfcDates[sfcDates.length-1] || '';
 
@@ -1738,7 +1739,7 @@ function sfcBuildDropdown(query) {
       show = [...allStocks]
         .sort((a, b) => b.short_ratio - a.short_ratio)
         .slice(0, 20)
-        .map(s => s.code.padStart(5, '0'));
+        .map(s => norm5(s.code));
     }
     if (!show.length) { dd.style.display = 'none'; return; }
   } else {
@@ -1751,7 +1752,7 @@ function sfcBuildDropdown(query) {
       });
       sfcCodes = [...sfcCodeSet].sort();
     } else {
-      sfcCodes = allStocks.map(s => s.code.padStart(5, '0'));
+      sfcCodes = allStocks.map(s => norm5(s.code));
     }
     show = sfcCodes.filter(code => {
       const info = nameMap[code] || {};
@@ -1775,7 +1776,7 @@ function sfcBuildDropdown(query) {
     item.addEventListener('mousedown', e => {
       e.preventDefault();
       sfcCurCode = item.dataset.code;
-      const match = allStocks.find(s => s.code.padStart(5,'0') === item.dataset.code);
+      const match = allStocks.find(s => norm5(s.code) === item.dataset.code);
       document.getElementById('sfc-search').value = `${item.dataset.code}  ${match ? match.name_chi : ''}`;
       dd.style.display = 'none';
       sfcSetMode('stock');
@@ -1977,7 +1978,7 @@ function _sfcDrawTotal(ctx, W, H, dates, canvas) {
 
 // ── Individual stock view ─────────────────────────────────────────────────────
 function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
-  const code5 = code.padStart(5, '0');
+  const code5 = norm5(code);
   const sinfo = allStocks.find(s => s.code === code || s.code === code5) || {};
 
   const series = dates
@@ -2286,7 +2287,7 @@ function _sfcWireEvents() {
     if (e.key !== 'Enter') return;
     const q = inp.value.trim().split(/[\s\u3000]+/)[0];
     if (!q) return;
-    sfcCurCode = q.padStart(5, '0');
+    sfcCurCode = norm5(q);
     document.getElementById('sfc-dropdown').style.display = 'none';
     sfcSetMode('stock');
     drawSfcChart();
@@ -2355,7 +2356,7 @@ function renderShort() {
 
   const augmented = allStocks.map(s => {
     if ((s.sfc_hkd || 0) > 0) return s;                         // data.json has it — use it
-    const code5 = s.code.padStart(5, '0');
+    const code5 = norm5(s.code);
     const rec = sfcLatest[code5] || {};
     if (!rec.hkd) return s;
     return { ...s, sfc_hkd: rec.hkd || 0, sfc_sh: rec.sh || 0 };
@@ -2825,7 +2826,7 @@ function renderSdwPanel() {
   const nameMap  = {};
   allStocks.forEach(s => {
     nameMap[s.code] = s.name_chi;
-    nameMap[s.code.padStart(5,'0')] = s.name_chi;  // also index by 5-digit padded
+    nameMap[norm5(s.code)] = s.name_chi;  // also index by 5-digit padded
   });
   const name     = nameMap[sdwCurCode] || nameMap[sdwCurCode.replace(/^0+/,'')] || '';
   const nameStr  = name ? `${sdwCurCode} ${name}` : sdwCurCode;
@@ -3362,7 +3363,7 @@ async function drawCai() {
   if (!tvCache[year]) await loadTvYear(year);
   const byDate = tvCache[year] || {};
   const allDates = Object.keys(byDate).sort();
-  const code5  = stock.code.padStart(5, '0');
+  const code5  = norm5(stock.code);
 
   const chartDates = [], closeHistory = [], volHistory = [];
   for (const d of allDates) {

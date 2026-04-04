@@ -218,7 +218,7 @@ def get_sfc_universe() -> list[str]:
             for ds, day in by_date.items():
                 for code in day.keys():
                     if code != "__total__" and code.isdigit():
-                        codes.add(code.zfill(5))
+                        codes.add(normalize_code(code))
         if codes:
             log.info("SFC universe: %d unique codes from sfc_library", len(codes))
             return sorted(codes, key=lambda x: int(x))
@@ -286,7 +286,7 @@ def fetch_stock(stock_code: str, d: date,
     GET to get fresh ASP.NET tokens, then POST with stock code + date.
     Returns {p, total_sh, issued_sh} or None if no data / blocked.
     """
-    code5    = stock_code.zfill(5)
+    code5    = normalize_code(stock_code)
     date_str = d.strftime("%Y/%m/%d")
     own_sess = sess is None
     if own_sess:
@@ -665,7 +665,7 @@ def migrate_to_range_split():
 
 def _load_for_code(code: str, ds: str) -> dict:
     year  = int(ds[:4])
-    label = code_range(code.zfill(5))
+    label = code_range(normalize_code(code))
     p     = lib_path(year, label)
     if not os.path.exists(p):
         return {}
@@ -673,19 +673,19 @@ def _load_for_code(code: str, ds: str) -> dict:
         return json.load(f).get("by_date", {}).get(ds, {})
 
 def get_holders(stock_code: str, ds: str) -> list:
-    raw = _load_for_code(stock_code, ds).get(stock_code.zfill(5))
+    raw = _load_for_code(stock_code, ds).get(normalize_code(stock_code))
     return _to_v2(raw)["p"] if raw is not None else []
 
 def get_total_sh(stock_code: str, ds: str) -> int:
-    raw = _load_for_code(stock_code, ds).get(stock_code.zfill(5))
+    raw = _load_for_code(stock_code, ds).get(normalize_code(stock_code))
     return _to_v2(raw).get("total_sh", 0) if raw is not None else 0
 
 def get_issued_sh(stock_code: str, ds: str) -> int:
-    raw = _load_for_code(stock_code, ds).get(stock_code.zfill(5))
+    raw = _load_for_code(stock_code, ds).get(normalize_code(stock_code))
     return _to_v2(raw).get("issued_sh", 0) if raw is not None else 0
 
 def get_latest_total_sh(stock_code: str, before: str = None) -> int:
-    code5  = stock_code.zfill(5)
+    code5  = normalize_code(stock_code)
     label  = code_range(code5)
     cutoff = before or (date.today() + timedelta(days=1)).isoformat()
     for year in sorted(range(START_DATE.year, date.today().year + 1), reverse=True):
@@ -721,7 +721,7 @@ def get_total_sh_bulk(ds: str) -> dict:
     return result
 
 def get_holders_history(stock_code: str, n: int, before: str) -> list:
-    code5  = stock_code.zfill(5)
+    code5  = normalize_code(stock_code)
     label  = code_range(code5)
     result = []
     for year in sorted(range(START_DATE.year, date.today().year + 1), reverse=True):
@@ -751,7 +751,7 @@ def get_holders_history(stock_code: str, n: int, before: str) -> list:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _query(code: str, top: int, ds: str = None):
-    code5 = code.zfill(5)
+    code5 = normalize_code(code)
     if not ds:
         label = code_range(code5)
         for year in sorted(range(START_DATE.year, date.today().year + 1), reverse=True):

@@ -5,7 +5,7 @@ import holidays
 from bs4 import BeautifulSoup
 from datetime import date, datetime, timedelta
 from stock_ref import get_zh_name, get_industry, get_type, STOCKS
-from ccass_universe import is_included as _universe_included
+from ccass_universe import is_included as _universe_included, normalize_code
 from ccass_library import get_pct_history, get_sh_history
 from short_library import (get_short_history, get_short_ratio_history,
                             load_year as sl_load_year)
@@ -103,7 +103,7 @@ def ccass_trade_date(settlement_date: datetime) -> datetime:
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 def fmt_code(val) -> str:
-    return str(val).strip().lstrip("0").zfill(5)
+    return normalize_code(val)   # canonical 5-digit via ccass_universe
 
 def to_num(s) -> float:
     try:    return float(str(s).replace(",", "").strip())
@@ -805,7 +805,7 @@ def run_analysis():
         ccass_streak_pct = ccass_streak_pct_map.get(code, 0.0)
         pct_listed       = pct_listed_map.get(code, 0.0)
         pct_delta        = pct_delta_map.get(code, 0.0)
-        code5        = code.zfill(5)
+        code5        = normalize_code(code)
         tv_avg5_vals = _tv_hist(code5, 5, today_ds)
         tv_avg5      = sum(tv_avg5_vals) / len(tv_avg5_vals) if tv_avg5_vals else 0.0
 
@@ -817,7 +817,7 @@ def run_analysis():
         # 換手率 = sum of last 5 trading days' 成交股數 / 總數 (CCASS-custodied shares) × 100
         vol_5d       = sum(vol_hist24[:5])
         vol_20d      = sum(vol_hist24[:20])  # 20-day vol for monthly 換手率
-        _ts          = _sdw_total_sh_map.get(code.zfill(5), 0)
+        _ts          = _sdw_total_sh_map.get(normalize_code(code), 0)
         turnover_5d  = round(vol_5d  / _ts * 100, 4) if _ts > 0 and vol_5d  > 0 else 0.0
         turnover_20d = round(vol_20d / _ts * 100, 4) if _ts > 0 and vol_20d > 0 else 0.0
 
@@ -837,7 +837,7 @@ def run_analysis():
         nbv_hist = []
         for yyyymmdd in sorted(_tv_recent.keys(), reverse=True)[:24]:
             ds_iso = f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
-            rec    = _tv_recent[yyyymmdd].get(code.zfill(5), {})
+            rec    = _tv_recent[yyyymmdd].get(normalize_code(code), {})
             v      = rec.get("vol", 0) if isinstance(rec, dict) else 0
             sv     = sh_sv_by_date.get(ds_iso, 0)
             nbv    = max(0, v - sv)
@@ -869,7 +869,7 @@ def run_analysis():
             # Try latest available SDW date if today not yet fetched
             _holders = sdw_get_holders(code, (trading_day - timedelta(days=8)).strftime('%Y-%m-%d')) \
                        if _SDW_AVAILABLE else []
-        _total_sh_conc = _sdw_total_sh_map.get(code.zfill(5), 0)
+        _total_sh_conc = _sdw_total_sh_map.get(normalize_code(code), 0)
         if _holders and _total_sh_conc > 0:
             top5_sh = sum(h.get('sh', 0) for h in _holders[:5])
             concentration = round(top5_sh / _total_sh_conc * 100, 2)

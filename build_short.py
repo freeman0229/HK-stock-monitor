@@ -25,7 +25,7 @@ Stored per stock per day in short_{YYYY}.json:
   st    ← 金額($)    (short sell HKD amount)
 
 Rules:
-  • Codes 1–9999 only. * or % prefix before code is stripped.
+  • Codes 1–99999. * or % prefix before code is stripped.
   • If code appears more than once, keep the higher-sv record.
   • Incremental by default — skips dates already in library.
   • If code appears more than once, keep the higher-sv record.
@@ -43,7 +43,7 @@ from datetime import date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
-from ccass_universe import is_included as _is_included
+from ccass_universe import is_included as _is_included, normalize_code
 
 try:
     import holidays as _hol
@@ -174,7 +174,7 @@ def fetch(d: date) -> str | None:
 # Skip lines whose name field is a known header/total word.
 
 _SHORT_LINE = re.compile(
-    r"^[*%\s]{0,8}(\d{1,4})\s+"   # g1  代號  (1–4 digits; * % prefix stripped; up to 7 leading spaces)
+    r"^[*%\s]{0,8}(\d{1,5})\s+"   # g1  代號  (1–5 digits; * % prefix stripped; up to 7 leading spaces)
     r"(.{2,40}?)\s{2,}"            # g2  股票名稱  (ends at 2+ spaces)
     r"([\d,]+)\s+"                 # g3  股數(SH) → sv
     r"([\d,]+)\s*$"                # g4  金額($)  → st
@@ -225,7 +225,7 @@ def parse(body: str) -> dict:
             continue
 
         code_int = int(m.group(1))
-        code = str(code_int).zfill(5)
+        code = normalize_code(code_int)
         if not _is_included(code):
             continue
 

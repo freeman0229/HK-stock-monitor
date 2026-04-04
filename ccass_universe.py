@@ -82,6 +82,14 @@ _EXCLUDE_SPECIFIC = frozenset({"04332", "04333", "04335", "04336", "04337", "043
 
 # ── Core filter ───────────────────────────────────────────────────────────────
 
+def normalize_code(code) -> str:
+    """Return canonical 5-digit zero-padded string for any code format.
+    Handles int, bare string ('700'), zero-padded ('00700'), etc.
+    Single source of truth used by all downstream scripts.
+    """
+    return str(code).strip().lstrip("0").zfill(5)
+
+
 def is_included(code: str) -> bool:
     """
     Return True if this 5-digit CCASS code belongs in the tracked universe.
@@ -89,7 +97,7 @@ def is_included(code: str) -> bool:
     Applies all inclusion/exclusion rules as documented in the module header.
     Works with zero-padded 5-digit strings (e.g. "09660") or bare ints.
     """
-    code5 = str(code).zfill(5)
+    code5 = normalize_code(code)
 
     # Hard-coded exceptions first
     if code5 in _EXCLUDE_SPECIFIC:
@@ -188,11 +196,11 @@ def get_universe(date_str: Optional[str] = None) -> dict[str, dict]:
         return {}
 
     en_list = _fetch_list(date_str, "en")
-    en_map  = {row["c"].zfill(5): row["n"] for row in en_list}
+    en_map  = {normalize_code(row["c"]): row["n"] for row in en_list}
 
     universe = {}
     for row in zh_list:
-        code5 = row["c"].zfill(5)
+        code5 = normalize_code(row["c"])
         if not is_included(code5):
             continue
         universe[code5] = {
@@ -239,7 +247,7 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     if args.check:
-        code5 = args.check.zfill(5)
+        code5 = normalize_code(args.check)
         result = is_included(code5)
         print(f"{code5}: {'INCLUDED ✅' if result else 'EXCLUDED ❌'}")
 

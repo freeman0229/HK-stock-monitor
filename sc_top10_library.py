@@ -225,7 +225,7 @@ def _parse_top10(table: dict, is_southbound: bool) -> list:
                     continue
                 stocks.append({
                     "rank":  rank,
-                    "code":  str(code_int).zfill(5),
+                    "code":  normalize_code(code_int),
                     "name":  _clean_name(str(row[2])),
                     "buy":   _to_i(row[3]),
                     "sell":  _to_i(row[4]),
@@ -541,7 +541,7 @@ def get_top10_history(code: str, n: int, before: str) -> list:
     Return last n days where code appeared in top10, before date `before`.
     Each entry: {"date": "YYYY-MM-DD", "buy": int, "sell": int, "total": int}
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)

@@ -370,9 +370,9 @@ def _parse_csv(data: bytes, report_date: date) -> dict | None:
         if not raw_code.isdigit():
             continue
         code_int = int(raw_code)
-        if code_int < 1 or code_int > 9999:
+        if code_int < 1 or code_int > 99999:
             continue
-        code5 = str(code_int).zfill(5)
+        code5 = normalize_code(code_int)
 
         sh   = _n(row[col_sh])  if col_sh  is not None and len(row) > col_sh  else 0.0
         hkd  = _n(row[col_hkd]) if col_hkd is not None and len(row) > col_hkd else 0.0
@@ -517,9 +517,9 @@ def _parse_excel(data: bytes, report_date: date) -> dict | None:
         if not raw_code.isdigit():
             continue
         code_int = int(raw_code)
-        if code_int < 1 or code_int > 9999:
+        if code_int < 1 or code_int > 99999:
             continue
-        code5 = str(code_int).zfill(5)
+        code5 = normalize_code(code_int)
 
         sh   = to_num(row[col_sh])  if col_sh  is not None else 0.0
         hkd  = to_num(row[col_hkd]) if col_hkd is not None else 0.0
@@ -742,7 +742,7 @@ def get_short_position(code: str, ds: str) -> dict:
     if not os.path.exists(p):
         return {}
     with open(p, encoding="utf-8") as f:
-        raw = json.load(f).get("by_date", {}).get(ds, {}).get(code.zfill(5), {})
+        raw = json.load(f).get("by_date", {}).get(ds, {}).get(normalize_code(code), {})
     return _normalise_record(raw)
 
 def get_position_history(code: str, n: int, before: str) -> list:
@@ -751,7 +751,7 @@ def get_position_history(code: str, n: int, before: str) -> list:
     Returns [{date, sh, hkd, name}, ...].
     Transparently handles old compact schema.
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     for year in sorted(range(START_DATE.year, date.today().year + 1), reverse=True):
         p = lib_path(year)
@@ -795,7 +795,7 @@ def get_total_history(n: int, before: str) -> list:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _query(code: str, top: int):
-    code5 = code.zfill(5)
+    code5 = normalize_code(code)
     hist  = get_position_history(code5, top,
                                   (date.today() + timedelta(1)).isoformat())
     if not hist:
