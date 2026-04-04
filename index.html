@@ -1191,7 +1191,6 @@ function renderAll() {
   // If it was already initialised, refresh the summary cards with latest allStocks names
   if (sdwLoaded) sdwComputeSummary();
   renderCaiStockSelect();
-  updateCaiCards();
   updateTicker();
 }
 
@@ -1656,28 +1655,6 @@ async function loadTvYear(year) {
 }
 
 // Build {ds: {close, vol}} for one stock across all relevant years
-async function buildStockPriceSeries(code, filteredDates) {
-  const code5 = code.padStart(5, '0');
-  // determine which years we need
-  const years = [...new Set(filteredDates.map(ds => parseInt(ds.slice(0,4))))];
-  // also cover the daily range (SFC is weekly but turnover is daily)
-  const minYear = years[0] || new Date().getFullYear();
-  const maxYear = years[years.length-1] || new Date().getFullYear();
-  const allYears = [];
-  for (let y = minYear; y <= maxYear; y++) allYears.push(y);
-
-  const out = {};
-  for (const y of allYears) {
-    const byDate = await loadTvYear(y);
-    if (!byDate) continue;
-    for (const [ds, stocks] of Object.entries(byDate)) {
-      const rec = stocks[code5];
-      if (rec) out[ds] = { close: rec.close || 0, vol: rec.vol || 0, tv: rec.tv || 0 };
-    }
-  }
-  return out;   // {YYYY-MM-DD: {close, vol, tv}}
-}
-
 // ── Filter dates by range ─────────────────────────────────────────────────────
 let sfcCustomFrom = '';   // YYYY-MM-DD, empty = use pill range
 let sfcCustomTo   = '';   // YYYY-MM-DD, empty = today
@@ -3299,52 +3276,52 @@ function caiChannel(data, period, mult) {
 }
 
 async function updateCaiCards() {
-  const period = parseInt(document.getElementById('cai-period').value) || 20;
-  const mult   = parseFloat(document.getElementById('cai-mult').value)  || 2;
+  try {
+    const periodEl = document.getElementById('cai-period');
+    const multEl   = document.getElementById('cai-mult');
+    if (!periodEl || !multEl) return;
+    const period = parseInt(periodEl.value) || 20;
+    const mult   = parseFloat(multEl.value)  || 2;
 
-  ['cai-break-up','cai-break-dn','cai-narrow','cai-wide'].forEach(id => {
-    document.getElementById(id).textContent = '…';
-  });
+    ['cai-break-up','cai-break-dn','cai-narrow','cai-wide'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.textContent = '…';
+    });
 
-  const year   = new Date().getFullYear();
-  const byDate = await loadTvYear(year);
-  if (!byDate) return;
+    const year   = new Date().getFullYear();
+    const byDate = await loadTvYear(year);
+    if (!byDate) return;
 
-  const dates   = Object.keys(byDate).sort();
-  const today   = dates[dates.length - 1];
-  const codes   = Object.keys(byDate[today] || {});
+    const dates = Object.keys(byDate).sort();
+    const today = dates[dates.length - 1];
+    if (!today) return;
+    const codes = Object.keys(byDate[today] || {});
 
-  let breakUp = 0, breakDn = 0, narrow = 0, wide = 0;
+    let breakUp = 0, breakDn = 0, narrow = 0, wide = 0;
 
-  for (const code of codes) {
-    const closes = [];
-    for (const d of dates) {
-      const v = byDate[d]?.[code]?.close;
-      if (v > 0) closes.push(v);
+    for (const code of codes) {
+      const closes = [];
+      for (const d of dates) { const v = byDate[d]?.[code]?.close; if (v > 0) closes.push(v); }
+      if (closes.length < period + 5) continue;
+      const bands = caiChannel(closes, period, mult);
+      const last  = bands[bands.length - 1];
+      if (!last) continue;
+      const lastClose = closes[closes.length - 1];
+      if      (lastClose > last.upper) breakUp++;
+      else if (lastClose < last.lower) breakDn++;
+      const recent = bands.filter(Boolean).slice(-10);
+      if (recent.length < 3) continue;
+      const avgStd = recent.reduce((a, b) => a + b.std, 0) / recent.length;
+      if      (last.std < avgStd * 0.8) narrow++;
+      else if (last.std > avgStd * 1.2) wide++;
     }
-    if (closes.length < period + 5) continue;
 
-    const bands = caiChannel(closes, period, mult);
-    const last  = bands[bands.length - 1];
-    if (!last) continue;
-
-    const lastClose = closes[closes.length - 1];
-    if      (lastClose > last.upper) breakUp++;
-    else if (lastClose < last.lower) breakDn++;
-
-    // Band width: compare current std vs average of last 10 valid bands
-    const recent = bands.filter(Boolean).slice(-10);
-    if (recent.length < 3) continue;
-    const avgStd = recent.reduce((a, b) => a + b.std, 0) / recent.length;
-    if      (last.std < avgStd * 0.8) narrow++;
-    else if (last.std > avgStd * 1.2) wide++;
-  }
-
-  document.getElementById('cai-break-up').textContent = breakUp;
-  document.getElementById('cai-break-dn').textContent = breakDn;
-  document.getElementById('cai-narrow').textContent   = narrow;
-  document.getElementById('cai-wide').textContent     = wide;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('cai-break-up', breakUp); set('cai-break-dn', breakDn);
+    set('cai-narrow', narrow);    set('cai-wide', wide);
+  } catch(e) { console.warn('updateCaiCards error:', e); }
 }
+
+function renderCaiStockSelect() {
   const sel = document.getElementById('cai-stock');
   sel.innerHTML = '<option value="">-- 選擇股票 --</option>';
   allStocks.forEach(s => {
