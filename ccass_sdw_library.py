@@ -31,6 +31,7 @@ import os, json, re, time, logging, argparse, random
 import cloudscraper
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
+from ccass_universe import normalize_code
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
