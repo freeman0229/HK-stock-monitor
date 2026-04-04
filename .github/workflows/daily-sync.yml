@@ -76,7 +76,7 @@ jobs:
           fi
           for range in $RANGES; do
             echo "--- SDW range $range ---"
-            python ccass_sdw_library.py --update --range $range --max-minutes 5
+            python ccass_sdw_library.py --update --range $range --max-minutes 8
             echo "Cooling down 90s before next range..."
             sleep 90
           done
