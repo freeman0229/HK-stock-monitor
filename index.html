@@ -991,7 +991,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>上軌 (Upper Band)</div>
       <div class="leg-item"><div class="leg-dot" style="background:#666;height:2px"></div>中軌 (Middle Band)</div>
       <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>下軌 (Lower Band)</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#e8a020;height:6px;border-radius:1px"></div>成交額</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#e8a020;height:6px;border-radius:1px"></div>收市價</div>
     </div>
   </div>
 </div>
@@ -3331,7 +3331,8 @@ function renderCaiStockSelect() {
     sel.appendChild(opt);
   });
   if (allStocks.length) {
-    sel.value = allStocks[0].code;
+    const preferred = allStocks.find(s => s.code === '02800' || s.code === '2800');
+    sel.value = preferred ? preferred.code : allStocks[0].code;
     drawCai();
   }
   sel.onchange = drawCai;
@@ -3340,7 +3341,7 @@ function renderCaiStockSelect() {
   document.getElementById('cai-mult').oninput = () => { drawCai(); updateCaiCards(); };
 }
 
-function drawCai() {
+async function drawCai() {
   const code = document.getElementById('cai-stock').value;
   const period = parseInt(document.getElementById('cai-period').value);
   const mult = parseFloat(document.getElementById('cai-mult').value) || 2;
@@ -3356,59 +3357,71 @@ function drawCai() {
   const stock = allStocks.find(s => s.code === code) || allStocks[0];
   if (!stock) return;
 
-  // Build real close price history from tvCache
+  // Ensure turnover data is loaded before drawing
   const year = new Date().getFullYear();
+  if (!tvCache[year]) await loadTvYear(year);
   const byDate = tvCache[year] || {};
-  const dates  = Object.keys(byDate).sort();
+  const allDates = Object.keys(byDate).sort();
   const code5  = stock.code.padStart(5, '0');
-  const tvHistory = dates
-    .map(d => byDate[d]?.[code5]?.close || byDate[d]?.[stock.code]?.close || null)
-    .filter(v => v !== null);
 
-  if (tvHistory.length < period) {
+  const chartDates = [], closeHistory = [], volHistory = [];
+  for (const d of allDates) {
+    const rec = byDate[d]?.[code5] || byDate[d]?.[stock.code];
+    if (rec && rec.close > 0) {
+      chartDates.push(d);
+      closeHistory.push(rec.close);
+      volHistory.push(rec.vol || 0);
+    }
+  }
+
+  if (closeHistory.length < period) {
     ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(`數據不足（需 ${period} 日，現有 ${tvHistory.length} 日）`, W/2, H/2);
+    ctx.fillText(`數據不足（需 ${period} 日，現有 ${closeHistory.length} 日）`, W/2, H/2);
     return;
   }
 
-  const bands = caiChannel(tvHistory, period, mult);
+  const n = closeHistory.length;
+  const bands = caiChannel(closeHistory, period, mult);
   const validBands = bands.filter(b => b !== null);
 
-  const pad = { top:30, right:20, bottom:50, left:70 };
+  const pad = { top:30, right:20, bottom:50, left:60 };
   const cW = W - pad.left - pad.right;
   const cH = H - pad.top - pad.bottom;
 
-  const allVals = tvHistory.concat(validBands.flatMap(b => b ? [b.upper, b.lower] : []));
+  const allVals = closeHistory.concat(validBands.flatMap(b => b ? [b.upper, b.lower] : []));
   const minV = Math.min(...allVals) * 0.95;
   const maxV = Math.max(...allVals) * 1.05;
+  const maxVol = Math.max(...volHistory, 1);
 
-  const xScale = i => pad.left + (i / (tvHistory.length-1)) * cW;
+  const xScale = i => pad.left + (n > 1 ? i / (n - 1) : 0.5) * cW;
   const yScale = v => pad.top + cH - ((v - minV) / (maxV - minV)) * cH;
 
-  // Grid
-  ctx.strokeStyle = '#f0ede8';
-  ctx.lineWidth = 1;
-  for (let g=0; g<=4; g++) {
-    const y = pad.top + (g/4)*cH;
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left+cW, y); ctx.stroke();
-    const val = maxV - (g/4)*(maxV-minV);
-    ctx.fillStyle = '#999'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText(fmtM(val), pad.left-6, y+4);
+  // Grid + Y-axis labels (price, not fmtM)
+  ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
+  for (let g = 0; g <= 4; g++) {
+    const y = pad.top + (g / 4) * cH;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + cW, y); ctx.stroke();
+    const val = maxV - (g / 4) * (maxV - minV);
+    ctx.fillStyle = '#999'; ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(val.toFixed(2), pad.left - 4, y);
   }
 
-  // X axis labels
-  ctx.fillStyle = '#999'; ctx.textAlign = 'center'; ctx.font = '11px sans-serif';
-  for (let i=0; i<30; i+=5) {
-    ctx.fillText('D-'+(29-i), xScale(i), H - pad.bottom + 18);
-  }
+  // X-axis: show real dates (MM-DD), max ~8 labels
+  ctx.fillStyle = '#999'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.font = '10px sans-serif';
+  chartDates.forEach((d, i) => {
+    if (n > 8 && i % Math.ceil(n / 8) !== 0 && i !== n - 1) return;
+    ctx.fillText(d.slice(5), xScale(i), H - pad.bottom + 4);
+  });
 
-  // Volume bars
-  const barW = cW / tvHistory.length * 0.6;
-  tvHistory.forEach((v,i) => {
-    const bh = (v - minV) / (maxV - minV) * cH * 0.25;
+  // Volume bars (real vol, capped at 25% chart height)
+  const barW = cW / n * 0.6;
+  volHistory.forEach((v, i) => {
+    const bh = Math.max(1, (v / maxVol) * cH * 0.25);
     ctx.fillStyle = 'rgba(232,160,32,0.5)';
-    ctx.fillRect(xScale(i)-barW/2, pad.top+cH-bh, barW, bh);
+    ctx.fillRect(xScale(i) - barW / 2, pad.top + cH - bh, barW, bh);
   });
 
   // Band fill
@@ -3416,8 +3429,8 @@ function drawCai() {
   if (startIdx >= 0) {
     ctx.beginPath();
     ctx.moveTo(xScale(startIdx), yScale(bands[startIdx].upper));
-    for (let i=startIdx+1; i<tvHistory.length; i++) if(bands[i]) ctx.lineTo(xScale(i), yScale(bands[i].upper));
-    for (let i=tvHistory.length-1; i>=startIdx; i--) if(bands[i]) ctx.lineTo(xScale(i), yScale(bands[i].lower));
+    for (let i=startIdx+1; i<n; i++) if(bands[i]) ctx.lineTo(xScale(i), yScale(bands[i].upper));
+    for (let i=n-1; i>=startIdx; i--) if(bands[i]) ctx.lineTo(xScale(i), yScale(bands[i].lower));
     ctx.closePath();
     ctx.fillStyle = 'rgba(192,37,45,0.06)';
     ctx.fill();
@@ -3425,7 +3438,7 @@ function drawCai() {
     // Upper band
     ctx.beginPath(); ctx.strokeStyle = '#c0252d'; ctx.lineWidth = 1.5;
     let first = true;
-    for (let i=startIdx; i<tvHistory.length; i++) {
+    for (let i=startIdx; i<n; i++) {
       if (!bands[i]) continue;
       first ? ctx.moveTo(xScale(i), yScale(bands[i].upper)) : ctx.lineTo(xScale(i), yScale(bands[i].upper));
       first = false;
@@ -3435,7 +3448,7 @@ function drawCai() {
     // Middle band (MA)
     ctx.beginPath(); ctx.strokeStyle = '#666'; ctx.lineWidth = 1.5; ctx.setLineDash([4,3]);
     first = true;
-    for (let i=startIdx; i<tvHistory.length; i++) {
+    for (let i=startIdx; i<n; i++) {
       if (!bands[i]) continue;
       first ? ctx.moveTo(xScale(i), yScale(bands[i].ma)) : ctx.lineTo(xScale(i), yScale(bands[i].ma));
       first = false;
@@ -3445,7 +3458,7 @@ function drawCai() {
     // Lower band
     ctx.beginPath(); ctx.strokeStyle = '#1a7a3c'; ctx.lineWidth = 1.5;
     first = true;
-    for (let i=startIdx; i<tvHistory.length; i++) {
+    for (let i=startIdx; i<n; i++) {
       if (!bands[i]) continue;
       first ? ctx.moveTo(xScale(i), yScale(bands[i].lower)) : ctx.lineTo(xScale(i), yScale(bands[i].lower));
       first = false;
@@ -3453,9 +3466,9 @@ function drawCai() {
     ctx.stroke();
   }
 
-  // Turnover line
+  // Close price line
   ctx.beginPath(); ctx.strokeStyle = '#e8a020'; ctx.lineWidth = 2;
-  tvHistory.forEach((v,i) => { i===0 ? ctx.moveTo(xScale(i), yScale(v)) : ctx.lineTo(xScale(i), yScale(v)); });
+  closeHistory.forEach((v,i) => { i===0 ? ctx.moveTo(xScale(i), yScale(v)) : ctx.lineTo(xScale(i), yScale(v)); });
   ctx.stroke();
 
   // Title
