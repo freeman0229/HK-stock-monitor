@@ -66,10 +66,10 @@ _PROXY = os.getenv("SDW_PROXY", "").strip() or None
 
 START_DATE            = date(2025, 4, 5)
 SCHEMA_VERSION        = 2
-SLEEP_MIN             = 6.0    # base delay between stocks (was 3.5)
-SLEEP_MAX             = 12.0   # base delay between stocks (was 6.5)
-PRE_SLEEP_MIN         = 2.0    # think time before each GET (was 1.0)
-PRE_SLEEP_MAX         = 5.0    # think time before each GET (was 2.5)
+SLEEP_MIN             = 4.0    # base delay between stocks (proxy adds natural latency)
+SLEEP_MAX             = 8.0    # base delay between stocks
+PRE_SLEEP_MIN         = 1.5    # think time before each GET
+PRE_SLEEP_MAX         = 3.0    # think time before each GET
 CIRCUIT_BREAKER_LIMIT = 5      # trip faster — don't hammer when blocked (was 8)
 BLOCKED_COOLDOWN_SEC  = 1800   # cool down 30 min when blocked (was 15 min)
 
@@ -297,18 +297,18 @@ def fetch_stock(stock_code: str, d: date,
         try:
             # ── Pre-warm: visit homepage ~85% of the time; occasionally browse deeper ──
             if random.random() < 0.85:
-                sess.get("https://www.hkexnews.hk/eng/index.htm", timeout=10)
+                sess.get("https://www.hkexnews.hk/eng/index.htm", timeout=30)
                 human_sleep(1.0, 3.0)
                 # 20% chance: visit the SDW landing page too before the actual search
                 if random.random() < 0.20:
-                    sess.get("https://www3.hkexnews.hk/sdw/search/searchsdw.aspx", timeout=10)
+                    sess.get("https://www3.hkexnews.hk/sdw/search/searchsdw.aspx", timeout=30)
                     human_sleep(1.0, 2.0)
 
             # ── Rotate UA on each attempt ─────────────────────────────────────
             sess.headers["User-Agent"] = random.choice(_USER_AGENTS)
 
             # ── GET — fresh ASP.NET tokens (__EVENTVALIDATION is single-use) ──
-            r1 = sess.get(SDW_URL, timeout=15)
+            r1 = sess.get(SDW_URL, timeout=40)
             r1.raise_for_status()
 
             if any(p in r1.text for p in BLOCK_PATTERNS):
@@ -337,7 +337,7 @@ def fetch_stock(stock_code: str, d: date,
                 "txtStockCode":         code5,
                 "txtParticipantID":     "",
                 "txtParticipantName":   "",
-            }, timeout=20)
+            }, timeout=40)
             r2.raise_for_status()
 
             if any(p in r2.text for p in BLOCK_PATTERNS):
