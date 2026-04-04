@@ -66,12 +66,12 @@ _PROXY = os.getenv("SDW_PROXY", "").strip() or None
 
 START_DATE            = date(2025, 4, 5)
 SCHEMA_VERSION        = 2
-SLEEP_MIN             = 3.5
-SLEEP_MAX             = 6.5
-PRE_SLEEP_MIN         = 1.0
-PRE_SLEEP_MAX         = 2.5
-CIRCUIT_BREAKER_LIMIT = 8
-BLOCKED_COOLDOWN_SEC  = 900
+SLEEP_MIN             = 6.0    # base delay between stocks (was 3.5)
+SLEEP_MAX             = 12.0   # base delay between stocks (was 6.5)
+PRE_SLEEP_MIN         = 2.0    # think time before each GET (was 1.0)
+PRE_SLEEP_MAX         = 5.0    # think time before each GET (was 2.5)
+CIRCUIT_BREAKER_LIMIT = 5      # trip faster — don't hammer when blocked (was 8)
+BLOCKED_COOLDOWN_SEC  = 1800   # cool down 30 min when blocked (was 15 min)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -295,10 +295,14 @@ def fetch_stock(stock_code: str, d: date,
 
     for attempt in range(1, 4):
         try:
-            # ── Pre-warm: visit root homepage ~70% of the time to look natural ──
-            if random.random() < 0.7:
+            # ── Pre-warm: visit homepage ~85% of the time; occasionally browse deeper ──
+            if random.random() < 0.85:
                 sess.get("https://www.hkexnews.hk/eng/index.htm", timeout=10)
-                human_sleep(0.5, 1.5)
+                human_sleep(1.0, 3.0)
+                # 20% chance: visit the SDW landing page too before the actual search
+                if random.random() < 0.20:
+                    sess.get("https://www3.hkexnews.hk/sdw/search/searchsdw.aspx", timeout=10)
+                    human_sleep(1.0, 2.0)
 
             # ── Rotate UA on each attempt ─────────────────────────────────────
             sess.headers["User-Agent"] = random.choice(_USER_AGENTS)
@@ -311,7 +315,7 @@ def fetch_stock(stock_code: str, d: date,
                 log.warning("⚠️ Block detected on GET for %s %s (attempt %d)",
                             code5, date_str, attempt)
                 if attempt < 3:
-                    human_sleep(10, 20)
+                    human_sleep(60, 120)   # was 10-20s — give server time to forget us
                     continue
                 if own_sess: sess.close()
                 return None
@@ -340,7 +344,7 @@ def fetch_stock(stock_code: str, d: date,
                 log.warning("⚠️ Block detected on POST for %s %s (attempt %d)",
                             code5, date_str, attempt)
                 if attempt < 3:
-                    human_sleep(15, 30)
+                    human_sleep(90, 180)   # was 15-30s
                     continue
                 if own_sess: sess.close()
                 return None
@@ -428,7 +432,7 @@ def fetch_stock(stock_code: str, d: date,
 
         except Exception as e:
             if attempt < 3:
-                wait = attempt * 3
+                wait = attempt * 15   # was attempt*3 — 15s, 30s between retries
                 log.warning("fetch_stock (%s %s) attempt %d failed: %s — retrying in %ds",
                             code5, date_str, attempt, e, wait)
                 time.sleep(wait)
@@ -536,7 +540,7 @@ def build(update_only: bool = False, specific_date: date = None,
 
         _shared_sess = _new_session()
         last_rotate  = 0
-        session_life = random.randint(25, 40)
+        session_life = random.randint(15, 25)   # rotate more frequently (was 25-40)
 
         log.info("  Session UA: %s", _shared_sess.headers["User-Agent"][:60])
 
@@ -556,7 +560,7 @@ def build(update_only: bool = False, specific_date: date = None,
             if ci - last_rotate >= session_life:
                 _shared_sess = _rotate_session(_shared_sess)
                 last_rotate  = ci
-                session_life = random.randint(25, 40)
+                session_life = random.randint(15, 25)   # was 25-40
                 log.info("  🔄 Rotated session at %d (next in ~%d)", ci, session_life)
 
             # ── FETCH ─────────────────────────────────────────────────────────
@@ -573,8 +577,8 @@ def build(update_only: bool = False, specific_date: date = None,
                 consec_errors += 1
 
                 # ── EARLY BACKOFF ─────────────────────────────────────────────
-                if consec_errors >= 5:
-                    backoff = random.uniform(15, 40)
+                if consec_errors >= 3:
+                    backoff = random.uniform(60, 120)   # was >=5, 15-40s
                     log.warning("  ⚠️ Early backoff (%d errors) — sleeping %.0fs",
                                 consec_errors, backoff)
                     time.sleep(backoff)
@@ -589,9 +593,9 @@ def build(update_only: bool = False, specific_date: date = None,
             # ── BASE DELAY ────────────────────────────────────────────────────
             human_sleep(SLEEP_MIN, SLEEP_MAX)
 
-            # ── BURST PAUSE every 50 stocks ───────────────────────────────────
-            if ci % 50 == 0:
-                pause = random.uniform(20, 45)
+            # ── BURST PAUSE every 30 stocks ───────────────────────────────────
+            if ci % 30 == 0:
+                pause = random.uniform(45, 90)   # longer pause (was 20-45)
                 log.info("  😴 Burst pause %.0fs at %d", pause, ci)
                 time.sleep(pause)
 
