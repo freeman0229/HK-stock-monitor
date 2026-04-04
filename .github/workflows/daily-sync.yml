@@ -68,7 +68,7 @@ jobs:
         env:
           SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: |
-          DOY=$(date +%j)
+          DOY=$((10#$(date +%j)))
           if [ $((DOY % 2)) -eq 0 ]; then
             RANGES="0001_1000 2001_3000 4001_7000 10000plus"
           else
