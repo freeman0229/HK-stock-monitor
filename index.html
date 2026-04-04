@@ -1190,7 +1190,6 @@ function renderAll() {
   // 大戶持倉 (panel-ccass) is lazy-loaded when its tab is clicked via initSdwPanel()
   // If it was already initialised, refresh the summary cards with latest allStocks names
   if (sdwLoaded) sdwComputeSummary();
-  renderCaiTable();
   renderCaiStockSelect();
   updateTicker();
 }
@@ -3429,67 +3428,6 @@ function drawCai() {
   // Title
   ctx.fillStyle = '#222'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
   ctx.fillText(`${stock.name_chi} (${stock.code}) — 波動率通道 N=${period} K=${mult}`, pad.left, 18);
-}
-
-let _caiData = [];
-let _caiPage = 0;
-const CAI_PAGE_SIZE = 10;
-
-function caiSetPage(page) {
-  _caiPage = page;
-  // Update button styles
-  document.querySelectorAll('#cai-page-btns button').forEach((btn, i) => {
-    const on = i === page;
-    btn.style.cssText = `padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;` +
-      (on ? 'border:0.5px solid var(--red);background:var(--red);color:#fff'
-          : 'border:0.5px solid var(--border);background:var(--card);color:var(--muted)');
-  });
-  // Render current page
-  const start = page * CAI_PAGE_SIZE;
-  const slice = _caiData.slice(start, start + CAI_PAGE_SIZE);
-  const html = slice.map((s,i) => `<tr>
-    <td class="rank">${start + i + 1}</td>
-    <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
-    <td class="num-r">${fmtM(s.tv5)}</td>
-    <td class="num-r ${s.volatility>15?'up-txt':''}">${s.volatility.toFixed(1)}%</td>
-    <td class="num-r ${s.upperDev>5?'up-txt':s.upperDev<-5?'dn-txt':''}">${sign(s.upperDev)}${s.upperDev.toFixed(1)}%</td>
-    <td class="num-r ${s.lowerDev>0?'up-txt':'dn-txt'}">${sign(s.lowerDev)}${s.lowerDev.toFixed(1)}%</td>
-    <td>${s.dir}</td>
-    <td>${insightBadge(s.insight)}</td>
-  </tr>`).join('');
-  document.getElementById('body-cai').innerHTML = html;
-}
-
-function renderCaiTable() {
-  _caiData = allStocks.map(s => {
-    const tv5 = s.turnover || 1e8;
-    const volatility = Math.abs(s.short_ratio - s.short_avg) / (s.short_avg || 1) * 100;
-    const upperDev   = (s.short_ratio - s.short_avg) / (s.short_avg || 1) * 100;
-    const lowerDev   = -upperDev;
-    const dir = upperDev > 5 ? '🔴 突破上軌' : upperDev < -5 ? '🟢 跌破下軌' : '⬜ 通道內';
-    return { ...s, tv5, volatility, upperDev, lowerDev, dir };
-  }).sort((a,b) => Math.abs(b.upperDev) - Math.abs(a.upperDev));
-
-  document.getElementById('cai-break-up').textContent = _caiData.filter(s => s.upperDev > 5).length;
-  document.getElementById('cai-break-dn').textContent = _caiData.filter(s => s.upperDev < -5).length;
-  document.getElementById('cai-narrow').textContent   = _caiData.filter(s => s.volatility < 5).length;
-  document.getElementById('cai-wide').textContent     = _caiData.filter(s => s.volatility > 15).length;
-
-  // Build page buttons
-  const totalPages = Math.ceil(_caiData.length / CAI_PAGE_SIZE);
-  const btnWrap = document.getElementById('cai-page-btns');
-  if (btnWrap) {
-    btnWrap.innerHTML = Array.from({ length: totalPages }, (_, i) => {
-      const lo = i * CAI_PAGE_SIZE + 1;
-      const hi = Math.min((i + 1) * CAI_PAGE_SIZE, _caiData.length);
-      return `<button onclick="caiSetPage(${i})"
-        style="padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;
-        border:0.5px solid var(--border);background:var(--card);color:var(--muted)">${lo}–${hi}</button>`;
-    }).join('');
-  }
-
-  _caiPage = 0;
-  caiSetPage(0);
 }
 
 // ── SbChart hover tooltip ────────────────────────────────────────────────────
