@@ -631,7 +631,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn active" data-tab="bshui">北水追蹤</button>
   <button class="tab-btn" data-tab="short">累積沽空</button>
   <button class="tab-btn" data-tab="ccass">大戶持倉</button>
-  <button class="tab-btn" data-tab="cai">蔡氏通道</button>
+  <button class="tab-btn" data-tab="cai">波動率</button>
 </div>
 
 <!-- ═══ Panel 1: 北水追蹤 ════════════════════════════════════════════════════ -->
@@ -995,9 +995,10 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   </div>
 
   <div class="sec-head" style="margin-top:16px">
-    <div class="sec-title">蔡氏通道排行（按突破強度）</div>
-    <div class="sec-sub">基於成交額加權波幅通道 ｜ 蔡氏通道 = MA ± K × ATR</div>
+    <div class="sec-title">波動率排行（按突破強度）</div>
+    <div class="sec-sub">沽空比率偏離近期均值幅度 ｜ >+5% 突破上軌 ｜ <-5% 跌破下軌</div>
   </div>
+  <div style="display:flex;gap:6px;margin:8px 0;flex-wrap:wrap" id="cai-page-btns"></div>
   <div class="tbl-wrap">
     <table id="tbl-cai">
       <thead>
@@ -3450,33 +3451,27 @@ function drawCai() {
 
   // Title
   ctx.fillStyle = '#222'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText(`${stock.name_chi} (${stock.code}) — 蔡氏通道 N=${period} K=${mult}`, pad.left, 18);
+  ctx.fillText(`${stock.name_chi} (${stock.code}) — 波動率通道 N=${period} K=${mult}`, pad.left, 18);
 }
 
-function renderCaiTable() {
-  // Compute Cai channel signal for each stock (simplified: use turnover as proxy)
-  const caiData = allStocks.map(s => {
-    const base = s.turnover || 1e8;
-    const tv5 = base;
-    const volatility = Math.abs(s.short_ratio - s.short_avg) / (s.short_avg || 1) * 100;
-    const upperDev = (s.short_ratio - s.short_avg) / (s.short_avg || 1) * 100;
-    const lowerDev = -upperDev;
-    const dir = upperDev > 5 ? '🔴 突破上軌' : upperDev < -5 ? '🟢 跌破下軌' : '⬜ 通道內';
-    return { ...s, tv5, volatility, upperDev, lowerDev, dir };
-  }).sort((a,b) => Math.abs(b.upperDev) - Math.abs(a.upperDev));
+let _caiData = [];
+let _caiPage = 0;
+const CAI_PAGE_SIZE = 10;
 
-  const breakUp = caiData.filter(s => s.upperDev > 5).length;
-  const breakDn = caiData.filter(s => s.upperDev < -5).length;
-  const narrow = caiData.filter(s => s.volatility < 5).length;
-  const wide = caiData.filter(s => s.volatility > 15).length;
-
-  document.getElementById('cai-break-up').textContent = breakUp;
-  document.getElementById('cai-break-dn').textContent = breakDn;
-  document.getElementById('cai-narrow').textContent = narrow;
-  document.getElementById('cai-wide').textContent = wide;
-
-  const html = caiData.map((s,i) => `<tr>
-    <td class="rank">${i+1}</td>
+function caiSetPage(page) {
+  _caiPage = page;
+  // Update button styles
+  document.querySelectorAll('#cai-page-btns button').forEach((btn, i) => {
+    const on = i === page;
+    btn.style.cssText = `padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;` +
+      (on ? 'border:0.5px solid var(--red);background:var(--red);color:#fff'
+          : 'border:0.5px solid var(--border);background:var(--card);color:var(--muted)');
+  });
+  // Render current page
+  const start = page * CAI_PAGE_SIZE;
+  const slice = _caiData.slice(start, start + CAI_PAGE_SIZE);
+  const html = slice.map((s,i) => `<tr>
+    <td class="rank">${start + i + 1}</td>
     <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
     <td class="num-r">${fmtM(s.tv5)}</td>
     <td class="num-r ${s.volatility>15?'up-txt':''}">${s.volatility.toFixed(1)}%</td>
@@ -3486,6 +3481,38 @@ function renderCaiTable() {
     <td>${insightBadge(s.insight)}</td>
   </tr>`).join('');
   document.getElementById('body-cai').innerHTML = html;
+}
+
+function renderCaiTable() {
+  _caiData = allStocks.map(s => {
+    const tv5 = s.turnover || 1e8;
+    const volatility = Math.abs(s.short_ratio - s.short_avg) / (s.short_avg || 1) * 100;
+    const upperDev   = (s.short_ratio - s.short_avg) / (s.short_avg || 1) * 100;
+    const lowerDev   = -upperDev;
+    const dir = upperDev > 5 ? '🔴 突破上軌' : upperDev < -5 ? '🟢 跌破下軌' : '⬜ 通道內';
+    return { ...s, tv5, volatility, upperDev, lowerDev, dir };
+  }).sort((a,b) => Math.abs(b.upperDev) - Math.abs(a.upperDev));
+
+  document.getElementById('cai-break-up').textContent = _caiData.filter(s => s.upperDev > 5).length;
+  document.getElementById('cai-break-dn').textContent = _caiData.filter(s => s.upperDev < -5).length;
+  document.getElementById('cai-narrow').textContent   = _caiData.filter(s => s.volatility < 5).length;
+  document.getElementById('cai-wide').textContent     = _caiData.filter(s => s.volatility > 15).length;
+
+  // Build page buttons
+  const totalPages = Math.ceil(_caiData.length / CAI_PAGE_SIZE);
+  const btnWrap = document.getElementById('cai-page-btns');
+  if (btnWrap) {
+    btnWrap.innerHTML = Array.from({ length: totalPages }, (_, i) => {
+      const lo = i * CAI_PAGE_SIZE + 1;
+      const hi = Math.min((i + 1) * CAI_PAGE_SIZE, _caiData.length);
+      return `<button onclick="caiSetPage(${i})"
+        style="padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;
+        border:0.5px solid var(--border);background:var(--card);color:var(--muted)">${lo}–${hi}</button>`;
+    }).join('');
+  }
+
+  _caiPage = 0;
+  caiSetPage(0);
 }
 
 // ── SbChart hover tooltip ────────────────────────────────────────────────────
