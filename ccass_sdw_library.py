@@ -352,9 +352,17 @@ class SDWBrowser:
                     self._on_sdw = True
                     human_sleep(1.0, 2.0)
 
-                # ── Fill date ─────────────────────────────────────────────────
-                date_field = page.locator("#txtShareholdingDate")
-                date_field.fill(date_str)
+                # ── Fill date (field is readonly - must use JS to bypass datepicker) ──
+                page.evaluate(
+                    """(dateStr) => {
+                        const el = document.getElementById('txtShareholdingDate');
+                        el.removeAttribute('readonly');
+                        el.value = dateStr;
+                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                        el.dispatchEvent(new Event('blur',   {bubbles: true}));
+                    }""",
+                    date_str
+                )
 
                 # ── Fill stock code ───────────────────────────────────────────
                 code_field = page.locator("#txtStockCode")
