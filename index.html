@@ -3286,6 +3286,40 @@ function caiChannel(data, period, mult) {
   return result;
 }
 
+// ── ATR (Average True Range) ─────────────────────────────────────────────────
+// Source: high, low, close from turnover_YYYY.json (parsed from HKEX dayquot)
+//
+// True Range (TR) per day:
+//   TR = max(high − low, |high − prev_close|, |low − prev_close|)
+//   The gap components handle overnight gaps missed by intraday range alone.
+//
+// ATR(period) = mean(TR, last N days)
+// ATR%        = ATR / close × 100   ← normalised across stocks of different prices
+//
+// period = 24 (consistent with avg_vol24, tv_avg24, turnover_24d across the system)
+//
+// Returns array of { atr, atrPct } per bar, null if insufficient data.
+function computeATR(highHistory, lowHistory, closeHistory, period = 24) {
+  const result = [];
+  for (let i = 0; i < closeHistory.length; i++) {
+    if (i === 0 || i < period) { result.push(null); continue; }
+    const trWindow = [];
+    for (let j = i - period + 1; j <= i; j++) {
+      const prevClose = closeHistory[j - 1];
+      const tr = Math.max(
+        highHistory[j]  - lowHistory[j],
+        Math.abs(highHistory[j]  - prevClose),
+        Math.abs(lowHistory[j]   - prevClose)
+      );
+      trWindow.push(tr);
+    }
+    const atr    = trWindow.reduce((a, v) => a + v, 0) / period;
+    const atrPct = closeHistory[i] > 0 ? atr / closeHistory[i] * 100 : 0;
+    result.push({ atr: +atr.toFixed(4), atrPct: +atrPct.toFixed(4) });
+  }
+  return result;
+}
+
 async function updateCaiCards() {
   try {
     const periodEl = document.getElementById('cai-period');
@@ -3376,14 +3410,20 @@ async function drawCai() {
   const code5  = norm5(stock.code);
 
   const chartDates = [], closeHistory = [], volHistory = [];  // close = 收市價, vol = 成交股數 (shares traded)
+  const highHistory = [], lowHistory = [];                    // high = 最高, low = 最低 (for ATR)
   for (const d of allDates) {
     const rec = byDate[d]?.[code5] || byDate[d]?.[stock.code];
     if (rec && rec.close > 0) {
       chartDates.push(d);
       closeHistory.push(rec.close);
       volHistory.push(rec.vol || 0);
+      highHistory.push(rec.high || rec.close);  // fallback to close if high not yet in library
+      lowHistory.push(rec.low  || rec.close);   // fallback to close if low  not yet in library
     }
   }
+
+  // ATR(24) — ready for display when needed; not rendered yet
+  const atrHistory = computeATR(highHistory, lowHistory, closeHistory, 24);
 
   if (closeHistory.length < period) {
     ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
