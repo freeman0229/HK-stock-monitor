@@ -267,26 +267,48 @@ class SDWBrowser:
     CONTEXT_LIFE = 60   # requests per browser context before rotating
 
     def __init__(self, proxy: str | None = None):
-        self._proxy_cfg  = _parse_proxy(proxy)
-        self._pw         = None
-        self._browser    = None
-        self._context    = None
-        self._page       = None
-        self._req_count  = 0
-        self._on_sdw     = False   # whether page is already on SDW_URL
+        self._proxy_cfg     = _parse_proxy(proxy)
+        self._using_proxy   = self._proxy_cfg is not None
+        self._pw            = None
+        self._browser       = None
+        self._context       = None
+        self._page          = None
+        self._req_count     = 0
+        self._on_sdw        = False
+        self._proxy_failures = 0   # consecutive proxy errors — triggers fallback
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def __enter__(self):
         self._pw      = sync_playwright().start()
+        self._launch_browser()
+        self._new_context()
+        return self
+
+    def _launch_browser(self, force_direct: bool = False):
+        """Launch Chromium, with or without proxy."""
+        if self._browser:
+            try: self._browser.close()
+            except Exception: pass
+
+        proxy = self._proxy_cfg if (self._using_proxy and not force_direct) else None
         self._browser = self._pw.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
                   "--ignore-certificate-errors"],
-            proxy=self._proxy_cfg,
+            proxy=proxy,
         )
+        mode = "proxy" if proxy else "direct (no proxy)"
+        log.info("🚀 Browser launched (%s)", mode)
+
+    def _fallback_to_direct(self):
+        """Switch to direct connection after repeated proxy failures."""
+        log.warning("🔀 Proxy failed %d times — switching to direct connection",
+                    self._proxy_failures)
+        self._using_proxy = False
+        self._proxy_failures = 0
+        self._launch_browser(force_direct=True)
         self._new_context()
-        return self
 
     def __exit__(self, *args):
         try:
@@ -429,8 +451,8 @@ class SDWBrowser:
 
                 # ── Parse results ─────────────────────────────────────────────
                 result = _parse_response(content, code5, date_str)
-                # Stay on results page — next stock just re-submits the form
                 self._on_sdw = True
+                self._proxy_failures = 0   # reset on success
                 return result
 
             except Exception as e:
@@ -443,13 +465,19 @@ class SDWBrowser:
 
                 if attempt < 3:
                     if is_proxy_err:
+                        self._proxy_failures += 1
                         wait = random.uniform(20, 40)
-                        log.warning("fetch (%s %s) proxy error attempt %d — new context in %.0fs: %s",
-                                    code5, date_str, attempt, wait, err_str[:200])
+                        log.warning("fetch (%s %s) proxy error attempt %d (failures=%d) — new context in %.0fs: %s",
+                                    code5, date_str, attempt, self._proxy_failures, wait, err_str[:200])
                         time.sleep(wait)
-                        self._new_context()
+                        # After 3 consecutive proxy failures, switch to direct
+                        if self._proxy_cfg and self._proxy_failures >= 3:
+                            self._fallback_to_direct()
+                        else:
+                            self._new_context()
                         page = self._page
                     else:
+                        self._proxy_failures = 0   # reset on non-proxy error
                         wait = attempt * 15
                         log.warning("fetch (%s %s) attempt %d failed — retry in %ds: %s",
                                     code5, date_str, attempt, wait, err_str[:200])
