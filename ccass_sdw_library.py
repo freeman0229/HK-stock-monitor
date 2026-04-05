@@ -379,39 +379,36 @@ class SDWBrowser:
                     human_sleep(1.0, 2.0)
 
                 # ── Set fields + submit via JS ────────────────────────────────
-                # __doPostBack uses ASP.NET UpdatePanel (AJAX partial rendering)
-                # — there is NO full page navigation, just a DOM update via XHR.
-                # So we must NOT use expect_navigation; instead wait for the
-                # results container to appear/change after the postback.
-                page.evaluate(
-                    """([dateStr, code5]) => {
-                        const dateEl = document.getElementById('txtShareholdingDate');
-                        if (dateEl) {
-                            dateEl.removeAttribute('readonly');
-                            dateEl.value = dateStr;
-                        }
-                        const codeEl = document.getElementById('txtStockCode');
-                        if (codeEl) codeEl.value = code5;
-                        const pidEl = document.getElementById('txtParticipantID');
-                        const pnmEl = document.getElementById('txtParticipantName');
-                        if (pidEl) pidEl.value = '';
-                        if (pnmEl) pnmEl.value = '';
-                        if (typeof __doPostBack === 'function') {
-                            __doPostBack('btnSearch', '');
-                        } else {
-                            document.getElementById('btnSearch').click();
-                        }
-                    }""",
-                    [date_str, code5]
-                )
-
-                # Wait for the results table OR a no-data message to appear.
-                # pnlResult is the UpdatePanel container that gets refreshed.
-                page.wait_for_selector(
-                    "#pnlResult, .ccass-search-datarow, #lblNoResult",
-                    timeout=45_000,
-                    state="attached"
-                )
+                # __doPostBack sometimes does full page POST, sometimes AJAX
+                # (UpdatePanel). expect_response catches the server response in
+                # both cases — set it up BEFORE the JS fires so we don't miss it.
+                with page.expect_response(
+                    lambda r: "searchsdw_c.aspx" in r.url,
+                    timeout=45_000
+                ) as resp_info:
+                    page.evaluate(
+                        """([dateStr, code5]) => {
+                            const dateEl = document.getElementById('txtShareholdingDate');
+                            if (dateEl) {
+                                dateEl.removeAttribute('readonly');
+                                dateEl.value = dateStr;
+                            }
+                            const codeEl = document.getElementById('txtStockCode');
+                            if (codeEl) codeEl.value = code5;
+                            const pidEl = document.getElementById('txtParticipantID');
+                            const pnmEl = document.getElementById('txtParticipantName');
+                            if (pidEl) pidEl.value = '';
+                            if (pnmEl) pnmEl.value = '';
+                            if (typeof __doPostBack === 'function') {
+                                __doPostBack('btnSearch', '');
+                            } else {
+                                document.getElementById('btnSearch').click();
+                            }
+                        }""",
+                        [date_str, code5]
+                    )
+                # Wait for DOM to finish updating after response received
+                page.wait_for_load_state("load", timeout=15_000)
 
                 # ── Check for block ───────────────────────────────────────────
                 content = page.content()
