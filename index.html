@@ -2717,30 +2717,22 @@ function sdwComputeSummary() {
 
     const displayName = nameMap[code] || (allStocks.find(s=>s.code===code)||{}).name_chi || code;
 
-    // Top single holder — sh / 總數 × 100; fallback to h.pct if total_sh unavailable
-    const topPct = totalSh > 0
-      ? (holders[0].sh || 0) / totalSh * 100
-      : (holders[0].pct || 0);
+    // Top single holder — display value, use h.pct (佔已發行股份/權證/單位百分比) directly
+    const topPct = holders[0].pct || 0;
     if (topPct > maxPct) { maxPct = topPct; maxPctCode = code; maxPctName = displayName; maxPctHolder = holders[0].name; }
 
     // Concentration: sum(top5 sh) / 總數 × 100  — consistent with data.json s.concentration
-    // fallback to sum(h.pct) if total_sh unavailable
+    // 0 if total_sh unavailable (h.pct uses 已發行股份 as denominator — not interchangeable)
     const top5sh = holders.slice(0, 5).reduce((a, h) => a + (h.sh || 0), 0);
-    const conc5  = totalSh > 0
-      ? top5sh / totalSh * 100
-      : holders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0);
+    const conc5  = totalSh > 0 ? top5sh / totalSh * 100 : 0;
     if (conc5 > maxConc) { maxConc = conc5; maxConcCode = code; maxConcName = displayName; }
 
-    // WoW mover: top-10 sh / 總數 × 100 for both weeks (use current week's 總數 as common denominator)
+    // WoW mover: compare top-10 total pct this week vs last week (display sum delta)
     if (prevMap[code]) {
       const prevRaw      = prevMap[code];
       const prevHolders  = Array.isArray(prevRaw) ? prevRaw : (prevRaw.p || []);
-      const nowTop10  = totalSh > 0
-        ? holders.slice(0, 10).reduce((a, h) => a + (h.sh || 0), 0) / totalSh * 100
-        : holders.slice(0, 10).reduce((a, h) => a + (h.pct || 0), 0);
-      const prevTop10 = totalSh > 0
-        ? prevHolders.slice(0, 10).reduce((a, h) => a + (h.sh || 0), 0) / totalSh * 100
-        : prevHolders.slice(0, 10).reduce((a, h) => a + (h.pct || 0), 0);
+      const nowTop10  = holders.slice(0, 10).reduce((a, h) => a + (h.pct || 0), 0);
+      const prevTop10 = prevHolders.slice(0, 10).reduce((a, h) => a + (h.pct || 0), 0);
       const inc       = nowTop10 - prevTop10;
       if (inc > maxInc) { maxInc = inc; maxIncCode = code; maxIncName = displayName; }
       if (inc < minInc) { minInc = inc; minIncCode = code; minIncName = displayName; }
