@@ -281,7 +281,8 @@ class SDWBrowser:
         self._pw      = sync_playwright().start()
         self._browser = self._pw.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+                  "--ignore-certificate-errors"],
             proxy=self._proxy_cfg,
         )
         self._new_context()
@@ -303,12 +304,13 @@ class SDWBrowser:
 
         ua = random.choice(_USER_AGENTS)
         self._context = self._browser.new_context(
-            user_agent     = ua,
-            locale         = "zh-HK",
-            timezone_id    = "Asia/Hong_Kong",
-            viewport       = {"width": random.randint(1280, 1440),
-                               "height": random.randint(768, 900)},
+            user_agent          = ua,
+            locale              = "zh-HK",
+            timezone_id         = "Asia/Hong_Kong",
+            viewport            = {"width": random.randint(1280, 1440),
+                                   "height": random.randint(768, 900)},
             java_script_enabled = True,
+            ignore_https_errors = True,   # proxy SSL interception
         )
 
         # Pre-seed known cookies before any navigation so the site
@@ -335,14 +337,14 @@ class SDWBrowser:
 
         # Step 1: Visit main homepage to seed Akamai bm_* cookies
         try:
-            self._page.goto("https://www.hkexnews.hk/", wait_until="networkidle", timeout=45_000)
+            self._page.goto("https://www.hkexnews.hk/", wait_until="load", timeout=45_000)
             human_sleep(2.0, 4.0)
         except Exception as e:
             log.warning("Homepage warm-up failed: %s", str(e)[:80])
 
         # Step 2: Navigate to SDW page so Akamai sets www3-scoped bm_* cookies
         try:
-            self._page.goto(SDW_URL, wait_until="networkidle", timeout=60_000)
+            self._page.goto(SDW_URL, wait_until="load", timeout=60_000)
             self._on_sdw = True
             human_sleep(1.5, 3.0)
         except Exception as e:
@@ -372,36 +374,44 @@ class SDWBrowser:
             try:
                 # Ensure we're on the SDW page
                 if not self._on_sdw:
-                    page.goto(SDW_URL, wait_until="networkidle", timeout=60_000)
+                    page.goto(SDW_URL, wait_until="load", timeout=60_000)
                     self._on_sdw = True
                     human_sleep(1.0, 2.0)
 
-                # ── Set fields + submit via JS, wrapped in expect_navigation ──
-                # expect_navigation is set up BEFORE the JS fires so Playwright
-                # catches the navigation event the instant __doPostBack triggers it.
-                with page.expect_navigation(wait_until="networkidle",
-                                            timeout=45_000):
-                    page.evaluate(
-                        """([dateStr, code5]) => {
-                            const dateEl = document.getElementById('txtShareholdingDate');
-                            if (dateEl) {
-                                dateEl.removeAttribute('readonly');
-                                dateEl.value = dateStr;
-                            }
-                            const codeEl = document.getElementById('txtStockCode');
-                            if (codeEl) codeEl.value = code5;
-                            const pidEl  = document.getElementById('txtParticipantID');
-                            const pnmEl  = document.getElementById('txtParticipantName');
-                            if (pidEl)  pidEl.value  = '';
-                            if (pnmEl)  pnmEl.value  = '';
-                            if (typeof __doPostBack === 'function') {
-                                __doPostBack('btnSearch', '');
-                            } else {
-                                document.getElementById('btnSearch').click();
-                            }
-                        }""",
-                        [date_str, code5]
-                    )
+                # ── Set fields + submit via JS ────────────────────────────────
+                # __doPostBack uses ASP.NET UpdatePanel (AJAX partial rendering)
+                # — there is NO full page navigation, just a DOM update via XHR.
+                # So we must NOT use expect_navigation; instead wait for the
+                # results container to appear/change after the postback.
+                page.evaluate(
+                    """([dateStr, code5]) => {
+                        const dateEl = document.getElementById('txtShareholdingDate');
+                        if (dateEl) {
+                            dateEl.removeAttribute('readonly');
+                            dateEl.value = dateStr;
+                        }
+                        const codeEl = document.getElementById('txtStockCode');
+                        if (codeEl) codeEl.value = code5;
+                        const pidEl = document.getElementById('txtParticipantID');
+                        const pnmEl = document.getElementById('txtParticipantName');
+                        if (pidEl) pidEl.value = '';
+                        if (pnmEl) pnmEl.value = '';
+                        if (typeof __doPostBack === 'function') {
+                            __doPostBack('btnSearch', '');
+                        } else {
+                            document.getElementById('btnSearch').click();
+                        }
+                    }""",
+                    [date_str, code5]
+                )
+
+                # Wait for the results table OR a no-data message to appear.
+                # pnlResult is the UpdatePanel container that gets refreshed.
+                page.wait_for_selector(
+                    "#pnlResult, .ccass-search-datarow, #lblNoResult",
+                    timeout=45_000,
+                    state="attached"
+                )
 
                 # ── Check for block ───────────────────────────────────────────
                 content = page.content()
@@ -426,7 +436,8 @@ class SDWBrowser:
                 err_str = str(e)
                 is_proxy_err = any(p in err_str for p in [
                     "ProxyError", "RemoteDisconnected", "Unable to connect to proxy",
-                    "proxy", "Proxy",
+                    "proxy", "Proxy", "ERR_CONNECTION_CLOSED", "ERR_SSL_PROTOCOL_ERROR",
+                    "ERR_TUNNEL_CONNECTION_FAILED", "ERR_CONNECTION_RESET",
                 ])
 
                 if attempt < 3:
@@ -443,7 +454,7 @@ class SDWBrowser:
                                     code5, date_str, attempt, wait, err_str[:200])
                         time.sleep(wait)
                         try:
-                            page.goto(SDW_URL, wait_until="networkidle", timeout=60_000)
+                            page.goto(SDW_URL, wait_until="load", timeout=60_000)
                             self._on_sdw = True
                         except Exception as nav_e:
                             log.warning("re-nav failed: %s — new context", str(nav_e)[:100])
@@ -663,9 +674,13 @@ def build(update_only: bool = False, specific_date: date = None,
                     _dirty_ranges.add(rl)
                     fetched += 1
                     consec_errors = 0
+                    log.info("  ✓ [%d/%d] %s saved (%d participants)",
+                             ci, len(todo), code, len(entry.get("p", [])))
 
                 else:
                     consec_errors += 1
+                    log.warning("  ✗ [%d/%d] %s returned None (consec_errors=%d)",
+                                ci, len(todo), code, consec_errors)
 
                     # ── EARLY BACKOFF ─────────────────────────────────────────
                     if consec_errors >= 3:
