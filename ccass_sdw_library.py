@@ -407,11 +407,12 @@ class SDWBrowser:
                         }""",
                         [date_str, code5]
                     )
-                # Response received — now wait for page to finish navigating/rendering
-                try:
-                    page.wait_for_load_state("domcontentloaded", timeout=15_000)
-                except Exception:
-                    pass  # AJAX postback — no navigation, domcontentloaded won't re-fire
+                # Wait until document.readyState === 'complete' — reliable for
+                # both full navigation and AJAX partial updates.
+                page.wait_for_function(
+                    "document.readyState === 'complete'",
+                    timeout=45_000
+                )
 
                 # ── Check for block ───────────────────────────────────────────
                 content = page.content()
