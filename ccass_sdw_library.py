@@ -376,36 +376,32 @@ class SDWBrowser:
                     self._on_sdw = True
                     human_sleep(1.0, 2.0)
 
-                # ── Set date + stock code + submit entirely via JS ────────────
-                # The date field is readonly (datepicker widget).
-                # Rather than fighting the UI, we set all form values via JS
-                # and call __doPostBack directly — same as what btnSearch does.
-                page.evaluate(
-                    """([dateStr, code5]) => {
-                        // Set date (remove readonly so value assignment works)
-                        const dateEl = document.getElementById('txtShareholdingDate');
-                        if (dateEl) {
-                            dateEl.removeAttribute('readonly');
-                            dateEl.value = dateStr;
-                        }
-                        // Set stock code
-                        const codeEl = document.getElementById('txtStockCode');
-                        if (codeEl) codeEl.value = code5;
-                        // Clear participant fields
-                        const pidEl  = document.getElementById('txtParticipantID');
-                        const pnmEl  = document.getElementById('txtParticipantName');
-                        if (pidEl)  pidEl.value  = '';
-                        if (pnmEl)  pnmEl.value  = '';
-                        // Submit — same as clicking btnSearch
-                        if (typeof __doPostBack === 'function') {
-                            __doPostBack('btnSearch', '');
-                        } else {
-                            document.getElementById('btnSearch').click();
-                        }
-                    }""",
-                    [date_str, code5]
-                )
-                page.wait_for_load_state("networkidle", timeout=45_000)
+                # ── Set fields + submit via JS, wrapped in expect_navigation ──
+                # expect_navigation is set up BEFORE the JS fires so Playwright
+                # catches the navigation event the instant __doPostBack triggers it.
+                with page.expect_navigation(wait_until="networkidle",
+                                            timeout=45_000):
+                    page.evaluate(
+                        """([dateStr, code5]) => {
+                            const dateEl = document.getElementById('txtShareholdingDate');
+                            if (dateEl) {
+                                dateEl.removeAttribute('readonly');
+                                dateEl.value = dateStr;
+                            }
+                            const codeEl = document.getElementById('txtStockCode');
+                            if (codeEl) codeEl.value = code5;
+                            const pidEl  = document.getElementById('txtParticipantID');
+                            const pnmEl  = document.getElementById('txtParticipantName');
+                            if (pidEl)  pidEl.value  = '';
+                            if (pnmEl)  pnmEl.value  = '';
+                            if (typeof __doPostBack === 'function') {
+                                __doPostBack('btnSearch', '');
+                            } else {
+                                document.getElementById('btnSearch').click();
+                            }
+                        }""",
+                        [date_str, code5]
+                    )
 
                 # ── Check for block ───────────────────────────────────────────
                 content = page.content()
