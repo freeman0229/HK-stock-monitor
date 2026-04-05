@@ -412,7 +412,7 @@ def classify_insight(stock_type, short_ratio, short_avg,
                      days_to_cover=0.0, vol_ratio=0.0,
                      tv_ratio=0.0, pct_dev=0.0,
                      sb_net=0,
-                     sfc_week_delta=0.0, sfc_level_dev=0.0) -> str | None:
+                     sfc_week_delta=0.0) -> str | None:
     lo, hi, spike_warn, cover_drop = THRESHOLDS.get(stock_type, THRESHOLDS["general"])
     sfc_up, sfc_dn = SFC_THRESHOLDS.get(stock_type, SFC_THRESHOLDS["general"])
     r_today = turnover / tv_avg5 if tv_avg5 > 0 else 1.0
@@ -425,9 +425,9 @@ def classify_insight(stock_type, short_ratio, short_avg,
             and 1.5 <= tv_ratio <= 2.0
             and 0.2 <= pct_dev  <= 0.5):                          return "🏦 北水增持"
 
-    # SFC structural signals: week-on-week jump AND elevated vs 4-week avg (Option C)
-    if sfc_week_delta >= sfc_up  and sfc_level_dev > 0:           return "⚠️ 沽空倉位急增"
-    if sfc_week_delta <= sfc_dn  and sfc_level_dev < 0:           return "📊 沽空倉位大減"
+    # SFC structural signals: week-on-week jump vs threshold
+    if sfc_week_delta >= sfc_up:                                  return "⚠️ 沽空倉位急增"
+    if sfc_week_delta <= sfc_dn:                                  return "📊 沽空倉位大減"
 
     flow_out   = sb_net < 0 and pct_delta < 0
     high_short = short_ratio > hi + spike_warn and vol_ratio > 2
@@ -621,7 +621,7 @@ def run_analysis():
                     else:
                         sfc_pct = 0.0
 
-                    # Option C: week-on-week delta AND deviation from 4-week rolling avg
+                    # Option C: week-on-week delta vs threshold
                     # get_position_history returns newest-first snapshots before latest date
                     sfc_hist = sfc_get_history(code, 5, _latest_sfc_ds)
                     # sfc_hist[0] = last Friday, sfc_hist[1..4] = prior Fridays
@@ -630,18 +630,13 @@ def run_analysis():
                     # HKD week-on-week delta for 沽空增加最多/空頭平倉最多 cards
                     sfc_prev_hkd    = sfc_hist[0].get("hkd", 0.0) if sfc_hist else 0.0
                     sfc_hkd_delta   = round(sfc_hkd - sfc_prev_hkd, 0) if sfc_prev_hkd > 0 else 0.0
-                    # 4-week rolling average (up to 4 prior Fridays)
-                    prior_pcts      = [h.get("pct", 0.0) for h in sfc_hist[:4] if h.get("pct", 0.0) > 0]
-                    sfc_avg4        = sum(prior_pcts) / len(prior_pcts) if prior_pcts else 0.0
-                    sfc_level_dev   = round(sfc_pct - sfc_avg4, 4) if sfc_avg4 > 0 else 0.0
 
                     sfc_map[code] = {
                         "sfc_sh":         sfc_sh,         # 累積沽空股數 (Shares)
                         "sfc_hkd":        sfc_hkd,        # 累積沽空金額 (HK$)
                         "sfc_hkd_delta":  sfc_hkd_delta,  # 累積沽空金額 week-on-week change
-                        "sfc_pct":        sfc_pct,         # 累積沽空股數 / 已發行總股數 × 100
+                        "sfc_pct":        sfc_pct,         # 累積沽空股數 / 總數 × 100
                         "sfc_week_delta": sfc_week_delta,  # sfc_pct week-on-week change (pp)
-                        "sfc_level_dev":  sfc_level_dev,   # sfc_pct vs 4-week rolling avg (pp)
                     }
                 log.info("SFC short positions: %d stocks from %s%s",
                          len(sfc_map), _latest_sfc_ds,
@@ -868,7 +863,6 @@ def run_analysis():
             pct_dev=pct_dev             if has_history else 0.0,
             sb_net=sb.get("sb_net", 0),
             sfc_week_delta=sfc_map.get(code, {}).get("sfc_week_delta", 0.0),
-            sfc_level_dev=sfc_map.get(code, {}).get("sfc_level_dev",  0.0),
         )
 
         prev_rank   = prev_ranks.get(code)
@@ -902,7 +896,6 @@ def run_analysis():
             "sfc_hkd_delta":  sfc_map.get(code, {}).get("sfc_hkd_delta",  0.0),
             "sfc_pct":        sfc_map.get(code, {}).get("sfc_pct",        0.0),
             "sfc_week_delta": sfc_map.get(code, {}).get("sfc_week_delta", 0.0),
-            "sfc_level_dev":  sfc_map.get(code, {}).get("sfc_level_dev",  0.0),
             "tv_ratio":  tv_ratio,
             "pct_dev":   round(pct_dev, 4),
             "concentration": concentration,
