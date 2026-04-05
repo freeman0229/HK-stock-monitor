@@ -1161,7 +1161,7 @@ function generateMockData() {
     const mockSbPct  = i < SB_TOP ? (10 + Math.random() * 50) : 0;
     const dualListed = i < 8;
     return {
-      rank: i+1, rank_new: Math.random()>0.85, rank_change: Math.round((Math.random()-0.5)*10),
+      rank: i+1, rank_new: Math.random()>0.85,
       ...s, turnover: tv,
       short_ratio: sr, short_avg: sa,
       concentration: parseFloat((20 + Math.random() * 70).toFixed(1)),
