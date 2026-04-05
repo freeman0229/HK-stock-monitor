@@ -8,7 +8,7 @@ Source (holdings):  https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx
 Stock universe:     SFC short-position library (sfc_library.py)
 
 Schedule: every Friday; Thursday fallback if Friday is a HK holiday.
-Start:    2025-03-23  (first trading Friday = 2025-03-28)
+Start:    2025-04-05
 
 Library files split by stock code range — one set of 7 files per year:
   ccass_sdw_0001_1000_{YYYY}.json
@@ -19,6 +19,9 @@ Library files split by stock code range — one set of 7 files per year:
   ccass_sdw_7001_9999_{YYYY}.json
   ccass_sdw_10000plus_{YYYY}.json
 
+Fetch strategy: Playwright Chromium (headless) — fills the search form
+like a real user, bypassing Akamai BotManager detection entirely.
+
 Usage:
   python ccass_sdw_library.py                    # full backfill
   python ccass_sdw_library.py --update           # only new dates
@@ -28,9 +31,10 @@ Usage:
 """
 
 import os, json, re, time, logging, argparse, random
-import cloudscraper
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
+from playwright.sync_api import sync_playwright
 from ccass_universe import normalize_code
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -46,13 +50,6 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
 
-_ACCEPT_LANGUAGES = [
-    "en-GB,en;q=0.9",
-    "en-US,en;q=0.9",
-    "zh-HK,zh;q=0.9,en;q=0.8",
-]
-
-# Strings that indicate the server has blocked or rate-limited us
 BLOCK_PATTERNS = [
     "Access Denied",
     "Too many requests",
@@ -66,18 +63,32 @@ _PROXY = os.getenv("SDW_PROXY", "").strip() or None
 
 START_DATE            = date(2025, 4, 5)
 SCHEMA_VERSION        = 2
-SLEEP_MIN             = 4.0    # base delay between stocks (proxy adds natural latency)
-SLEEP_MAX             = 8.0    # base delay between stocks
-PRE_SLEEP_MIN         = 1.5    # think time before each GET
-PRE_SLEEP_MAX         = 3.0    # think time before each GET
-CIRCUIT_BREAKER_LIMIT = 5      # trip faster — don't hammer when blocked (was 8)
-BLOCKED_COOLDOWN_SEC  = 1800   # cool down 30 min when blocked (was 15 min)
+SLEEP_MIN             = 2.0    # base delay between stocks (browser postback adds natural latency)
+SLEEP_MAX             = 5.0
+PRE_SLEEP_MIN         = 0.5    # think time before each search
+PRE_SLEEP_MAX         = 1.5
+CIRCUIT_BREAKER_LIMIT = 5      # consecutive errors before declaring blocked
+BLOCKED_COOLDOWN_SEC  = 1800   # 30 min cooldown when blocked
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def human_sleep(a: float, b: float):
     """Sleep for a random duration in [a, b] plus a small extra jitter."""
-    time.sleep(random.uniform(a, b) + random.random() * 0.5)
+    time.sleep(random.uniform(a, b) + random.random() * 0.3)
+
+def _parse_proxy(proxy_url: str) -> dict | None:
+    """Convert proxy URL string to Playwright proxy config dict.
+    Handles both full URLs (http://user:pass@host:port) and bare host:port.
+    """
+    if not proxy_url:
+        return None
+    # Ensure scheme present so urlparse works correctly
+    raw = proxy_url if "://" in proxy_url else f"http://{proxy_url}"
+    p = urlparse(raw)
+    cfg = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
+    if p.username: cfg["username"] = p.username
+    if p.password: cfg["password"] = p.password
+    return cfg
 
 # ── Code ranges ───────────────────────────────────────────────────────────────
 
@@ -205,27 +216,26 @@ def _to_v2(raw) -> dict:
 
 # ── Stock universe ────────────────────────────────────────────────────────────
 
-def get_sfc_universe() -> list[str]:
-    codes = set()
-    try:
-        from sfc_library import lib_path as sfc_lib_path
-        import json as _json
-        for year in range(2018, date.today().year + 1):
-            p = sfc_lib_path(year)
-            if not os.path.exists(p):
-                continue
-            with open(p, encoding="utf-8") as f:
-                by_date = _json.load(f).get("by_date", {})
-            for ds, day in by_date.items():
-                for code in day.keys():
-                    if code != "__total__" and code.isdigit():
-                        codes.add(normalize_code(code))
-        if codes:
-            log.info("SFC universe: %d unique codes from sfc_library", len(codes))
-            return sorted(codes, key=lambda x: int(x))
-    except Exception as e:
-        log.warning("Could not load SFC universe from sfc_library: %s", e)
+# ── Stock universe ────────────────────────────────────────────────────────────
 
+def get_sfc_universe() -> list[str]:
+    """
+    Return the stock universe to fetch from CCASS SDW.
+    Source: ccass_universe.get_universe_codes() — the authoritative CCASS
+    stock list filtered by is_included().
+    Falls back to codes already stored in SDW cache if ccass_universe fails.
+    """
+    try:
+        from ccass_universe import get_universe_codes
+        codes = get_universe_codes()
+        if codes:
+            log.info("SDW universe: %d codes from ccass_universe", len(codes))
+            return codes
+    except Exception as e:
+        log.warning("Could not load universe from ccass_universe: %s — falling back to SDW cache", e)
+
+    # Fallback: use whatever codes are already stored in SDW files
+    codes = set()
     for year in range(START_DATE.year, date.today().year + 1):
         for label, _, _ in RANGES:
             p = lib_path(year, label)
@@ -237,42 +247,219 @@ def get_sfc_universe() -> list[str]:
                 codes.update(stocks.keys())
 
     if codes:
-        log.info("SFC universe (fallback from SDW cache): %d codes", len(codes))
+        log.info("SDW universe (fallback from cache): %d codes", len(codes))
         return sorted(codes, key=lambda x: int(x))
 
-    log.warning("No SFC universe available — returning empty list")
+    log.warning("No universe available — returning empty list")
     return []
 
-# ── Session management ────────────────────────────────────────────────────────
+# ── Playwright browser wrapper ────────────────────────────────────────────────
 
-def _new_session() -> cloudscraper.CloudScraper:
+class SDWBrowser:
     """
-    Create a cloudscraper session (handles Cloudflare JS challenges automatically)
-    with randomised headers to mimic a real browser.
+    Manages a Playwright Chromium browser that fills the SDW search form
+    like a real user — date field, stock code, then click 搜尋.
+
+    Context is rotated every CONTEXT_LIFE requests to refresh cookies
+    without paying the full browser startup cost each time.
     """
-    scraper = cloudscraper.create_scraper()
-    scraper.headers.update({
-        "User-Agent":      random.choice(_USER_AGENTS),
-        "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": random.choice(_ACCEPT_LANGUAGES),
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer":         "https://www.hkexnews.hk/",   # root domain, not www3
-        "Connection":      "keep-alive",
-        "DNT":             "1",
-    })
-    if _PROXY:
-        scraper.proxies = {"http": _PROXY, "https": _PROXY}
-        log.info("Session proxy: %s", _PROXY.split("@")[-1])
-    return scraper
 
-def _rotate_session(sess) -> cloudscraper.CloudScraper:
-    try:
-        sess.close()
-    except Exception:
-        pass
-    return _new_session()
+    CONTEXT_LIFE = 60   # requests per browser context before rotating
 
-# ── SDW fetch for one stock ───────────────────────────────────────────────────
+    def __init__(self, proxy: str | None = None):
+        self._proxy_cfg  = _parse_proxy(proxy)
+        self._pw         = None
+        self._browser    = None
+        self._context    = None
+        self._page       = None
+        self._req_count  = 0
+        self._on_sdw     = False   # whether page is already on SDW_URL
+
+    # ── lifecycle ────────────────────────────────────────────────────────────
+
+    def __enter__(self):
+        self._pw      = sync_playwright().start()
+        self._browser = self._pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            proxy=self._proxy_cfg,
+        )
+        self._new_context()
+        return self
+
+    def __exit__(self, *args):
+        try:
+            if self._context: self._context.close()
+            if self._browser: self._browser.close()
+            if self._pw:      self._pw.stop()
+        except Exception:
+            pass
+
+    def _new_context(self):
+        """Close old context and open a fresh one with a new UA and cookies."""
+        if self._context:
+            try: self._context.close()
+            except Exception: pass
+
+        ua = random.choice(_USER_AGENTS)
+        self._context = self._browser.new_context(
+            user_agent     = ua,
+            locale         = "zh-HK",
+            timezone_id    = "Asia/Hong_Kong",
+            viewport       = {"width": random.randint(1280, 1440),
+                               "height": random.randint(768, 900)},
+            java_script_enabled = True,
+        )
+
+        # Pre-seed known cookies before any navigation so the site
+        # treats us as a returning zh-HK user with consent already given
+        consent_val = (
+            "isGpcEnabled=0&datestamp=Wed+Apr+01+2026+16%3A00%3A00+GMT%2B0100"
+            "&version=202303.2.0&browserGpcFlag=0&isIABGlobal=false"
+            "&hosts=&landingPath=NotLandingPage"
+            "&groups=C0001%3A1%2CC0003%3A1%2CC0004%3A1%2CC0002%3A1"
+            "&AwaitingReconsent=false&geolocation=HK%3BHKG"
+        )
+        for domain in [".hkexnews.hk", ".www3.hkexnews.hk", "www3.hkexnews.hk"]:
+            self._context.add_cookies([
+                {"name": "sclang",              "value": "zh-HK",       "domain": domain, "path": "/"},
+                {"name": "s_cc",                "value": "true",        "domain": domain, "path": "/"},
+                {"name": "OptanonAlertBoxClosed","value": "2026-04-01T16:00:00.000Z", "domain": domain, "path": "/"},
+                {"name": "OptanonConsent",      "value": consent_val,   "domain": domain, "path": "/"},
+            ])
+
+        self._page     = self._context.new_page()
+        self._req_count = 0
+        self._on_sdw   = False
+        log.info("🌐 New browser context (UA: %s…)", ua[:60])
+
+        # Step 1: Visit main homepage to seed Akamai bm_* cookies
+        try:
+            self._page.goto("https://www.hkexnews.hk/", wait_until="networkidle", timeout=45_000)
+            human_sleep(2.0, 4.0)
+        except Exception as e:
+            log.warning("Homepage warm-up failed: %s", str(e)[:80])
+
+        # Step 2: Navigate to SDW page so Akamai sets www3-scoped bm_* cookies
+        try:
+            self._page.goto(SDW_URL, wait_until="networkidle", timeout=60_000)
+            self._on_sdw = True
+            human_sleep(1.5, 3.0)
+        except Exception as e:
+            log.warning("Initial SDW navigation failed: %s", str(e)[:80])
+            self._on_sdw = False
+
+    # ── fetch ─────────────────────────────────────────────────────────────────
+
+    def fetch(self, stock_code: str, d: date) -> dict | None:
+        """
+        Fill date + stock code in the SDW search form, click 搜尋,
+        wait for the ASP.NET postback to complete, then parse the result.
+        Returns {p, total_sh, issued_sh} or None.
+        """
+        code5    = normalize_code(stock_code)
+        date_str = d.strftime("%Y/%m/%d")
+
+        # Rotate context periodically
+        self._req_count += 1
+        if self._req_count >= self.CONTEXT_LIFE:
+            log.info("🔄 Rotating browser context at request %d", self._req_count)
+            self._new_context()
+
+        page = self._page
+
+        for attempt in range(1, 4):
+            try:
+                # Ensure we're on the SDW page
+                if not self._on_sdw:
+                    page.goto(SDW_URL, wait_until="networkidle", timeout=60_000)
+                    self._on_sdw = True
+                    human_sleep(1.0, 2.0)
+
+                # ── Set date + stock code + submit entirely via JS ────────────
+                # The date field is readonly (datepicker widget).
+                # Rather than fighting the UI, we set all form values via JS
+                # and call __doPostBack directly — same as what btnSearch does.
+                page.evaluate(
+                    """([dateStr, code5]) => {
+                        // Set date (remove readonly so value assignment works)
+                        const dateEl = document.getElementById('txtShareholdingDate');
+                        if (dateEl) {
+                            dateEl.removeAttribute('readonly');
+                            dateEl.value = dateStr;
+                        }
+                        // Set stock code
+                        const codeEl = document.getElementById('txtStockCode');
+                        if (codeEl) codeEl.value = code5;
+                        // Clear participant fields
+                        const pidEl  = document.getElementById('txtParticipantID');
+                        const pnmEl  = document.getElementById('txtParticipantName');
+                        if (pidEl)  pidEl.value  = '';
+                        if (pnmEl)  pnmEl.value  = '';
+                        // Submit — same as clicking btnSearch
+                        if (typeof __doPostBack === 'function') {
+                            __doPostBack('btnSearch', '');
+                        } else {
+                            document.getElementById('btnSearch').click();
+                        }
+                    }""",
+                    [date_str, code5]
+                )
+                page.wait_for_load_state("networkidle", timeout=45_000)
+
+                # ── Check for block ───────────────────────────────────────────
+                content = page.content()
+                if any(p in content for p in BLOCK_PATTERNS):
+                    log.warning("⚠️ Block detected for %s %s (attempt %d)",
+                                code5, date_str, attempt)
+                    if attempt < 3:
+                        human_sleep(90, 180)
+                        self._new_context()
+                        page = self._page
+                        continue
+                    self._on_sdw = False
+                    return None
+
+                # ── Parse results ─────────────────────────────────────────────
+                result = _parse_response(content, code5, date_str)
+                # Stay on results page — next stock just re-submits the form
+                self._on_sdw = True
+                return result
+
+            except Exception as e:
+                err_str = str(e)
+                is_proxy_err = any(p in err_str for p in [
+                    "ProxyError", "RemoteDisconnected", "Unable to connect to proxy",
+                    "proxy", "Proxy",
+                ])
+
+                if attempt < 3:
+                    if is_proxy_err:
+                        wait = random.uniform(20, 40)
+                        log.warning("fetch (%s %s) proxy error attempt %d — new context in %.0fs: %s",
+                                    code5, date_str, attempt, wait, err_str[:200])
+                        time.sleep(wait)
+                        self._new_context()
+                        page = self._page
+                    else:
+                        wait = attempt * 15
+                        log.warning("fetch (%s %s) attempt %d failed — retry in %ds: %s",
+                                    code5, date_str, attempt, wait, err_str[:200])
+                        time.sleep(wait)
+                        try:
+                            page.goto(SDW_URL, wait_until="networkidle", timeout=60_000)
+                            self._on_sdw = True
+                        except Exception as nav_e:
+                            log.warning("re-nav failed: %s — new context", str(nav_e)[:100])
+                            self._new_context()
+                            page = self._page
+                else:
+                    log.error("fetch (%s %s): all 3 attempts failed: %s",
+                              code5, date_str, err_str[:300])
+                    self._on_sdw = False
+                    return None
+
+# ── HTML response parser ──────────────────────────────────────────────────────
 
 def _parse_num(s) -> int:
     try:
@@ -280,166 +467,86 @@ def _parse_num(s) -> int:
     except (ValueError, TypeError):
         return 0
 
-def fetch_stock(stock_code: str, d: date,
-                sess: cloudscraper.CloudScraper = None) -> dict | None:
-    """
-    Fetch CCASS participant holdings for one stock on one date.
-    GET to get fresh ASP.NET tokens, then POST with stock code + date.
-    Returns {p, total_sh, issued_sh} or None if no data / blocked.
-    """
-    code5    = normalize_code(stock_code)
-    date_str = d.strftime("%Y/%m/%d")
-    own_sess = sess is None
-    if own_sess:
-        sess = _new_session()
+def _parse_response(html: str, code5: str, date_str: str) -> dict | None:
+    """Parse the SDW results page HTML. Same logic as before, now standalone."""
+    soup     = BeautifulSoup(html, "html.parser")
+    full_text = soup.get_text(" ", strip=True)
 
-    for attempt in range(1, 4):
+    # 已發行股份
+    issued_sh = 0
+    for pat in [
+        r"已發行股份[^\d]{0,30}([\d,]{6,})",
+        r"Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
+        r"Number\s+of\s+Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
+    ]:
+        m = re.search(pat, full_text)
+        if m:
+            issued_sh = _parse_num(m.group(1))
+            if issued_sh > 0:
+                break
+
+    # Participant rows
+    def clean(s):
+        return re.sub(r'^[^:：]+[:：]\s*', '', s).strip()
+
+    participants      = []
+    total_sh_fallback = 0
+
+    for tr in soup.find_all("tr"):
+        tds = [td.get_text(strip=True) for td in tr.find_all("td")]
+        if len(tds) < 5:
+            continue
+        pid_raw = clean(tds[0])
+        sh_raw  = clean(tds[3]).replace(",", "")
+        pct_raw = clean(tds[4]).replace("%", "").strip()
+        if not pid_raw or not sh_raw.isdigit():
+            continue
+        if pid_raw.lower() in ("參與者編號", "id", "participant id"):
+            continue
         try:
-            # ── Pre-warm: visit homepage ~85% of the time; occasionally browse deeper ──
-            if random.random() < 0.85:
-                sess.get("https://www.hkexnews.hk/eng/index.htm", timeout=30)
-                human_sleep(1.0, 3.0)
-                # 20% chance: visit the SDW landing page too before the actual search
-                if random.random() < 0.20:
-                    sess.get("https://www3.hkexnews.hk/sdw/search/searchsdw.aspx", timeout=30)
-                    human_sleep(1.0, 2.0)
+            sh = int(sh_raw)
+            participants.append({
+                "pid":  pid_raw,
+                "name": clean(tds[1]),
+                "sh":   sh,
+                "pct":  float(pct_raw) if pct_raw else 0.0,
+            })
+            total_sh_fallback += sh
+        except (ValueError, TypeError):
+            continue
 
-            # ── Rotate UA on each attempt ─────────────────────────────────────
-            sess.headers["User-Agent"] = random.choice(_USER_AGENTS)
+    # 總數
+    total_sh = 0
+    for pat in [r"總數[^\d]{0,20}([\d,]{6,})", r"Grand\s+Total[^\d]{0,20}([\d,]{6,})"]:
+        m = re.search(pat, full_text)
+        if m:
+            total_sh = _parse_num(m.group(1))
+            if total_sh > 0:
+                break
 
-            # ── GET — fresh ASP.NET tokens (__EVENTVALIDATION is single-use) ──
-            r1 = sess.get(SDW_URL, timeout=40)
-            r1.raise_for_status()
-
-            if any(p in r1.text for p in BLOCK_PATTERNS):
-                log.warning("⚠️ Block detected on GET for %s %s (attempt %d)",
-                            code5, date_str, attempt)
-                if attempt < 3:
-                    human_sleep(60, 120)   # was 10-20s — give server time to forget us
-                    continue
-                if own_sess: sess.close()
-                return None
-
-            soup1 = BeautifulSoup(r1.text, "html.parser")
-
-            def hv(name):
-                tag = soup1.find("input", {"name": name})
-                return tag["value"] if tag else ""
-
-            # ── POST with stock code and date ─────────────────────────────────
-            r2 = sess.post(SDW_URL, data={
-                "__EVENTTARGET":        "btnSearch",
-                "__EVENTARGUMENT":      "",
-                "__VIEWSTATE":          hv("__VIEWSTATE"),
-                "__VIEWSTATEGENERATOR": hv("__VIEWSTATEGENERATOR"),
-                "__EVENTVALIDATION":    hv("__EVENTVALIDATION"),
-                "txtShareholdingDate":  date_str,
-                "txtStockCode":         code5,
-                "txtParticipantID":     "",
-                "txtParticipantName":   "",
-            }, timeout=40)
-            r2.raise_for_status()
-
-            if any(p in r2.text for p in BLOCK_PATTERNS):
-                log.warning("⚠️ Block detected on POST for %s %s (attempt %d)",
-                            code5, date_str, attempt)
-                if attempt < 3:
-                    human_sleep(90, 180)   # was 15-30s
-                    continue
-                if own_sess: sess.close()
-                return None
-
-            soup2     = BeautifulSoup(r2.text, "html.parser")
-            full_text = soup2.get_text(" ", strip=True)
-
-            # ── 已發行股份/權證/單位 ──────────────────────────────────────────
-            issued_sh = 0
-            for pat in [
-                r"已發行股份[^\d]{0,30}([\d,]{6,})",
-                r"Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
-                r"Number\s+of\s+Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
-            ]:
-                m = re.search(pat, full_text)
-                if m:
-                    issued_sh = _parse_num(m.group(1))
-                    if issued_sh > 0:
+    if total_sh == 0:
+        for tr in soup.find_all("tr"):
+            tds = [td.get_text(strip=True) for td in tr.find_all("td")]
+            if "總數" in " ".join(tds) or "Grand Total" in " ".join(tds):
+                for cell in reversed(tds):
+                    num = _parse_num(cell)
+                    if num > 1_000_000:
+                        total_sh = num
                         break
+                if total_sh > 0:
+                    break
 
-            # ── Participant rows ──────────────────────────────────────────────
-            def clean(s):
-                return re.sub(r'^[^:：]+[:：]\s*', '', s).strip()
+    if total_sh == 0 and total_sh_fallback > 0:
+        total_sh = total_sh_fallback
+        log.warning("SDW %s %s: 總數 not found — using participant sum %d",
+                    code5, date_str, total_sh)
 
-            participants      = []
-            total_sh_fallback = 0
+    if not participants:
+        log.debug("SDW: 0 records for %s on %s", code5, date_str)
+        return None
 
-            for tr in soup2.find_all("tr"):
-                tds = [td.get_text(strip=True) for td in tr.find_all("td")]
-                if len(tds) < 5:
-                    continue
-                pid_raw = clean(tds[0])
-                sh_raw  = clean(tds[3]).replace(",", "")
-                pct_raw = clean(tds[4]).replace("%", "").strip()
-                if not pid_raw or not sh_raw.isdigit():
-                    continue
-                if pid_raw.lower() in ("參與者編號", "id", "participant id"):
-                    continue
-                try:
-                    sh = int(sh_raw)
-                    participants.append({
-                        "pid":  pid_raw,
-                        "name": clean(tds[1]),
-                        "sh":   sh,
-                        "pct":  float(pct_raw) if pct_raw else 0.0,
-                    })
-                    total_sh_fallback += sh
-                except (ValueError, TypeError):
-                    continue
-
-            # ── 總數 ──────────────────────────────────────────────────────────
-            total_sh = 0
-            for pat in [r"總數[^\d]{0,20}([\d,]{6,})", r"Grand\s+Total[^\d]{0,20}([\d,]{6,})"]:
-                m = re.search(pat, full_text)
-                if m:
-                    total_sh = _parse_num(m.group(1))
-                    if total_sh > 0:
-                        break
-
-            if total_sh == 0:
-                for tr in soup2.find_all("tr"):
-                    tds = [td.get_text(strip=True) for td in tr.find_all("td")]
-                    if "總數" in " ".join(tds) or "Grand Total" in " ".join(tds):
-                        for cell in reversed(tds):
-                            num = _parse_num(cell)
-                            if num > 1_000_000:
-                                total_sh = num
-                                break
-                        if total_sh > 0:
-                            break
-
-            if total_sh == 0 and total_sh_fallback > 0:
-                total_sh = total_sh_fallback
-                log.warning("SDW %s %s: 總數 not found — using participant sum %d",
-                            code5, date_str, total_sh)
-
-            if not participants:
-                log.debug("SDW: 0 records for %s on %s", code5, date_str)
-                if own_sess: sess.close()
-                return None
-
-            participants.sort(key=lambda x: -x["sh"])
-            if own_sess: sess.close()
-            return {"p": participants, "total_sh": total_sh, "issued_sh": issued_sh}
-
-        except Exception as e:
-            if attempt < 3:
-                wait = attempt * 15   # was attempt*3 — 15s, 30s between retries
-                log.warning("fetch_stock (%s %s) attempt %d failed: %s — retrying in %ds",
-                            code5, date_str, attempt, e, wait)
-                time.sleep(wait)
-            else:
-                log.error("fetch_stock (%s %s): all 3 attempts failed: %s", code5, date_str, e)
-                if own_sess: sess.close()
-                return None
+    participants.sort(key=lambda x: -x["sh"])
+    return {"p": participants, "total_sh": total_sh, "issued_sh": issued_sh}
 
 # ── Build / update ────────────────────────────────────────────────────────────
 
@@ -512,127 +619,107 @@ def build(update_only: bool = False, specific_date: date = None,
     if deadline:
         log.info("Time limit: %.0f minutes", max_minutes)
 
-    for di, d in enumerate(dates_to_fetch, 1):
-        if deadline and time.monotonic() >= deadline:
-            log.info("Time limit reached after %d/%d dates — stopping cleanly",
-                     di - 1, len(dates_to_fetch))
-            break
-
-        ds   = d.isoformat()
-        year = d.year
-        log.info("── [%d/%d] %s ──", di, len(dates_to_fetch), ds)
-
-        range_libs = {label: load_range(year, label) for label, _, _ in owned_ranges}
-
-        if range_label:
-            lbl     = owned_ranges[0][0]
-            already = set(range_libs[lbl]["by_date"].get(ds, {}).keys())
-        else:
-            already = _stored_codes_for_date(ds)
-        todo = [c for c in universe if c not in already]
-        log.info("  %d stocks to fetch (%d already stored)", len(todo), len(already))
-
-        fetched       = 0
-        timed_out     = False
-        blocked       = False
-        consec_errors = 0
-        _dirty_ranges = set()
-
-        _shared_sess = _new_session()
-        last_rotate  = 0
-        session_life = random.randint(15, 25)   # rotate more frequently (was 25-40)
-
-        log.info("  Session UA: %s", _shared_sess.headers["User-Agent"][:60])
-
-        for ci, code in enumerate(todo, 1):
-
-            # ── TIME LIMIT ────────────────────────────────────────────────────
+    with SDWBrowser(proxy=_PROXY) as browser:
+        for di, d in enumerate(dates_to_fetch, 1):
             if deadline and time.monotonic() >= deadline:
-                log.info("  Time limit reached mid-date at stock [%d/%d] — saving progress",
-                         ci, len(todo))
-                timed_out = True
+                log.info("Time limit reached after %d/%d dates — stopping cleanly",
+                         di - 1, len(dates_to_fetch))
                 break
 
-            # ── HUMAN-LIKE THINK TIME (before request) ────────────────────────
-            human_sleep(PRE_SLEEP_MIN, PRE_SLEEP_MAX)
+            ds   = d.isoformat()
+            year = d.year
+            log.info("── [%d/%d] %s ──", di, len(dates_to_fetch), ds)
 
-            # ── ROTATE SESSION ────────────────────────────────────────────────
-            if ci - last_rotate >= session_life:
-                _shared_sess = _rotate_session(_shared_sess)
-                last_rotate  = ci
-                session_life = random.randint(15, 25)   # was 25-40
-                log.info("  🔄 Rotated session at %d (next in ~%d)", ci, session_life)
+            range_libs = {label: load_range(year, label) for label, _, _ in owned_ranges}
 
-            # ── FETCH ─────────────────────────────────────────────────────────
-            entry = fetch_stock(code, d, sess=_shared_sess)
-
-            if entry:
-                rl = code_range(code)
-                range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
-                _dirty_ranges.add(rl)
-                fetched += 1
-                consec_errors = 0
-
+            if range_label:
+                lbl     = owned_ranges[0][0]
+                already = set(range_libs[lbl]["by_date"].get(ds, {}).keys())
             else:
-                consec_errors += 1
+                already = _stored_codes_for_date(ds)
+            todo = [c for c in universe if c not in already]
+            log.info("  %d stocks to fetch (%d already stored)", len(todo), len(already))
 
-                # ── EARLY BACKOFF ─────────────────────────────────────────────
-                if consec_errors >= 3:
-                    backoff = random.uniform(60, 120)   # was >=5, 15-40s
-                    log.warning("  ⚠️ Early backoff (%d errors) — sleeping %.0fs",
-                                consec_errors, backoff)
-                    time.sleep(backoff)
+            fetched       = 0
+            timed_out     = False
+            blocked       = False
+            consec_errors = 0
+            _dirty_ranges = set()
 
-                # ── CIRCUIT BREAKER ───────────────────────────────────────────
-                if consec_errors >= CIRCUIT_BREAKER_LIMIT:
-                    log.error("  🚫 Circuit breaker: %d consecutive errors — likely blocked",
-                              consec_errors)
-                    blocked = True
+            for ci, code in enumerate(todo, 1):
+
+                # ── TIME LIMIT ────────────────────────────────────────────────
+                if deadline and time.monotonic() >= deadline:
+                    log.info("  Time limit reached mid-date at stock [%d/%d] — saving progress",
+                             ci, len(todo))
+                    timed_out = True
                     break
 
-            # ── BASE DELAY ────────────────────────────────────────────────────
-            human_sleep(SLEEP_MIN, SLEEP_MAX)
+                # ── THINK TIME ────────────────────────────────────────────────
+                human_sleep(PRE_SLEEP_MIN, PRE_SLEEP_MAX)
 
-            # ── BURST PAUSE every 30 stocks ───────────────────────────────────
-            if ci % 30 == 0:
-                pause = random.uniform(45, 90)   # longer pause (was 20-45)
-                log.info("  😴 Burst pause %.0fs at %d", pause, ci)
-                time.sleep(pause)
+                # ── FETCH ─────────────────────────────────────────────────────
+                entry = browser.fetch(code, d)
 
-                _shared_sess = _rotate_session(_shared_sess)
-                last_rotate  = ci
-                session_life = random.randint(25, 40)
-                log.info("  🔄 Session refreshed after burst")
+                if entry:
+                    rl = code_range(code)
+                    range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
+                    _dirty_ranges.add(rl)
+                    fetched += 1
+                    consec_errors = 0
 
-                for label in _dirty_ranges:
-                    if range_libs[label]["by_date"].get(ds):
-                        save_range(year, label, range_libs[label])
-                _dirty_ranges.clear()
+                else:
+                    consec_errors += 1
 
-                log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
+                    # ── EARLY BACKOFF ─────────────────────────────────────────
+                    if consec_errors >= 3:
+                        backoff = random.uniform(60, 120)
+                        log.warning("  ⚠️ Early backoff (%d errors) — sleeping %.0fs",
+                                    consec_errors, backoff)
+                        time.sleep(backoff)
 
-        _shared_sess.close()
+                    # ── CIRCUIT BREAKER ───────────────────────────────────────
+                    if consec_errors >= CIRCUIT_BREAKER_LIMIT:
+                        log.error("  🚫 Circuit breaker: %d consecutive errors — blocked",
+                                  consec_errors)
+                        blocked = True
+                        break
 
-        for label, lib in range_libs.items():
-            if lib["by_date"].get(ds):
-                save_range(year, label, lib)
+                # ── BASE DELAY ────────────────────────────────────────────────
+                human_sleep(SLEEP_MIN, SLEEP_MAX)
 
-        if blocked:
-            log.info("  %s blocked: %d/%d stocks saved", ds, fetched, len(todo))
-            remaining = (deadline - time.monotonic()) if deadline else float("inf")
-            cooldown  = min(BLOCKED_COOLDOWN_SEC, remaining - 10)
-            if cooldown > 0:
-                log.info("  Cooling down %.0fs before next date...", cooldown)
-                time.sleep(cooldown)
-            else:
-                log.info("  No time remaining — stopping")
+                # ── BURST PAUSE every 50 stocks ───────────────────────────────
+                if ci % 50 == 0:
+                    pause = random.uniform(30, 60)
+                    log.info("  😴 Burst pause %.0fs at %d", pause, ci)
+                    time.sleep(pause)
+
+                    for label in _dirty_ranges:
+                        if range_libs[label]["by_date"].get(ds):
+                            save_range(year, label, range_libs[label])
+                    _dirty_ranges.clear()
+                    log.info("  [%d/%d] %d saved so far", ci, len(todo), fetched)
+
+            for label, lib in range_libs.items():
+                if lib["by_date"].get(ds):
+                    save_range(year, label, lib)
+
+            if blocked:
+                log.info("  %s blocked: %d/%d stocks saved", ds, fetched, len(todo))
+                remaining = (deadline - time.monotonic()) if deadline else float("inf")
+                cooldown  = min(BLOCKED_COOLDOWN_SEC, remaining - 10)
+                if cooldown > 0:
+                    log.info("  Cooling down %.0fs before next date...", cooldown)
+                    time.sleep(cooldown)
+                else:
+                    log.info("  No time remaining — stopping")
+                    break
+                continue
+
+            status = "partial" if timed_out else "done"
+            log.info("  %s %s: %d/%d stocks saved", ds, status, fetched, len(todo))
+            if timed_out:
                 break
-            continue
-
-        status = "partial" if timed_out else "done"
-        log.info("  %s %s: %d/%d stocks saved", ds, status, fetched, len(todo))
-        if timed_out:
-            break
 
     log.info("Build complete")
 
