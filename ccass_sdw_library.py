@@ -407,8 +407,11 @@ class SDWBrowser:
                         }""",
                         [date_str, code5]
                     )
-                # Wait for DOM to finish updating after response received
-                page.wait_for_load_state("load", timeout=15_000)
+                # Response received — now wait for page to finish navigating/rendering
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=15_000)
+                except Exception:
+                    pass  # AJAX postback — no navigation, domcontentloaded won't re-fire
 
                 # ── Check for block ───────────────────────────────────────────
                 content = page.content()
