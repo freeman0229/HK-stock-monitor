@@ -1557,11 +1557,13 @@ let sfcInited       = false;
 let sfcLoaded       = false;
 let sfcEventsWired  = false;
 
-// turnover data cache: { year: { "YYYY-MM-DD": { code: {tv, vol, close} } } }
+// turnover data cache: { year: { "YYYY-MM-DD": { code: {tv, vol, close, high, low} } } }
 // Source: HKEX daily quotation  https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
 //   tv    = 成交金額 (TURNOVER $)    — HKD value of all trades
 //   vol   = 成交股數 (SHARES TRADED) — number of shares that changed hands
 //   close = 收市價  (CLOSING RATE)   — closing price
+//   high  = 最高    (HIGH)           — intraday high price
+//   low   = 最低    (LOW)            — intraday low price
 let tvCache       = {};
 
 // ── Load sfc_YYYY.json ────────────────────────────────────────────────────────

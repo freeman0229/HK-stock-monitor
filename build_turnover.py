@@ -12,6 +12,8 @@ Stored per stock per day in turnover_{YYYY}.json:
   name_en    ← NAME OF STOCK   (English)
   name_zh    ← 股票名稱         (Chinese)
   prev_close ← 前收市 / PRV
+  high       ← 最高 / HIGH
+  low        ← 最低 / LOW
   close      ← 收市 / CLOSING
   vol        ← 成交股數 / SHARES TRADED
   tv         ← 成交金額 / TURNOVER ($)
@@ -168,11 +170,11 @@ _PAT = re.compile(
     r"([\d,.]+)\s+"                        # g4  前收市 / PRV
     r"[\d,.NA-]+\s+"                       # BID  (skip)
     r"[\d,.NA-]+\s+"                       # ASK  (skip)
-    r"[\d,.NA-]+\s+"                       # HIGH (skip)
-    r"[\d,.NA-]+\s+"                       # LOW  (skip)
-    r"([\d,.]+)\s+"                        # g5  收市 / CLOSING
-    r"([\d,]+)\s+"                         # g6  成交股數 → vol
-    r"([\d,]+)\s*$"                        # g7  成交金額 → tv
+    r"([\d,.NA-]+)\s+"                     # g5  最高 / HIGH
+    r"([\d,.NA-]+)\s+"                     # g6  最低 / LOW
+    r"([\d,.]+)\s+"                        # g7  收市 / CLOSING
+    r"([\d,]+)\s+"                         # g8  成交股數 → vol
+    r"([\d,]+)\s*$"                        # g9  成交金額 → tv
 )
 
 def _num(s: str) -> float:
@@ -195,6 +197,8 @@ def parse(body: str) -> dict:
         name_en    (str)    NAME OF STOCK
         name_zh    (str)    股票名稱
         prev_close (float)  前收市
+        high       (float)  最高 / HIGH
+        low        (float)  最低 / LOW
         close      (float)  收市
         vol        (int)    成交股數
         tv         (int)    成交金額
@@ -215,9 +219,11 @@ def parse(body: str) -> dict:
         name_zh_raw = re.sub(r"[\u3000\uff20\uff64\s]+$", "", m.group(3)).strip()
         name_zh     = name_zh_raw if _has_cjk(name_zh_raw) else name_en
         prev_close  = _num(m.group(4))
-        close       = _num(m.group(5))
-        vol         = int(m.group(6).replace(",", ""))
-        tv          = int(m.group(7).replace(",", ""))
+        high        = _num(m.group(5))
+        low         = _num(m.group(6))
+        close       = _num(m.group(7))
+        vol         = int(m.group(8).replace(",", ""))
+        tv          = int(m.group(9).replace(",", ""))
         if vol <= 0:
             continue
         # Keep higher-vol record if code appears twice
@@ -227,6 +233,8 @@ def parse(body: str) -> dict:
                 "name_en":    name_en,
                 "name_zh":    name_zh,
                 "prev_close": prev_close,
+                "high":       high,
+                "low":        low,
                 "close":      close,
                 "vol":        vol,
                 "tv":         tv,

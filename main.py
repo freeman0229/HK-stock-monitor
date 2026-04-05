@@ -406,13 +406,21 @@ def lockup_threshold(tv_avg24: float) -> float:
         return 60.0
     return 90.0
 
+# ── 換手率 delta thresholds ──────────────────────────────────────────────────
+# delta = current_turnover_24d − prev_turnover_24d  [pp]
+# Each stock compared to itself (rolling 24-day window, 1-day shift)
+_TURNOVER_DELTA_HIGH     = 7.0   # pp — high:     delta >= 7%
+_TURNOVER_DELTA_ELEVATED = 4.0   # pp — elevated: delta 4% – 6%
+#                                  pp — normal:   delta <= 3%
+
 def classify_insight(stock_type, short_ratio, short_avg,
                      turnover, tv_avg5,
                      pct_delta=0.0,
                      days_to_cover=0.0, vol_ratio=0.0,
                      tv_ratio=0.0, pct_dev=0.0,
                      sb_net=0,
-                     sfc_week_delta=0.0) -> str | None:
+                     sfc_week_delta=0.0,
+                     delta_turnover_24d=0.0) -> str | None:
     lo, hi, spike_warn, cover_drop = THRESHOLDS.get(stock_type, THRESHOLDS["general"])
     sfc_up, sfc_dn = SFC_THRESHOLDS.get(stock_type, SFC_THRESHOLDS["general"])
     r_today = turnover / tv_avg5 if tv_avg5 > 0 else 1.0
@@ -428,6 +436,10 @@ def classify_insight(stock_type, short_ratio, short_avg,
     # SFC structural signals: week-on-week jump vs threshold
     if sfc_week_delta >= sfc_up:                                  return "⚠️ 沽空倉位急增"
     if sfc_week_delta <= sfc_dn:                                  return "📊 沽空倉位大減"
+
+    # 換手率 delta signals: current 24d vs prev 24d rolling window
+    if delta_turnover_24d >= _TURNOVER_DELTA_HIGH:                return "📈 換手急升"
+    if delta_turnover_24d >= _TURNOVER_DELTA_ELEVATED:            return "🔼 換手上升"
 
     flow_out   = sb_net < 0 and pct_delta < 0
     high_short = short_ratio > hi + spike_warn and vol_ratio > 2
@@ -484,8 +496,10 @@ def run_analysis():
 
     # Build quote_map from library data; update name_map with any new names.
     # Source: HKEX daily quotation  https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
-    #   tv  = 成交金額 (TURNOVER $)   — HKD value of all trades
-    #   vol = 成交股數 (SHARES TRADED) — number of shares that changed hands
+    #   tv   = 成交金額 (TURNOVER $)   — HKD value of all trades
+    #   vol  = 成交股數 (SHARES TRADED) — number of shares that changed hands
+    #   high = 最高 (HIGH)              — intraday high price
+    #   low  = 最低 (LOW)               — intraday low price
     quote_map    = {}
     _name_updates = {}
     for _code, _rec in _lib_day.items():
@@ -819,11 +833,10 @@ def run_analysis():
         tv_avg5      = sum(tv_avg5_vals) / len(tv_avg5_vals) if tv_avg5_vals else 0.0
 
         vol_hist24  = _vol_hist(code5, 24, today_ds)
-        avg_vol24   = sum(vol_hist24) / len(vol_hist24) if vol_hist24 else 0
+        _vol24_days = 1 + min(len(vol_hist24), 23)  # today + up to 23 prior days
+        avg_vol24   = (today_vol + sum(vol_hist24[:23])) / _vol24_days if today_vol > 0 or vol_hist24 else 0
         days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
         vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
-
-
 
         tv_hist24  = _tv_hist(code5, 24, today_ds)
         tv_avg24   = sum(tv_hist24) / len(tv_hist24) if tv_hist24 else 0.0
@@ -847,6 +860,14 @@ def run_analysis():
         else:
             concentration = round(sum(h.get('pct', 0) for h in _holders[:5]), 2)
 
+        # 換手率 (24-day) = (today 成交股數 + prior 23 days' 成交股數) / 總數 × 100
+        vol_24d          = today_vol + sum(vol_hist24[:23])  # same window as avg_vol24
+        turnover_24d     = round(vol_24d / _total_sh_conc * 100, 4) if _total_sh_conc > 0 and vol_24d > 0 else 0.0
+        # prev window = vol_hist24 (days 1–24 back) — yesterday's 24-day window
+        vol_24d_prev     = sum(vol_hist24)
+        prev_turnover_24d  = round(vol_24d_prev / _total_sh_conc * 100, 4) if _total_sh_conc > 0 and vol_24d_prev > 0 else 0.0
+        delta_turnover_24d = round(turnover_24d - prev_turnover_24d, 4)
+
         stock_type = classify_stock(code, name_eng)
         _, ind_zh  = get_industry(code)
 
@@ -863,6 +884,7 @@ def run_analysis():
             pct_dev=pct_dev             if has_history else 0.0,
             sb_net=sb.get("sb_net", 0),
             sfc_week_delta=sfc_map.get(code, {}).get("sfc_week_delta", 0.0),
+            delta_turnover_24d=delta_turnover_24d,
         )
 
         prev_rank   = prev_ranks.get(code)
@@ -899,6 +921,8 @@ def run_analysis():
             "tv_ratio":  tv_ratio,
             "pct_dev":   round(pct_dev, 4),
             "concentration": concentration,
+            "turnover_24d":       turnover_24d,        # 換手率 = (today + prior 23d 成交股數) / 總數 × 100
+            "delta_turnover_24d": delta_turnover_24d,  # current − prev 24d window [pp]
             "lockup_threshold": lockup_threshold(tv_avg24),
             "ccass_trade_date":  t2_date.strftime("%Y-%m-%d"),
             "ccass_delta":       int(ccass_delta),
