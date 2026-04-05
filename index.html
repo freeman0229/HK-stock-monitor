@@ -2444,7 +2444,6 @@ function renderShort() {
     const sfcSh     = s.sfc_sh  || 0;
     const sfcPct    = s.sfc_pct || 0;
     const conc      = s.concentration || 0;
-    const lockup    = s.lockup_threshold || 0;
     const tier      = concTier(conc);
     const concTxt   = conc > 0 ? conc.toFixed(1) + '%' : '—';
     return `<tr>
