@@ -165,7 +165,10 @@ def _seed_name_map_from_ref():
         log.info("Seeded name_map with %d verified entries from stock_ref", len(STOCKS))
 
 # ── Source 2: Short selling — loaded from short_library ─────────────────────────
-# Short selling data is parsed from the bottom of d{YYMMDD}c.htm by build_turnover.py.
+# Short selling data is parsed from the adj_short section of d{YYMMDD}c.htm by build_turnover.py.
+# Source: HKEX daily quotation  https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm#adj_short
+#   sv = 沽空股數 (SH)  — total short sell volume in shares
+#   st = 沽空金額 ($)   — total short sell value in HKD
 # Each file contains the PREVIOUS trading day's short data, so the library entry
 # for a given date was stored when the NEXT day's file was fetched.
 EMPTY_SHORT = pd.DataFrame(columns=["stock_code", "name", "short_volume", "short_turnover"])
@@ -185,8 +188,8 @@ def get_short_sell_today(trading_day: datetime) -> pd.DataFrame:
             rows = [
                 {"stock_code":     code,
                  "name":           v.get("name", ""),
-                 "short_volume":   v.get("sv", 0),
-                 "short_turnover": v.get("st", 0.0)}
+                 "short_volume":   v.get("sv", 0),    # 沽空股數 (SH)
+                 "short_turnover": v.get("st", 0.0)}  # 沽空金額 ($)
                 for code, v in day.items()
                 if isinstance(v, dict) and v.get("sv", 0) > 0
             ]
@@ -479,7 +482,10 @@ def run_analysis():
                    "請先執行 build_turnover.py。")
             log.error(msg); send_telegram(msg); return
 
-    # Build quote_map from library data; update name_map with any new names
+    # Build quote_map from library data; update name_map with any new names.
+    # Source: HKEX daily quotation  https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
+    #   tv  = 成交金額 (TURNOVER $)   — HKD value of all trades
+    #   vol = 成交股數 (SHARES TRADED) — number of shares that changed hands
     quote_map    = {}
     _name_updates = {}
     for _code, _rec in _lib_day.items():
@@ -489,9 +495,9 @@ def run_analysis():
         _name_en  = _rec.get("name_en") or _nm_entry.get("en") or _code
         _name_zh  = _rec.get("name_zh") or _nm_entry.get("zh") or _name_en
         quote_map[_code] = {
-            "tv":       int(_rec["tv"]),
-            "vol":      int(_rec.get("vol", 0)),
-            "close":    float(_rec.get("close", 0.0)),
+            "tv":       int(_rec["tv"]),    # 成交金額 (HKD)
+            "vol":      int(_rec.get("vol", 0)),  # 成交股數 (shares)
+            "close":    float(_rec.get("close", 0.0)),  # 收市價 (CLOSING RATE)
             "name":     _name_en,
             "name_chi": _name_zh,
         }
@@ -516,13 +522,13 @@ def run_analysis():
                 if isinstance(rec, dict)
             }
             log.info("Short ratio: using %s volume for denominator (matches short date)", short_date)
-    short_map     = {}   # code → short_ratio % (same-day vol/sv pair)
-    short_vol_map = {}   # code → short volume (shares)
-    short_st_map  = {}   # code → short turnover (HKD)
+    short_map     = {}   # code → short_ratio % (沽空股數 / 成交股數 × 100)
+    short_vol_map = {}   # code → 沽空股數 (SH)
+    short_st_map  = {}   # code → 沽空金額 ($) in HKD
     for row in df_short.itertuples():
         code = row.stock_code
-        sv   = int(row.short_volume)
-        st   = float(row.short_turnover)
+        sv   = int(row.short_volume)    # 沽空股數 (SH)
+        st   = float(row.short_turnover)  # 沽空金額 ($)
         short_vol_map[code] = sv
         short_st_map[code]  = st
         traded_vol = _short_vol_map_ref.get(code, {}).get("vol", 0)
@@ -574,7 +580,11 @@ def run_analysis():
     _tv_recent = tv_load_recent(35, today_ds)
 
     # Pre-load SDW total_sh for all stocks in one pass (7 range files → {code5: total_sh})
-    # Used for 換手率 = 5-day vol sum / total_sh
+    # Source: https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx
+    #   total_sh = 總數 (於中央結算系統的持股量，總數) — shares custodied within CCASS
+    #   ⚠️  NOT the same as 已發行股份/權證/單位 (最近更新數目) — total issued shares
+    #   總數 ≤ 已發行股份 since not all issued shares are held in CCASS
+    # Used for: 換手率 (N-day vol / 總數 × 100) and 持倉集中度 (top5_sh / 總數 × 100)
     _sdw_total_sh_map = sdw_get_total_sh_bulk(today_ds) if _SDW_AVAILABLE else {}
     df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, today_ds,
                                     today_pct_map=ccass_pct_map)
@@ -589,6 +599,10 @@ def run_analysis():
     short_avg_map = dict(zip(_sa_df["stock_code"], _sa_df["short_avg"]))
 
     # ── 6. SFC cumulative short positions ────────────────────────────────────
+    # Source: SFC Aggregated Reportable Short Positions CSV (published every Friday)
+    #   https://www.sfc.hk/-/media/EN/pdf/spr/{YYYY}/{MM}/{DD}/Short_Position_Reporting_Aggregated_Data_{YYYYMMDD}.csv
+    #   sh  = 累積沽空股數 (Aggregated Reportable Short Positions — Shares)
+    #   hkd = 累積沽空金額 (Aggregated Reportable Short Positions — HK$)
     sfc_map = {}
     if _SFC_AVAILABLE:
         try:
@@ -599,10 +613,10 @@ def run_analysis():
                     pos = sfc_get_position(code, _latest_sfc_ds)
                     if not pos or pos.get("sh", 0) <= 0:
                         continue
-                    sfc_sh  = pos["sh"]
-                    sfc_hkd = pos.get("hkd", 0.0)
+                    sfc_sh  = pos["sh"]           # 累積沽空股數 (Shares)
+                    sfc_hkd = pos.get("hkd", 0.0) # 累積沽空金額 (HK$)
                     if _SDW_AVAILABLE:
-                        total_sh = sdw_get_total_sh(code, today_ds)
+                        total_sh = sdw_get_total_sh(code, today_ds)  # 總數 (CCASS Grand Total)
                         sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
                     else:
                         sfc_pct = 0.0
@@ -622,12 +636,12 @@ def run_analysis():
                     sfc_level_dev   = round(sfc_pct - sfc_avg4, 4) if sfc_avg4 > 0 else 0.0
 
                     sfc_map[code] = {
-                        "sfc_sh":         sfc_sh,
-                        "sfc_hkd":        sfc_hkd,
-                        "sfc_hkd_delta":  sfc_hkd_delta,
-                        "sfc_pct":        sfc_pct,
-                        "sfc_week_delta": sfc_week_delta,
-                        "sfc_level_dev":  sfc_level_dev,
+                        "sfc_sh":         sfc_sh,         # 累積沽空股數 (Shares)
+                        "sfc_hkd":        sfc_hkd,        # 累積沽空金額 (HK$)
+                        "sfc_hkd_delta":  sfc_hkd_delta,  # 累積沽空金額 week-on-week change
+                        "sfc_pct":        sfc_pct,         # 累積沽空股數 / 已發行總股數 × 100
+                        "sfc_week_delta": sfc_week_delta,  # sfc_pct week-on-week change (pp)
+                        "sfc_level_dev":  sfc_level_dev,   # sfc_pct vs 4-week rolling avg (pp)
                     }
                 log.info("SFC short positions: %d stocks from %s%s",
                          len(sfc_map), _latest_sfc_ds,
@@ -792,8 +806,8 @@ def run_analysis():
 
     for i, code in enumerate(stock_codes, 1):
         q            = quote_map.get(code, {})
-        turnover     = q.get("tv", 0)
-        today_vol    = q.get("vol", 0)
+        turnover     = q.get("tv", 0)    # 成交金額 (HKD) from HKEX dayquot
+        today_vol    = q.get("vol", 0)   # 成交股數 (shares) from HKEX dayquot
         name_eng, name_chi = _get_names(code)
 
         short_ratio  = short_map.get(code, 0.0)
@@ -814,10 +828,11 @@ def run_analysis():
         days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
         vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
 
-        # 換手率 = sum of last 5 trading days' 成交股數 / 總數 (CCASS-custodied shares) × 100
+        # 換手率 = sum of last N trading days' 成交股數 / 總數 × 100
+        # denominator: _ts = 總數 (CCASS Grand Total), NOT 已發行股份/權證/單位
         vol_5d       = sum(vol_hist24[:5])
         vol_20d      = sum(vol_hist24[:20])  # 20-day vol for monthly 換手率
-        _ts          = _sdw_total_sh_map.get(normalize_code(code), 0)
+        _ts          = _sdw_total_sh_map.get(normalize_code(code), 0)  # 總數 (CCASS Grand Total)
         turnover_5d  = round(vol_5d  / _ts * 100, 4) if _ts > 0 and vol_5d  > 0 else 0.0
         turnover_20d = round(vol_20d / _ts * 100, 4) if _ts > 0 and vol_20d > 0 else 0.0
 
@@ -863,7 +878,8 @@ def run_analysis():
             vwap = 0.0
 
         # 持倉集中度 — sum(top 5 持股量) / 總數 × 100
-        # 總數 = CCASS Grand Total (_sdw_total_sh_map); fallback to 佔已發行% sum
+        # 總數 = CCASS Grand Total (於中央結算系統的持股量，總數)
+        # fallback: sum h.pct directly (each h.pct = holder's 佔已發行股份/權證/單位百分比)
         _holders = sdw_get_holders(code, today_ds) if _SDW_AVAILABLE else []
         if not _holders:
             # Try latest available SDW date if today not yet fetched

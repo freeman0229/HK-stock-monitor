@@ -929,7 +929,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th class="rank">#</th>
           <th>中央結算參與者</th>
           <th class="num-r">持股量</th>
-          <th class="num-r">佔已發行%</th>
+          <th class="num-r">佔已發行%</th><!-- h.pct = 佔已發行股份/權證/單位百分比 from SDW -->
           <th class="num-r mob-hide">較上週股數變動</th>
           <th class="num-r mob-hide">較上週%變動</th>
         </tr></thead>
@@ -1485,7 +1485,7 @@ function renderBshui() {
     // 北水佔比 = (北水買入及賣出 from HKEX SC) / 全市場成交額 (from daily quotation)
     // HKEX counts buy + sell legs separately, so ratio can legitimately exceed 100%
     // for heavily SC-traded stocks like Tencent
-    // sb_total = southbound buy+sell in HKD; turnover = full-market HKD from dayquot
+    // sb_total = southbound buy+sell in HKD; s.turnover = 成交金額 (HKD) from HKEX dayquot
     // Cap at 100% — sc data and dayquot use slightly different counting methods
     // so sb_total can marginally exceed turnover for heavily-traded SC stocks.
     // Fallback: if sc_top10_library omits the "total" field, derive it from buy+sell
@@ -1539,6 +1539,11 @@ function renderBshui() {
 
 // ══ SFC 累積沽空持倉趨勢 ═══════════════════════════════════════════════════════
 //
+// Source: SFC Aggregated Reportable Short Positions CSV (published every Friday)
+//   https://www.sfc.hk/-/media/EN/pdf/spr/{YYYY}/{MM}/{DD}/Short_Position_Reporting_Aggregated_Data_{YYYYMMDD}.csv
+//   sh  = 累積沽空股數 (Aggregated Reportable Short Positions — Shares)
+//   hkd = 累積沽空金額 (Aggregated Reportable Short Positions — HK$)
+//
 // Data loaded from sfc_YYYY.json on GitHub Pages.
 // Structure: { by_date: { "YYYY-MM-DD": { "__total__": {sh,hkd}, "00700": {sh,hkd,pct,name}, … } } }
 //
@@ -1555,7 +1560,11 @@ let sfcInited       = false;
 let sfcLoaded       = false;
 let sfcEventsWired  = false;
 
-// turnover data cache: { year: { "YYYY-MM-DD": { code: {tv,vol,close} } } }
+// turnover data cache: { year: { "YYYY-MM-DD": { code: {tv, vol, close} } } }
+// Source: HKEX daily quotation  https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
+//   tv    = 成交金額 (TURNOVER $)    — HKD value of all trades
+//   vol   = 成交股數 (SHARES TRADED) — number of shares that changed hands
+//   close = 收市價  (CLOSING RATE)   — closing price
 let tvCache       = {};
 
 // ── Load sfc_YYYY.json ────────────────────────────────────────────────────────
@@ -2370,10 +2379,10 @@ function renderShort() {
   });
   const avg = sorted.reduce((a,s) => a + s.short_ratio, 0) / sorted.length;
 
-  // 日沽空 TOP — highest 金額($) from adj_short (short_st = short turnover HKD), exclude ETFs
+  // 日沽空 TOP — highest 沽空金額($) from adj_short section of HKEX dayquot (short_st = 沽空金額 HKD), exclude ETFs
   const topVol  = [...sorted].filter(s => s.short_st > 0 && s.stock_type !== 'etf')
                              .sort((a,b) => (b.short_st||0) - (a.short_st||0))[0];
-  // 日沽空比率 TOP — highest (股數(SH) / 成交股數) = short_ratio, exclude ETFs
+  // 日沽空比率 TOP — highest short_ratio = 沽空股數(SH) / 成交股數 × 100, exclude ETFs
   const topRatio = [...sorted].filter(s => s.short_ratio > 0 && s.stock_type !== 'etf')
                               .sort((a,b) => b.short_ratio - a.short_ratio)[0];
   // 累積沽空 TOP — highest Aggregated Reportable Short Positions (HK$) from SFC
@@ -3047,7 +3056,10 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
     `</div>`;
 
   // ── New card values ───────────────────────────────────────────────────────
-  const totalSh      = rawEntry    ? (rawEntry.total_sh    || 0) : 0;
+  // Source: https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx
+  //   total_sh = 總數 (於中央結算系統的持股量，總數) — ⚠️ NOT 已發行股份/權證/單位 (最近更新數目)
+  //   h.pct    = 佔已發行股份/權證/單位百分比 — each holder's % of total issued shares
+  const totalSh      = rawEntry    ? (rawEntry.total_sh    || 0) : 0;  // 總數
   const prevTotalSh  = prevRawEntry ? (prevRawEntry.total_sh || 0) : 0;
   const totalShDelta = totalSh > 0 && prevTotalSh > 0 ? totalSh - prevTotalSh : null;
   const totalShDeltaStr   = totalShDelta !== null ? (totalShDelta >= 0 ? '+' : '') + fmtM(totalShDelta) : '—';
@@ -3365,7 +3377,7 @@ async function drawCai() {
   const allDates = Object.keys(byDate).sort();
   const code5  = norm5(stock.code);
 
-  const chartDates = [], closeHistory = [], volHistory = [];
+  const chartDates = [], closeHistory = [], volHistory = [];  // close = 收市價, vol = 成交股數 (shares traded)
   for (const d of allDates) {
     const rec = byDate[d]?.[code5] || byDate[d]?.[stock.code];
     if (rec && rec.close > 0) {
