@@ -1166,9 +1166,6 @@ function generateMockData() {
       short_ratio: sr, short_avg: sa,
       concentration: parseFloat((20 + Math.random() * 70).toFixed(1)),
       lockup_threshold: [60, 75, 90][Math.floor(Math.random()*3)],
-      turnover_5d: parseFloat((0.5 + Math.random() * 4).toFixed(2)),
-      turnover_20d: parseFloat((1.5 + Math.random() * 12).toFixed(2)),
-      turnover_ratio: parseFloat((0.7 + Math.random() * 0.9).toFixed(2)),
       sb_buy: mockSbBuy, sb_sell: mockSbSell, sb_net: sbn,
       // sb_total derived from turnover * sbPct so the participation bar is realistic
       sb_total: i < SB_TOP ? Math.round(tv * mockSbPct / 100) : 0,
@@ -3019,12 +3016,7 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
   const lockup  = parseFloat(s.lockup_threshold || 60);
   const gap     = parseFloat((conc - lockup).toFixed(1));
   const exceeded= gap >= 0;
-  const vwap    = s.vwap || 0;
-  const dtc     = s.days_to_cover || 0;
   const sfcHkd  = s.sfc_hkd || 0;
-  const tv5d    = s.turnover_5d || 0;
-  const tv20d   = s.turnover_20d || 0;
-  const sr      = s.short_ratio || 0;
 
   const nameMap = {}; allStocks.forEach(x => { nameMap[x.code] = x; });
   const info = nameMap[code] || {};

@@ -828,38 +828,7 @@ def run_analysis():
         days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
         vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
 
-        # 換手率 = sum of last N trading days' 成交股數 / 總數 × 100
-        # denominator: _ts = 總數 (CCASS Grand Total), NOT 已發行股份/權證/單位
-        vol_5d       = sum(vol_hist24[:5])
-        vol_20d      = sum(vol_hist24[:20])  # 20-day vol for monthly 換手率
-        _ts          = _sdw_total_sh_map.get(normalize_code(code), 0)  # 總數 (CCASS Grand Total)
-        turnover_5d  = round(vol_5d  / _ts * 100, 4) if _ts > 0 and vol_5d  > 0 else 0.0
-        turnover_20d = round(vol_20d / _ts * 100, 4) if _ts > 0 and vol_20d > 0 else 0.0
 
-        # turnover_ratio = this week's 換手率 vs 4-week rolling average
-        # weeks 1-3 use the same vol_hist24 already loaded — no extra I/O
-        _prior_weeks  = [vol_hist24[i:i+5] for i in range(5, 20, 5)]
-        _valid_weeks  = [sum(w) for w in _prior_weeks if len(w) == 5]
-        _avg_wk_vol   = sum(_valid_weeks) / len(_valid_weeks) if _valid_weeks else 0
-        _avg_to_4w    = _avg_wk_vol / _ts * 100 if _ts > 0 and _avg_wk_vol > 0 else 0.0
-        turnover_ratio = round(turnover_5d / _avg_to_4w, 2) if _avg_to_4w > 0 else 0.0
-
-        # net_buy_vol = traded volume minus short-sold volume (non-short demand proxy)
-        # Use _tv_recent (already loaded) and short history to build 24-day net_buy series
-        net_buy_vol_today = max(0, today_vol - short_vol_today)
-        sh_hist24         = _sh_hist(code5, 24, today_ds)
-        sh_sv_by_date     = {e["date"]: e["sv"] for e in sh_hist24}
-        nbv_hist = []
-        for yyyymmdd in sorted(_tv_recent.keys(), reverse=True)[:24]:
-            ds_iso = f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
-            rec    = _tv_recent[yyyymmdd].get(normalize_code(code), {})
-            v      = rec.get("vol", 0) if isinstance(rec, dict) else 0
-            sv     = sh_sv_by_date.get(ds_iso, 0)
-            nbv    = max(0, v - sv)
-            if nbv > 0:
-                nbv_hist.append(nbv)
-        avg_nbv24     = sum(nbv_hist) / len(nbv_hist) if nbv_hist else 0
-        net_buy_ratio = round(net_buy_vol_today / avg_nbv24, 2) if avg_nbv24 > 0 else 0.0
 
         tv_hist24  = _tv_hist(code5, 24, today_ds)
         tv_avg24   = sum(tv_hist24) / len(tv_hist24) if tv_hist24 else 0.0
@@ -867,15 +836,6 @@ def run_analysis():
         pct_hist24 = _pct_hist(code5, 24, today_ds)
         pct_avg24_lvl = round(sum(pct_hist24) / len(pct_hist24), 4) if pct_hist24 else 0.0
         pct_dev    = round(pct_listed - pct_avg24_lvl, 4) if pct_avg24_lvl > 0 else 0.0
-
-        # VWAP = tv (HKD) / vol (shares) — backward compatible
-        _today_rec = _tv_all.get(today_ds, {}).get(code5, {})
-        if isinstance(_today_rec, dict) and _today_rec.get('vwap', 0):
-            vwap = float(_today_rec['vwap'])
-        elif turnover > 0 and today_vol > 0:
-            vwap = round(turnover / today_vol, 4)
-        else:
-            vwap = 0.0
 
         # 持倉集中度 — sum(top 5 持股量) / 總數 × 100
         # 總數 = CCASS Grand Total (於中央結算系統的持股量，總數)
@@ -937,11 +897,6 @@ def run_analysis():
             "short_st":       int(short_st_map.get(code, 0)),
             "days_to_cover":  days_to_cover,
             "vol_ratio":      vol_ratio,
-            "turnover_5d":    turnover_5d,
-            "turnover_20d":   turnover_20d,
-            "turnover_ratio": turnover_ratio,
-            "net_buy_vol":    int(net_buy_vol_today),
-            "net_buy_ratio":  net_buy_ratio,
             "sfc_sh":         sfc_map.get(code, {}).get("sfc_sh",         0),
             "sfc_hkd":        sfc_map.get(code, {}).get("sfc_hkd",        0.0),
             "sfc_hkd_delta":  sfc_map.get(code, {}).get("sfc_hkd_delta",  0.0),
@@ -950,7 +905,6 @@ def run_analysis():
             "sfc_level_dev":  sfc_map.get(code, {}).get("sfc_level_dev",  0.0),
             "tv_ratio":  tv_ratio,
             "pct_dev":   round(pct_dev, 4),
-            "vwap":          vwap,
             "concentration": concentration,
             "lockup_threshold": lockup_threshold(tv_avg24),
             "ccass_trade_date":  t2_date.strftime("%Y-%m-%d"),
