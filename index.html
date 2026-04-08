@@ -724,8 +724,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
   <!-- ── Risk map ── -->
   <div class="sec-head" style="margin-top:4px">
-    <div class="sec-title">沽空風險圖 <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">泡泡大小 = 沽空比率</span></div>
-    <div class="sec-sub">X軸：回補天數 DTC（日）｜ Y軸：成交量倍數 ｜ 泡泡大小：沽空比率 ｜ 實心 = 活躍擠壓 ｜ 虛線 = 醞釀中</div>
+    <div class="sec-title">挾倉風險圖 <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">泡泡大小 = 沽空比率</span></div>
+    <div class="sec-sub">X軸：回補天數 DTC（日）｜ Y軸：持倉集中度 % ｜ 泡泡大小：沽空比率 ｜ 色溫：成交量倍數（冷→暖）｜ 右上角 = 最高挾倉風險</div>
   </div>
   <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:12px 12px 8px;margin-bottom:16px;position:relative;">
     <canvas id="shortRiskCanvas" style="cursor:crosshair;display:block;width:100%"></canvas>
@@ -1046,6 +1046,10 @@ const fmtConsec = s => {
   const pStr = (p >= 0 ? '+' : '') + p.toFixed(2) + 'pp';
   return `${dir}${Math.abs(c)} (${pStr})`;
 };
+
+// HKEX uses ◆ (U+25C6) as a separator in some participant names (e.g. 易方達◆瓶◆ESG)
+// Replace with a plain space for clean display
+const cleanName = s => (s || '').replace(/◆/g, ' ').trim();
 
 // ── Load data.json ────────────────────────────────────────────────────────
 const CACHE_KEY = 'hk_dashboard_data_v4';   // v3: SB-only filter restored
@@ -1874,11 +1878,13 @@ function _sfcXLabels(ctx, P, H, dates) {
   const n = dates.length;
   ctx.fillStyle = '#aaa'; ctx.font = '10px sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const _yrs = new Set(dates.map(d => d.slice(0, 4)));
+  const _sy  = _yrs.size > 1;
   dates.forEach((ds, i) => {
     if (n > 26 && i % 4 !== 0 && i !== n-1) return;
     if (n > 12 && n <= 26 && i % 2 !== 0 && i !== n-1) return;
     const x = P.left + (i / (n-1)) * P.cW;
-    ctx.fillText(ds.slice(5), x, H - P.bottom + 4);
+    ctx.fillText(_sy ? ds.slice(2, 10).replace(/-/g, '/') : ds.slice(5), x, H - P.bottom + 4);
   });
 }
 
@@ -2481,121 +2487,152 @@ function drawShortRiskMap(stocks) {
   canvas.style.width = W+'px'; canvas.style.height = H+'px';
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
-  const active  = stocks.filter(s => s.turnover > 0 && s.short_ratio > shortHi(s) && (s.days_to_cover||0) >= 3 && (s.vol_ratio||0) >= 1.8);
-  const buildup = stocks.filter(s => s.turnover > 0 && s.short_ratio > shortHi(s) && (s.days_to_cover||0) >= 3 && (s.vol_ratio||0) <  1.8);
-  const pts = [...active, ...buildup];
-  const PAD = { top:20, right:28, bottom:52, left:56 };
-  const cW = W - PAD.left - PAD.right, cH = H - PAD.top - PAD.bottom;
-  function niceStep(mv, n) {
-    const mag = Math.pow(10, Math.floor(Math.log10(mv / n)));
-    const cands = [1,2,2.5,5,10].map(f => f * mag);
-    return cands.find(c => mv / c <= n + 1) || cands[cands.length-1];
+
+  // Filter: stocks with meaningful short activity
+  const pts = stocks.filter(s =>
+    s.turnover > 0 && s.short_ratio > 0 &&
+    (s.days_to_cover||0) > 0 && (s.concentration||0) > 0
+  );
+
+  const PAD = {top:24, right:72, bottom:50, left:56};
+  const cW  = W - PAD.left - PAD.right;
+  const cH  = H - PAD.top  - PAD.bottom;
+
+  // Axis ranges
+  const maxDtc  = pts.length ? Math.ceil(Math.max(...pts.map(s=>s.days_to_cover||0)) * 1.15) || 10 : 10;
+  const maxConc = pts.length ? Math.ceil(Math.max(...pts.map(s=>s.concentration||0)) * 1.15) || 80 : 80;
+  const maxVol  = pts.length ? Math.max(...pts.map(s=>s.vol_ratio||0)) : 4;
+  const minVol  = pts.length ? Math.min(...pts.map(s=>s.vol_ratio||0)) : 0.5;
+  const maxSr   = pts.length ? Math.max(...pts.map(s=>s.short_ratio||1)) : 30;
+
+  const xAt = v => PAD.left + (v / maxDtc)  * cW;
+  const yAt = v => PAD.top  + cH - (v / maxConc) * cH;
+  const rOf = v => Math.max(5, Math.min(20, 5 + (v / maxSr) * 15));
+
+  // Cool→warm colour for vol_ratio
+  function volColor(vol, alpha=0.78) {
+    const t = Math.max(0, Math.min(1, (vol - minVol) / (maxVol - minVol || 1)));
+    let r, g, b;
+    if (t < 0.5) {
+      const u = t * 2;
+      r = Math.round(55  + u*(186-55));
+      g = Math.round(133 + u*(117-133));
+      b = Math.round(235 + u*(23-235));
+    } else {
+      const u = (t-0.5)*2;
+      r = Math.round(186 + u*(192-186));
+      g = Math.round(117 + u*(37-117));
+      b = Math.round(23  + u*(45-23));
+    }
+    return {fill:`rgba(${r},${g},${b},${alpha})`, stroke:`rgb(${r},${g},${b})`};
   }
-  const allDtc = pts.length ? pts.map(s => s.days_to_cover||0) : [10];
-  const allVol = pts.length ? pts.map(s => s.vol_ratio||0)     : [4];
-  const stepX = niceStep(Math.max(...allDtc) * 1.15, 5);
-  const stepY = niceStep(Math.max(...allVol) * 1.15, 5);
-  const maxX  = Math.ceil(Math.max(...allDtc) * 1.15 / stepX) * stepX;
-  const maxY  = Math.ceil(Math.max(...allVol) * 1.15 / stepY) * stepY;
-  const xAt = v => PAD.left + (v / maxX) * cW;
-  const yAt = v => PAD.top  + cH - (v / maxY) * cH;
+
+  // ── Grid ──────────────────────────────────────────────────────────────────
   ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
-  for (let t = stepX; t <= maxX + 1e-9; t += stepX) {
-    ctx.beginPath(); ctx.moveTo(xAt(t), PAD.top); ctx.lineTo(xAt(t), PAD.top+cH); ctx.stroke();
-    ctx.fillStyle='#bbb'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
-    ctx.fillText(t%1===0 ? t.toFixed(0)+'d' : t.toFixed(1)+'d', xAt(t), PAD.top+cH+6);
+  function niceStep(mv, n) {
+    const mag = Math.pow(10, Math.floor(Math.log10(mv/n)));
+    return [1,2,2.5,5,10].map(f=>f*mag).find(c=>mv/c<=n+1) || mag*10;
   }
-  for (let t = stepY; t <= maxY + 1e-9; t += stepY) {
-    ctx.beginPath(); ctx.moveTo(PAD.left, yAt(t)); ctx.lineTo(PAD.left+cW, yAt(t)); ctx.stroke();
-    ctx.fillStyle='#bbb'; ctx.font='11px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
-    ctx.fillText(t%1===0 ? t.toFixed(0)+'x' : t.toFixed(1)+'x', PAD.left-6, yAt(t));
+  const stepX = niceStep(maxDtc, 5), stepY = niceStep(maxConc, 5);
+  for (let t=stepX; t<=maxDtc+1e-9; t+=stepX) {
+    ctx.beginPath(); ctx.moveTo(xAt(t),PAD.top); ctx.lineTo(xAt(t),PAD.top+cH); ctx.stroke();
+    ctx.fillStyle='#bbb'; ctx.font='10px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+    ctx.fillText(t.toFixed(0)+'d', xAt(t), PAD.top+cH+5);
   }
-  ctx.strokeStyle='#666'; ctx.lineWidth=1.5; ctx.setLineDash([]);
-  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, PAD.top+cH); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top+cH); ctx.lineTo(PAD.left+cW, PAD.top+cH); ctx.stroke();
-  ctx.fillStyle='#666';
-  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top-2); ctx.lineTo(PAD.left-4, PAD.top+8); ctx.lineTo(PAD.left+4, PAD.top+8); ctx.closePath(); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(PAD.left+cW+2, PAD.top+cH); ctx.lineTo(PAD.left+cW-8, PAD.top+cH-4); ctx.lineTo(PAD.left+cW-8, PAD.top+cH+4); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#bbb'; ctx.font='11px sans-serif';
+  for (let t=stepY; t<=maxConc+1e-9; t+=stepY) {
+    ctx.beginPath(); ctx.moveTo(PAD.left,yAt(t)); ctx.lineTo(PAD.left+cW,yAt(t)); ctx.stroke();
+    ctx.fillStyle='#bbb'; ctx.font='10px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='middle';
+    ctx.fillText(t.toFixed(0)+'%', PAD.left-5, yAt(t));
+  }
+
+  // Axis lines
+  ctx.strokeStyle='#999'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(PAD.left,PAD.top); ctx.lineTo(PAD.left,PAD.top+cH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(PAD.left,PAD.top+cH); ctx.lineTo(PAD.left+cW,PAD.top+cH); ctx.stroke();
+
+  // Axis labels
+  ctx.fillStyle='#777'; ctx.font='11px sans-serif';
   ctx.textAlign='center'; ctx.textBaseline='top';
-  ctx.fillText('0', PAD.left, PAD.top+cH+6);
-  ctx.textAlign='right'; ctx.textBaseline='middle';
-  ctx.fillText('0', PAD.left-6, PAD.top+cH);
-  ctx.fillStyle='#888'; ctx.font='11px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
-  ctx.fillText('回補天數 DTC（日）', PAD.left+cW/2, PAD.top+cH+28);
-  ctx.save(); ctx.translate(14, PAD.top+cH/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('回補天數 DTC（日）', PAD.left+cW/2, PAD.top+cH+26);
+  ctx.save(); ctx.translate(13, PAD.top+cH/2); ctx.rotate(-Math.PI/2);
   ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText('成交量倍數', 0, 0); ctx.restore();
-  if (maxY >= 1.8) {
-    const refY = yAt(1.8);
-    ctx.save(); ctx.strokeStyle='rgba(180,180,180,0.5)'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
-    ctx.beginPath(); ctx.moveTo(PAD.left, refY); ctx.lineTo(PAD.left+cW, refY); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle='#aaa'; ctx.font='10px sans-serif'; ctx.textAlign='right'; ctx.textBaseline='bottom';
-    ctx.fillText('1.8x', PAD.left+cW, refY-3); ctx.restore();
-  }
-  ctx.fillStyle='rgba(192,37,45,0.60)'; ctx.font='bold 10px sans-serif';
+  ctx.fillText('持倉集中度 %', 0, 0); ctx.restore();
+
+  // Risk zone
+  ctx.fillStyle = 'rgba(192,37,45,0.04)';
+  const rzX = xAt(maxDtc*0.5), rzY = yAt(maxConc*0.6);
+  ctx.fillRect(rzX, PAD.top, PAD.left+cW-rzX, rzY-PAD.top);
+  ctx.fillStyle='rgba(192,37,45,0.5)'; ctx.font='bold 10px sans-serif';
   ctx.textAlign='right'; ctx.textBaseline='top';
-  ctx.fillText('🔥 最高擠壓風險', PAD.left+cW-4, PAD.top+4);
+  ctx.fillText('挾倉風險區 🔥', PAD.left+cW-4, PAD.top+4);
+
+  // ── Gradient colour bar (right axis = 成交量倍數) ─────────────────────────
+  const GB_W=12, GB_H=Math.round(cH*0.65), GB_X=W-PAD.right+16, GB_Y=PAD.top+Math.round(cH*0.15);
+  const grad = ctx.createLinearGradient(0, GB_Y, 0, GB_Y+GB_H);
+  grad.addColorStop(0,   'rgb(192,37,45)');
+  grad.addColorStop(0.5, 'rgb(186,117,23)');
+  grad.addColorStop(1,   'rgb(55,133,235)');
+  ctx.fillStyle=grad; ctx.fillRect(GB_X, GB_Y, GB_W, GB_H);
+  ctx.strokeStyle='#ccc'; ctx.lineWidth=0.5; ctx.strokeRect(GB_X, GB_Y, GB_W, GB_H);
+  [[0,maxVol],[0.5,(maxVol+minVol)/2],[1,minVol]].forEach(([t,v])=>{
+    const y=GB_Y+t*GB_H;
+    ctx.strokeStyle='#ccc'; ctx.lineWidth=0.5;
+    ctx.beginPath(); ctx.moveTo(GB_X+GB_W,y); ctx.lineTo(GB_X+GB_W+4,y); ctx.stroke();
+    ctx.fillStyle='#999'; ctx.font='10px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText(v.toFixed(1)+'x', GB_X+GB_W+6, y);
+  });
+  ctx.save(); ctx.translate(W-5, GB_Y+GB_H/2); ctx.rotate(Math.PI/2);
+  ctx.fillStyle='#888'; ctx.font='10px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('成交量倍數', 0, 0); ctx.restore();
+
+  // ── No data ───────────────────────────────────────────────────────────────
   if (!pts.length) {
-    ctx.fillStyle='rgba(192,37,45,0.08)';
-    ctx.beginPath(); ctx.roundRect(PAD.left+cW/2-180, PAD.top+cH/2-40, 360, 80, 8); ctx.fill();
-    ctx.fillStyle='#c0252d'; ctx.font='bold 14px sans-serif';
+    ctx.fillStyle='#888'; ctx.font='13px sans-serif';
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText('今日無擠壓風險股票', PAD.left+cW/2, PAD.top+cH/2-12);
-    ctx.fillStyle='#888'; ctx.font='12px sans-serif';
-    ctx.fillText('沽空比率及回補天數均未達到警戒水平', PAD.left+cW/2, PAD.top+cH/2+14);
+    ctx.fillText('暫無數據', PAD.left+cW/2, PAD.top+cH/2);
     return;
   }
-  const SOLID  = { bluechip:'rgba(192,37,45,0.80)',  general:'rgba(37,99,235,0.75)',  stable:'rgba(22,163,74,0.75)',  etf:'rgba(184,134,11,0.72)' };
-  const FAINT  = { bluechip:'rgba(192,37,45,0.12)',  general:'rgba(37,99,235,0.11)',  stable:'rgba(22,163,74,0.11)',  etf:'rgba(184,134,11,0.11)' };
-  const STROKE = { bluechip:'rgba(192,37,45,0.55)',  general:'rgba(37,99,235,0.50)',  stable:'rgba(22,163,74,0.50)',  etf:'rgba(184,134,11,0.50)' };
-  const maxSr = Math.max(...pts.map(s => s.short_ratio||1));
-  const rOf = sr => Math.max(5, Math.min(18, 5 + (sr/maxSr)*13));
-  const top5 = new Set([...pts].sort((a,b) =>
-    (b.days_to_cover||0)*(b.vol_ratio||0)*b.short_ratio - (a.days_to_cover||0)*(a.vol_ratio||0)*a.short_ratio
-  ).slice(0,5).map(s => s.code));
-  const hitAreas = [];
-  buildup.forEach(s => {
-    const type = s.stock_type||'general';
-    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rOf(s.short_ratio||1);
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
-    ctx.fillStyle = FAINT[type]||FAINT.general; ctx.strokeStyle = STROKE[type]||STROKE.general;
-    ctx.lineWidth=1.5; ctx.setLineDash([3,2]); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
-    hitAreas.push({s, x, y, r, tier:2});
+
+  // ── Bubbles ───────────────────────────────────────────────────────────────
+  const hitAreas = pts.map(s => {
+    const x=xAt(s.days_to_cover||0), y=yAt(s.concentration||0);
+    const r=rOf(s.short_ratio||1), c=volColor(s.vol_ratio||1);
+    return {s, x, y, r, c};
+  }).sort((a,b)=>b.r-a.r);
+
+  hitAreas.forEach(p=>{
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+    ctx.fillStyle=p.c.fill; ctx.fill();
+    ctx.strokeStyle=p.c.stroke; ctx.lineWidth=1.5; ctx.stroke();
   });
-  active.forEach(s => {
-    const type = s.stock_type||'general';
-    const x=xAt(s.days_to_cover||0), y=yAt(s.vol_ratio||0), r=rOf(s.short_ratio||1);
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
-    ctx.fillStyle = SOLID[type]||SOLID.general; ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.fill(); ctx.stroke();
-    hitAreas.push({s, x, y, r, tier:1});
-  });
-  hitAreas.forEach(({s, x, y, r}) => {
-    if (!top5.has(s.code)) return;
-    const nm = s.name_chi||s.code;
+
+  // Top-5 risk labels
+  const top5 = new Set([...hitAreas].sort((a,b)=>(b.s.days_to_cover||0)*(b.s.concentration||0)*b.s.short_ratio-(a.s.days_to_cover||0)*(a.s.concentration||0)*a.s.short_ratio).slice(0,5).map(p=>p.s.code));
+  hitAreas.forEach(p=>{
+    if (!top5.has(p.s.code)) return;
+    const nm = p.s.name_chi||p.s.code;
     ctx.fillStyle='#1a1a1a'; ctx.font='bold 10px sans-serif';
     ctx.textAlign='center'; ctx.textBaseline='bottom';
-    ctx.fillText(nm.length > 4 ? nm.slice(0,4)+'…' : nm, x, y-r-3);
+    ctx.fillText(nm.length>4?nm.slice(0,4)+'…':nm, p.x, p.y-p.r-2);
   });
+
+  // ── Hover ─────────────────────────────────────────────────────────────────
   canvas.onmousemove = e => {
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX-rect.left, my = e.clientY-rect.top;
-    const hit = hitAreas.find(p => Math.hypot(mx-p.x, my-p.y) <= p.r+4);
-    if (!hit || !TIP) { if (TIP) TIP.style.display='none'; return; }
-    const {s, tier} = hit, excess = (s.short_ratio - shortHi(s)).toFixed(1);
-    const badge = tier===1
-      ? '<span style="color:#c0252d;font-weight:500">🔥 活躍擠壓</span>'
-      : '<span style="color:#888">⚠️ 醞釀中</span>';
-    TIP.innerHTML = '<b>'+(s.name_chi||s.code)+' ('+s.code+')</b> '+badge+'<br>'
-      +'DTC '+(s.days_to_cover||0).toFixed(1)+' 日 &nbsp; 成交量 '+(s.vol_ratio||0).toFixed(2)+'x<br>'
-      +'沽空比率 '+s.short_ratio.toFixed(1)+'% &nbsp; 均值 '+(s.short_avg||0).toFixed(1)+'% &nbsp; 超出上限 +'+excess+'pp';
-    TIP.style.left = Math.min(mx+12, W-220)+'px';
-    TIP.style.top  = Math.max(my-72, 4)+'px';
-    TIP.style.display = 'block';
+    const rect=canvas.getBoundingClientRect();
+    const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+    const hit=hitAreas.find(p=>Math.hypot(mx-p.x,my-p.y)<=p.r+4);
+    if (!hit||!TIP){if(TIP)TIP.style.display='none';return;}
+    const {s,c}=hit;
+    const isHigh=s.days_to_cover>maxDtc*0.5&&(s.concentration||0)>maxConc*0.6;
+    const badge=isHigh?'<span style="color:#c0252d;font-weight:500">🔥 挾倉風險</span>':'<span style="color:#888">留意</span>';
+    TIP.innerHTML=`<b>${s.name_chi||s.code} (${s.code})</b> ${badge}<br>`+
+      `DTC ${(s.days_to_cover||0).toFixed(1)} 日　沽空比率 ${s.short_ratio.toFixed(1)}%<br>`+
+      `持倉集中度 ${(s.concentration||0).toFixed(1)}%　成交量 <span style="color:${c.stroke}">${(s.vol_ratio||0).toFixed(2)}x</span>`;
+    TIP.style.left=Math.min(mx+12,W-240)+'px';
+    TIP.style.top=Math.max(my-72,4)+'px';
+    TIP.style.display='block';
   };
-  canvas.onmouseleave = () => { if (TIP) TIP.style.display='none'; };
+  canvas.onmouseleave=()=>{if(TIP)TIP.style.display='none';};
 }
 
 // ── Participant group classification ────────────────────────────────────────
@@ -2716,7 +2753,7 @@ function sdwComputeSummary() {
     const totalSh  = rawEntry && !Array.isArray(rawEntry) ? (rawEntry.total_sh || 0) : 0;
     if (!holders.length) return;
 
-    const displayName = nameMap[code] || (allStocks.find(s=>s.code===code)||{}).name_chi || code;
+    const displayName = cleanName(nameMap[code] || (allStocks.find(s=>s.code===code)||{}).name_chi || code);
 
     // Top single holder — display value, use h.pct (佔已發行股份/權證/單位百分比) directly
     const topPct = holders[0].pct || 0;
@@ -2742,7 +2779,7 @@ function sdwComputeSummary() {
 
   const el = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
   el('sdw-max-name', maxPctName || '--');
-  el('sdw-max-pct',  maxPctCode ? `${maxPctHolder.slice(0,18)} ${maxPct.toFixed(2)}%` : '--');
+  el('sdw-max-pct',  maxPctCode ? `${cleanName(maxPctHolder).slice(0,18)} ${maxPct.toFixed(2)}%` : '--');
   el('sdw-inc-name', maxIncName || (prevDs ? '--' : '（需兩期數據）'));
   el('sdw-inc-val',  maxIncCode ? `Top10 +${maxInc.toFixed(2)}pp` : '--');
   el('sdw-dec-name', minIncName || (prevDs ? '--' : '（需兩期數據）'));
@@ -2783,7 +2820,7 @@ function sdwBuildDropdown(query) {
     const sub   = inSdw ? `${(sdwData[latestDs]||{})[code]?.length||0}個機構` : '無數據';
     return `<div class="sdw-dd-item" data-code="${code}">
       <span class="dd-code">${code}</span>
-      <span class="dd-name">${info.chi || code}</span>
+      <span class="dd-name">${cleanName(info.chi || code)}</span>
       <span class="dd-sub">${sub}</span>
     </div>`;
   }).join('');
@@ -2879,7 +2916,7 @@ function renderSdwPanel() {
     return `<tr>
       <td class="rank">${i+1}</td>
       <td>
-        <span class="name-cell">${h.name}</span>
+        <span class="name-cell">${cleanName(h.name)}</span>
         <span class="sdw-pid">${h.pid}</span>
       </td>
       <td class="num-r">${h.sh.toLocaleString('zh-HK')}</td>
@@ -2995,9 +3032,11 @@ function drawSdwChart(code, selectedDs) {
   ctx.font         = '10px sans-serif';
   ctx.textAlign    = 'center';
   ctx.textBaseline = 'top';
+  const _years = new Set(series.map(s => s.ds.slice(0, 4)));
+  const _showYear = _years.size > 1;
   series.forEach((s, i) => {
     if (n > 8 && i % 2 !== 0 && i !== n-1) return;
-    const label = s.ds.slice(5); // MM-DD
+    const label = _showYear ? s.ds.slice(2, 10).replace(/-/g, '/') : s.ds.slice(5); // YY/MM/DD or MM-DD
     ctx.fillStyle = s.ds === selectedDs ? SDW_COLORS[0] : '#aaa';
     ctx.font      = s.ds === selectedDs ? 'bold 10px sans-serif' : '10px sans-serif';
     ctx.fillText(label, xAt(i), H - PAD.bottom + 4);
@@ -3009,6 +3048,38 @@ function drawSdwChart(code, selectedDs) {
     <span class="sdw-leg-dot" style="background:${SDW_COLORS[0]}"></span>
     前5大合計%
   </span>`;
+
+  // ── Hover tooltip ─────────────────────────────────────────────────────────
+  canvas._sdwConc = { series, PAD, n, xAt, yAt };
+  if (!canvas._sdwConcTip) {
+    const tip = document.createElement('div');
+    tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
+      'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
+    canvas.parentElement.style.position = 'relative';
+    canvas.parentElement.appendChild(tip);
+    canvas._sdwConcTip = tip;
+    canvas.style.cursor = 'crosshair';
+
+    canvas.addEventListener('mousemove', e => {
+      const { series, PAD, n, xAt } = canvas._sdwConc || {};
+      if (!series) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx   = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const my   = (e.clientY - rect.top)  * (canvas.height / rect.height);
+      let best = null, bestDx = Infinity;
+      series.forEach((s, i) => {
+        const dx = Math.abs(mx - xAt(i));
+        if (dx < bestDx) { bestDx = dx; best = s; }
+      });
+      if (!best || bestDx > canvas.width / n) { tip.style.display = 'none'; return; }
+      tip.innerHTML = `<b>${best.ds}</b><br>前5大合計 <span style="color:#c0252d;font-weight:600">${best.top5sum.toFixed(2)}%</span>`;
+      const tipW = 160;
+      tip.style.left    = Math.min(e.offsetX + 10, canvas.parentElement.clientWidth - tipW) + 'px';
+      tip.style.top     = Math.max(e.offsetY - 50, 4) + 'px';
+      tip.style.display = 'block';
+    });
+    canvas.addEventListener('mouseleave', () => { canvas._sdwConcTip.style.display = 'none'; });
+  }
 }
 
 
@@ -3124,7 +3195,7 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
       const dPctCol = dPct !== null && dPct !== 0 ? (dPct > 0 ? 'color:#c0252d' : 'color:#1a7a3c') : 'color:var(--muted)';
       return `<tr>
         <td style="color:var(--muted)">${i+1}</td>
-        <td><span style="font-family:monospace;font-size:11px;color:var(--muted)">${h.pid}</span> ${h.name}</td>
+        <td><span style="font-family:monospace;font-size:11px;color:var(--muted)">${h.pid}</span> ${cleanName(h.name)}</td>
         <td style="text-align:right;color:var(--muted);font-size:11px">${h.sh.toLocaleString('zh-HK')}</td>
         <td style="text-align:right;font-weight:600">${h.pct.toFixed(1)}%</td>
         <td class="mob-hide" style="text-align:right;${dShCol}">${dShStr}</td>
@@ -3206,11 +3277,13 @@ function drawGroupHistoryChart(code) {
   // X labels — month boundaries only
   ctx.fillStyle='#aaa'; ctx.font='10px sans-serif';
   ctx.textAlign='center'; ctx.textBaseline='top';
+  const _concYrs = new Set(series.map(s => s.ds.slice(0, 4)));
+  const _concSY  = _concYrs.size > 1;
   let lastM = '';
   series.forEach((s, i) => {
     const m = s.ds.slice(5, 7);
     if (m !== lastM) {
-      ctx.fillText(s.ds.slice(5), xAt(i), PAD.top+cH+4);
+      ctx.fillText(_concSY ? s.ds.slice(2, 10).replace(/-/g, '/') : s.ds.slice(5), xAt(i), PAD.top+cH+4);
       lastM = m;
     }
   });
@@ -3229,6 +3302,39 @@ function drawGroupHistoryChart(code) {
       <span style="width:22px;height:3px;background:${gs.solid};display:inline-block;border-radius:2px"></span>
       ${LBLS[gs.key]}
     </span>`).join('');
+
+  // ── Hover tooltip ─────────────────────────────────────────────────────────
+  canvas._sdwGroup = { series, PAD, cW, n };
+  if (!canvas._sdwGroupTip) {
+    const tip = document.createElement('div');
+    tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
+      'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
+    canvas.parentElement.style.position = 'relative';
+    canvas.parentElement.appendChild(tip);
+    canvas._sdwGroupTip = tip;
+    canvas.style.cursor = 'crosshair';
+
+    canvas.addEventListener('mousemove', e => {
+      const { series, PAD, cW, n } = canvas._sdwGroup || {};
+      if (!series) return;
+      const rect    = canvas.getBoundingClientRect();
+      const mx      = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const groupW  = cW / n;
+      const idx     = Math.floor((mx - PAD.left) / groupW);
+      const s       = series[Math.max(0, Math.min(n - 1, idx))];
+      if (!s) { tip.style.display = 'none'; return; }
+      tip.innerHTML =
+        `<b>${s.ds}</b><br>` +
+        `<span style="color:#c0252d">大戶 ${s.dahu.toFixed(1)}%</span><br>` +
+        `<span style="color:#1a7a3c">北水 ${s.bei.toFixed(1)}%</span><br>` +
+        `<span style="color:#b8860b">散戶 ${s.san.toFixed(1)}%</span>`;
+      const tipW = 130;
+      tip.style.left    = Math.min(e.offsetX + 10, canvas.parentElement.clientWidth - tipW) + 'px';
+      tip.style.top     = Math.max(e.offsetY - 70, 4) + 'px';
+      tip.style.display = 'block';
+    });
+    canvas.addEventListener('mouseleave', () => { canvas._sdwGroupTip.style.display = 'none'; });
+  }
 }
 // ── Main init (called when tab is clicked or data loads) ────────────────────
 async function initSdwPanel() {
@@ -3459,12 +3565,14 @@ async function drawCai() {
     ctx.fillText(val.toFixed(2), pad.left - 4, y);
   }
 
-  // X-axis: show real dates (MM-DD), max ~8 labels
+  // X-axis: show real dates, max ~8 labels; include year when data spans multiple years
   ctx.fillStyle = '#999'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   ctx.font = '10px sans-serif';
+  const _pYrs = new Set(chartDates.map(d => d.slice(0, 4)));
+  const _pSY  = _pYrs.size > 1;
   chartDates.forEach((d, i) => {
     if (n > 8 && i % Math.ceil(n / 8) !== 0 && i !== n - 1) return;
-    ctx.fillText(d.slice(5), xScale(i), H - pad.bottom + 4);
+    ctx.fillText(_pSY ? d.slice(2, 10).replace(/-/g, '/') : d.slice(5), xScale(i), H - pad.bottom + 4);
   });
 
   // Volume bars (real vol, capped at 25% chart height)
@@ -3525,6 +3633,80 @@ async function drawCai() {
   // Title
   ctx.fillStyle = '#222'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
   ctx.fillText(`${stock.name_chi} (${stock.code}) — 波動率通道 N=${period} K=${mult}`, pad.left, 18);
+
+  // Snapshot the fully-drawn chart so we can restore it before each crosshair redraw
+  canvas._caiSnapshot = ctx.getImageData(0, 0, W, H);
+
+  // ── Hover tooltip + crosshair ─────────────────────────────────────────────
+  canvas._caiData = { chartDates, closeHistory, volHistory, bands, pad, n, xScale, yScale, maxVol, cH, W, H };
+  if (!canvas._caiTip) {
+    const tip = document.createElement('div');
+    tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
+      'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
+    canvas.parentElement.style.position = 'relative';
+    canvas.parentElement.appendChild(tip);
+    canvas._caiTip = tip;
+    canvas.style.cursor = 'crosshair';
+
+    canvas.addEventListener('mousemove', e => {
+      const d = canvas._caiData;
+      if (!d || !canvas._caiSnapshot) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx   = (e.clientX - rect.left) * (d.W / rect.width);
+
+      // Snap to nearest index
+      let idx = 0, bestDx = Infinity;
+      for (let i = 0; i < d.n; i++) {
+        const dx = Math.abs(mx - d.xScale(i));
+        if (dx < bestDx) { bestDx = dx; idx = i; }
+      }
+
+      const date  = d.chartDates[idx];
+      const close = d.closeHistory[idx];
+      const vol   = d.volHistory[idx];
+      const band  = d.bands[idx];
+      const x     = d.xScale(idx);
+      const y     = d.yScale(close);
+
+      // Restore clean snapshot then draw crosshair
+      const ctx2 = canvas.getContext('2d');
+      ctx2.putImageData(canvas._caiSnapshot, 0, 0);
+      ctx2.save();
+      ctx2.strokeStyle = 'rgba(100,100,100,0.4)';
+      ctx2.lineWidth = 1;
+      ctx2.setLineDash([4, 3]);
+      ctx2.beginPath();
+      ctx2.moveTo(x, d.pad.top);
+      ctx2.lineTo(x, d.pad.top + d.cH);
+      ctx2.stroke();
+      ctx2.setLineDash([]);
+      ctx2.beginPath();
+      ctx2.arc(x, y, 4, 0, Math.PI * 2);
+      ctx2.fillStyle = '#e8a020';
+      ctx2.fill();
+      ctx2.restore();
+
+      const volStr = vol >= 1e6 ? (vol/1e6).toFixed(1)+'M' : vol >= 1e3 ? (vol/1e3).toFixed(0)+'K' : String(vol);
+      tip.innerHTML =
+        `<b>${date}</b><br>` +
+        `收市 <span style="color:#e8a020;font-weight:600">${close.toFixed(2)}</span><br>` +
+        (band ? `上軌 <span style="color:#c0252d">${band.upper.toFixed(2)}</span>　` +
+                `MA <span style="color:#888">${band.ma.toFixed(2)}</span>　` +
+                `下軌 <span style="color:#1a7a3c">${band.lower.toFixed(2)}</span><br>` : '') +
+        `成交股數 ${volStr}`;
+
+      const tipW = 240;
+      tip.style.left    = Math.min(e.offsetX + 12, canvas.parentElement.clientWidth - tipW) + 'px';
+      tip.style.top     = Math.max(e.offsetY - 80, 4) + 'px';
+      tip.style.display = 'block';
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      canvas._caiTip.style.display = 'none';
+      // Restore clean snapshot to remove crosshair
+      if (canvas._caiSnapshot) canvas.getContext('2d').putImageData(canvas._caiSnapshot, 0, 0);
+    });
+  }
 }
 
 // ── SbChart hover tooltip ────────────────────────────────────────────────────
