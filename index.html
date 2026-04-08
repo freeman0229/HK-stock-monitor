@@ -727,15 +727,38 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="sec-title">挾倉風險圖 <span style="font-size:12px;font-weight:400;color:var(--muted);margin-left:6px">泡泡大小 = 沽空比率</span></div>
     <div class="sec-sub">X軸：回補天數 DTC（日）｜ Y軸：持倉集中度 % ｜ 泡泡大小：沽空比率 ｜ 色溫：成交量倍數（冷→暖）｜ 右上角 = 最高挾倉風險</div>
   </div>
-  <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:12px 12px 8px;margin-bottom:16px;position:relative;">
-    <canvas id="shortRiskCanvas" style="cursor:crosshair;display:block;width:100%"></canvas>
-    <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px;font-size:11px;color:var(--muted);align-items:center">
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(192,37,45,0.80)"></span>藍籌</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(37,99,235,0.75)"></span>一般</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(22,163,74,0.75)"></span>穩健</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(184,134,11,0.72)"></span>ETF</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(37,99,235,0.11);border:1.5px dashed rgba(37,99,235,0.5);box-sizing:border-box"></span>醞釀中</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:16px;height:8px;border-radius:2px;background:rgba(150,150,150,0.25)"></span>大小 = 沽空比率</span>
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:12px 12px 8px;margin-bottom:16px;position:relative;display:flex;gap:16px;align-items:flex-start">
+    <!-- Left: chart -->
+    <div style="flex:0 0 60%;min-width:0">
+      <canvas id="shortRiskCanvas" style="cursor:crosshair;display:block;width:100%"></canvas>
+      <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px;font-size:11px;color:var(--muted);align-items:center">
+        <span>X → 回補天數 DTC</span>
+        <span>Y ↑ 持倉集中度 %</span>
+        <span style="display:flex;align-items:center;gap:5px">
+          <span style="display:inline-block;width:40px;height:8px;border-radius:2px;background:linear-gradient(to right,rgb(55,133,235),rgb(186,117,23),rgb(192,37,45))"></span>
+          成交量倍數（冷→暖）
+        </span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:16px;height:8px;border-radius:2px;background:rgba(150,150,150,0.25)"></span>大小 = 沽空比率</span>
+      </div>
+    </div>
+    <!-- Right: top-10 table -->
+    <div style="flex:1;min-width:0">
+      <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:8px">挾倉風險 Top 10</div>
+      <table id="squeeze-top10" style="width:100%;font-size:11px;border-collapse:collapse">
+        <thead>
+          <tr style="color:var(--muted);border-bottom:0.5px solid var(--border)">
+            <th style="text-align:left;padding:3px 4px;font-weight:400">#</th>
+            <th style="text-align:left;padding:3px 4px;font-weight:400">股票</th>
+            <th style="text-align:right;padding:3px 4px;font-weight:400">DTC</th>
+            <th style="text-align:right;padding:3px 4px;font-weight:400">集中度</th>
+            <th style="text-align:right;padding:3px 4px;font-weight:400">沽空%</th>
+            <th style="text-align:right;padding:3px 4px;font-weight:400">評分</th>
+          </tr>
+        </thead>
+        <tbody id="squeeze-top10-body">
+          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:12px">載入中…</td></tr>
+        </tbody>
+      </table>
     </div>
     <div id="short-risk-tip" style="display:none;position:absolute;background:#fff;border:0.5px solid #ddd;border-radius:8px;padding:8px 12px;font-size:12px;pointer-events:none;line-height:1.6;color:#1a1a1a;z-index:200;box-shadow:0 2px 8px rgba(0,0,0,0.08);white-space:nowrap"></div>
   </div>
@@ -2165,7 +2188,7 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
   function _getOrCreateTip(cvs) {
     if (!cvs._sfcTip) {
       const tip = document.createElement('div');
-      tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
+      tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
         'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
       cvs.parentElement.style.position = 'relative';
       cvs.parentElement.appendChild(tip);
@@ -2221,10 +2244,10 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
 function _sfcWireTip(canvas, pts, xFn, yFn, stepW, labelFn) {
   if (!canvas._sfcTip) {
     const tip = document.createElement('div');
-    tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
+    tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
       'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.6';
-    canvas.parentElement.style.position = 'relative';
-    canvas.parentElement.appendChild(tip);
+    
+    document.body.appendChild(tip);
     canvas._sfcTip = tip;
   }
   const tip = canvas._sfcTip;
@@ -2429,6 +2452,7 @@ function renderShort() {
 
   // ── Risk map ─────────────────────────────────────────────────────────────
   drawShortRiskMap(sorted);
+  renderSqueezeTop10(sorted);
 
   // ── Table ─────────────────────────────────────────────────────────────────
   // Always show top 20. When SFC data available: sorted by sfc_hkd desc.
@@ -2476,6 +2500,72 @@ function renderShort() {
 // X = DTC  |  Y = vol_ratio  |  bubble = short_ratio
 // Tier 1 active  : short_ratio > shortHi + DTC >= 3 + vol_ratio >= 1.8 + turnover > 0
 // Tier 2 buildup : short_ratio > shortHi + DTC >= 3 + turnover > 0, vol_ratio < 1.8
+// ── 挾倉風險評分 (0–12) ─────────────────────────────────────────────────────
+// Mirrors squeeze_score() in main.py — reads pre-computed s.squeeze_score from
+// data.json but also exposed here for tooltip display of component breakdown.
+const SQUEEZE_THRESHOLDS = {
+  etf:      [40.0, 70.0, 15.0],
+  stable:   [ 5.0, 10.0, 15.0],
+  bluechip: [10.0, 20.0, 10.0],
+  general:  [10.0, 25.0, 15.0],
+};
+function squeezeScoreBreakdown(s) {
+  const conc = s.concentration || 0;
+  const sr   = s.short_ratio   || 0;
+  const sa   = s.short_avg     || 0;
+  const dtc  = s.days_to_cover || 0;
+  const da   = s.dtc_avg_10d   || 0;
+  const [lo, hi, spike] = SQUEEZE_THRESHOLDS[s.stock_type] || SQUEEZE_THRESHOLDS.general;
+
+  const concS  = conc>=30?4:conc>=20?3:conc>=10?2:conc>=5?1:0;
+  const srS    = sr>hi+spike?3:sr>hi?2:sr>lo?1:0;
+  const srB    = (sa>0 && sr>sa) ? 1 : 0;
+  const dtcS   = dtc>10?3:dtc>=6?2:dtc>=3?1:0;
+  const dtcB   = (da>0 && dtc>da) ? 1 : 0;
+  const total  = concS + srS + srB + dtcS + dtcB;
+  return { concS, srS, srB, dtcS, dtcB, total };
+}
+function squeezeRisk(score) {
+  if (score >= 9) return { label:'高風險', color:'#c0252d' };
+  if (score >= 5) return { label:'中風險', color:'#ba7517' };
+  return              { label:'低風險', color:'#1a7a3c' };
+}
+
+function renderSqueezeTop10(stocks) {
+  const tbody = document.getElementById('squeeze-top10-body');
+  if (!tbody) return;
+  // Use pre-computed squeeze_score from data.json; fallback to 0
+  const eligible = stocks.filter(s =>
+    s.turnover > 0 && (s.short_ratio||0) > 0 &&
+    (s.days_to_cover||0) > 0 && (s.concentration||0) > 0
+  );
+  const top10 = [...eligible]
+    .sort((a,b) => (b.squeeze_score||0) - (a.squeeze_score||0))
+    .slice(0, 10);
+  if (!top10.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:12px">暫無數據</td></tr>';
+    return;
+  }
+  tbody.innerHTML = top10.map((s, i) => {
+    const score = s.squeeze_score || 0;
+    const risk  = squeezeRisk(score);
+    const scoreBar = '█'.repeat(Math.round(score/12*8));
+    return `<tr style="border-bottom:0.5px solid var(--border)">
+      <td style="padding:4px 4px;color:var(--muted)">${i+1}</td>
+      <td style="padding:4px 4px">
+        <span style="font-weight:500;color:var(--text)">${s.name_chi||s.code}</span>
+        <span style="font-size:10px;color:var(--muted);margin-left:3px">${s.code}</span>
+      </td>
+      <td style="text-align:right;padding:4px 4px">${(s.days_to_cover||0).toFixed(1)}d</td>
+      <td style="text-align:right;padding:4px 4px">${(s.concentration||0).toFixed(1)}%</td>
+      <td style="text-align:right;padding:4px 4px">${(s.short_ratio||0).toFixed(1)}%</td>
+      <td style="text-align:right;padding:4px 4px;font-weight:500;color:${risk.color}">${score}
+        <span style="font-size:9px;color:var(--muted);margin-left:2px">${risk.label}</span>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
 function drawShortRiskMap(stocks) {
   const canvas = document.getElementById('shortRiskCanvas');
   if (!canvas) return;
@@ -2623,11 +2713,12 @@ function drawShortRiskMap(stocks) {
     const hit=hitAreas.find(p=>Math.hypot(mx-p.x,my-p.y)<=p.r+4);
     if (!hit||!TIP){if(TIP)TIP.style.display='none';return;}
     const {s,c}=hit;
-    const isHigh=s.days_to_cover>maxDtc*0.5&&(s.concentration||0)>maxConc*0.6;
-    const badge=isHigh?'<span style="color:#c0252d;font-weight:500">🔥 挾倉風險</span>':'<span style="color:#888">留意</span>';
-    TIP.innerHTML=`<b>${s.name_chi||s.code} (${s.code})</b> ${badge}<br>`+
-      `DTC ${(s.days_to_cover||0).toFixed(1)} 日　沽空比率 ${s.short_ratio.toFixed(1)}%<br>`+
-      `持倉集中度 ${(s.concentration||0).toFixed(1)}%　成交量 <span style="color:${c.stroke}">${(s.vol_ratio||0).toFixed(2)}x</span>`;
+    const score = s.squeeze_score || 0;
+    const risk  = squeezeRisk(score);
+    const bd    = squeezeScoreBreakdown(s);
+    TIP.innerHTML=`<b>${s.name_chi||s.code} (${s.code})</b> <span style="color:${risk.color};font-weight:500">${risk.label} ${score}/12</span><br>`+
+      `DTC ${(s.days_to_cover||0).toFixed(1)}日(+${bd.dtcS}${bd.dtcB?'+1':''})　沽空 ${s.short_ratio.toFixed(1)}%(+${bd.srS}${bd.srB?'+1':''})<br>`+
+      `集中度 ${(s.concentration||0).toFixed(1)}%(+${bd.concS})　成交量 <span style="color:${c.stroke}">${(s.vol_ratio||0).toFixed(2)}x</span>`;
     TIP.style.left=Math.min(mx+12,W-240)+'px';
     TIP.style.top=Math.max(my-72,4)+'px';
     TIP.style.display='block';
@@ -3053,10 +3144,10 @@ function drawSdwChart(code, selectedDs) {
   canvas._sdwConc = { series, PAD, n, xAt, yAt };
   if (!canvas._sdwConcTip) {
     const tip = document.createElement('div');
-    tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
+    tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
       'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
-    canvas.parentElement.style.position = 'relative';
-    canvas.parentElement.appendChild(tip);
+    
+    document.body.appendChild(tip);
     canvas._sdwConcTip = tip;
     canvas.style.cursor = 'crosshair';
 
@@ -3065,7 +3156,6 @@ function drawSdwChart(code, selectedDs) {
       if (!series) return;
       const rect = canvas.getBoundingClientRect();
       const mx   = (e.clientX - rect.left) * (canvas.width / rect.width);
-      const my   = (e.clientY - rect.top)  * (canvas.height / rect.height);
       let best = null, bestDx = Infinity;
       series.forEach((s, i) => {
         const dx = Math.abs(mx - xAt(i));
@@ -3073,9 +3163,8 @@ function drawSdwChart(code, selectedDs) {
       });
       if (!best || bestDx > canvas.width / n) { tip.style.display = 'none'; return; }
       tip.innerHTML = `<b>${best.ds}</b><br>前5大合計 <span style="color:#c0252d;font-weight:600">${best.top5sum.toFixed(2)}%</span>`;
-      const tipW = 160;
-      tip.style.left    = Math.min(e.offsetX + 10, canvas.parentElement.clientWidth - tipW) + 'px';
-      tip.style.top     = Math.max(e.offsetY - 50, 4) + 'px';
+      tip.style.left = (e.clientX + 14) + 'px';
+      tip.style.top  = (e.clientY - 60) + 'px';
       tip.style.display = 'block';
     });
     canvas.addEventListener('mouseleave', () => { canvas._sdwConcTip.style.display = 'none'; });
@@ -3307,10 +3396,10 @@ function drawGroupHistoryChart(code) {
   canvas._sdwGroup = { series, PAD, cW, n };
   if (!canvas._sdwGroupTip) {
     const tip = document.createElement('div');
-    tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
+    tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
       'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
-    canvas.parentElement.style.position = 'relative';
-    canvas.parentElement.appendChild(tip);
+    
+    document.body.appendChild(tip);
     canvas._sdwGroupTip = tip;
     canvas.style.cursor = 'crosshair';
 
@@ -3328,9 +3417,8 @@ function drawGroupHistoryChart(code) {
         `<span style="color:#c0252d">大戶 ${s.dahu.toFixed(1)}%</span><br>` +
         `<span style="color:#1a7a3c">北水 ${s.bei.toFixed(1)}%</span><br>` +
         `<span style="color:#b8860b">散戶 ${s.san.toFixed(1)}%</span>`;
-      const tipW = 130;
-      tip.style.left    = Math.min(e.offsetX + 10, canvas.parentElement.clientWidth - tipW) + 'px';
-      tip.style.top     = Math.max(e.offsetY - 70, 4) + 'px';
+      tip.style.left = (e.clientX + 14) + 'px';
+      tip.style.top  = (e.clientY - 80) + 'px';
       tip.style.display = 'block';
     });
     canvas.addEventListener('mouseleave', () => { canvas._sdwGroupTip.style.display = 'none'; });
@@ -3641,10 +3729,10 @@ async function drawCai() {
   canvas._caiData = { chartDates, closeHistory, volHistory, bands, pad, n, xScale, yScale, maxVol, cH, W, H };
   if (!canvas._caiTip) {
     const tip = document.createElement('div');
-    tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
+    tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
       'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
-    canvas.parentElement.style.position = 'relative';
-    canvas.parentElement.appendChild(tip);
+    
+    document.body.appendChild(tip);
     canvas._caiTip = tip;
     canvas.style.cursor = 'crosshair';
 
@@ -3695,9 +3783,8 @@ async function drawCai() {
                 `下軌 <span style="color:#1a7a3c">${band.lower.toFixed(2)}</span><br>` : '') +
         `成交股數 ${volStr}`;
 
-      const tipW = 240;
-      tip.style.left    = Math.min(e.offsetX + 12, canvas.parentElement.clientWidth - tipW) + 'px';
-      tip.style.top     = Math.max(e.offsetY - 80, 4) + 'px';
+      tip.style.left    = (e.clientX + 14) + 'px';
+      tip.style.top     = (e.clientY - 90) + 'px';
       tip.style.display = 'block';
     });
 
@@ -3860,7 +3947,7 @@ window.addEventListener('resize', () => {
   setTimeout(() => {
     if (document.querySelector('.tab-btn[data-tab="cai"]').classList.contains('active')) drawCai();
     if (document.querySelector('.tab-btn[data-tab="bshui"]').classList.contains('active')) renderBshui();
-    if (document.querySelector('.tab-btn[data-tab="short"]').classList.contains('active')) { drawShortRiskMap(allStocks); drawSfcChart(); }
+    if (document.querySelector('.tab-btn[data-tab="short"]').classList.contains('active')) { drawShortRiskMap(allStocks); drawSfcChart(); renderSqueezeTop10(allStocks); }
     if (document.querySelector('.tab-btn[data-tab="ccass"]').classList.contains('active')) renderSdwPanel();
   }, 200);
 });

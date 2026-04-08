@@ -407,6 +407,49 @@ def lockup_threshold(tv_avg24: float) -> float:
         return 60.0
     return 90.0
 
+def squeeze_score(stock_type: str,
+                  short_ratio: float, short_avg: float,
+                  days_to_cover: float, dtc_avg_10d: float,
+                  concentration: float) -> int:
+    """
+    挾倉風險評分 (0–12) — threshold-based, consistent with existing THRESHOLDS.
+
+    Component            Max   Thresholds
+    ─────────────────── ───── ───────────────────────────────────────────
+    持倉集中度            4    concTier: <5=0, 5-10=1, 10-20=2, 20-30=3, ≥30=4
+    沽空比率              3    per stock_type: <lo=0, lo-hi=1, hi-(hi+spike)=2, >(hi+spike)=3
+    沽空比率 vs avg       1    short_ratio > short_avg → +1
+    DTC absolute         3    0-2=0, 3-5=1, 6-10=2, >10=3
+    DTC vs avg           1    days_to_cover > dtc_avg_10d → +1
+    ─────────────────── ───── ───────────────────────────────────────────
+    Total                12
+
+    Risk tiers: 0–4 低風險 | 5–8 中風險 | 9–12 高風險
+    """
+    # ── 持倉集中度 (0–4) ──────────────────────────────────────────────────────
+    if   concentration >= 30: conc_s = 4
+    elif concentration >= 20: conc_s = 3
+    elif concentration >= 10: conc_s = 2
+    elif concentration >=  5: conc_s = 1
+    else:                      conc_s = 0
+
+    # ── 沽空比率 (0–3 + 1 bonus) ──────────────────────────────────────────────
+    lo, hi, spike, _ = THRESHOLDS.get(stock_type, THRESHOLDS["general"])
+    if   short_ratio > hi + spike: sr_s = 3
+    elif short_ratio > hi:         sr_s = 2
+    elif short_ratio > lo:         sr_s = 1
+    else:                          sr_s = 0
+    sr_bonus = 1 if short_avg > 0 and short_ratio > short_avg else 0
+
+    # ── DTC (0–3 + 1 bonus) ───────────────────────────────────────────────────
+    if   days_to_cover > 10: dtc_s = 3
+    elif days_to_cover >= 6: dtc_s = 2
+    elif days_to_cover >= 3: dtc_s = 1
+    else:                    dtc_s = 0
+    dtc_bonus = 1 if dtc_avg_10d > 0 and days_to_cover > dtc_avg_10d else 0
+
+    return conc_s + sr_s + sr_bonus + dtc_s + dtc_bonus
+
 # ── 換手率 delta thresholds ──────────────────────────────────────────────────
 # delta = current_turnover_24d − prev_turnover_24d  [pp]
 # Each stock compared to itself (rolling 24-day window, 1-day shift)
@@ -839,6 +882,22 @@ def run_analysis():
         days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
         vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
 
+        # dtc_avg_10d — 10-day average DTC (沽空股數 / 成交股數 per day, last 10 days)
+        _sh_hist10  = _sh_hist(code5, 10, today_ds)
+        _sh_by_date = {e["date"]: e["sv"] for e in _sh_hist10}
+        _dtc_vals   = []
+        _counted    = 0
+        for _ds in sorted(_tv_all.keys(), reverse=True):
+            if _ds >= today_ds: continue
+            _rec = _tv_all[_ds].get(code5, {})
+            _v   = _rec.get("vol", 0) if isinstance(_rec, dict) else 0
+            _sv  = _sh_by_date.get(_ds, 0)
+            if _v > 0 and _sv > 0:
+                _dtc_vals.append(_sv / _v)
+            _counted += 1
+            if _counted >= 10: break
+        dtc_avg_10d = round(sum(_dtc_vals) / len(_dtc_vals), 4) if _dtc_vals else 0.0
+
         tv_hist24  = _tv_hist(code5, 24, today_ds)
         tv_avg24   = sum(tv_hist24) / len(tv_hist24) if tv_hist24 else 0.0
         tv_ratio   = round(turnover / tv_avg24, 2)  if tv_avg24 > 0 else 0.0
@@ -884,6 +943,12 @@ def run_analysis():
         stock_type = classify_stock(code, name_eng)
         _, ind_zh  = get_industry(code)
 
+        # 挾倉風險評分 (0–12)
+        _squeeze = squeeze_score(
+            stock_type, short_ratio, short_avg,
+            days_to_cover, dtc_avg_10d, concentration
+        )
+
         sb          = sb_map.get(code, {})
         # Signals need price history — suppress for stocks with no turnover history
         has_history = len(tv_hist24) >= 5 and len(vol_hist24) >= 5
@@ -925,6 +990,8 @@ def run_analysis():
             "short_vol":      int(short_vol_today),
             "short_st":       int(short_st_map.get(code, 0)),
             "days_to_cover":  days_to_cover,
+            "dtc_avg_10d":    dtc_avg_10d,       # 10-day avg DTC for squeeze scoring
+            "squeeze_score":  _squeeze,           # 挾倉風險評分 0–12
             "vol_ratio":      vol_ratio,
             "sfc_sh":         sfc_map.get(code, {}).get("sfc_sh",         0),
             "sfc_hkd":        sfc_map.get(code, {}).get("sfc_hkd",        0.0),
