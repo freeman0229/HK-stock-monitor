@@ -147,9 +147,21 @@ NAME_MAP_FILE = "name_map.json"
 def _is_valid_chinese(s: str) -> bool:
     if not s:
         return False
-    cjk     = sum(1 for c in s if '\u4e00' <= c <= '\u9fff' or '\u3400' <= c <= '\u4dbf')
-    garbage = s.count('\ufffd') + s.count('?')
-    return cjk >= 1 and garbage < 3
+    cjk      = sum(1 for c in s if '\u4e00' <= c <= '\u9fff' or '\u3400' <= c <= '\u4dbf')
+    garbage  = s.count('\ufffd') + s.count('?')
+    # Reject names that contain fullwidth ASCII letters (\uff01-\uff60) — these indicate
+    # a Big5 → UTF-8 decode error where multi-byte sequences produced fullwidth chars
+    fullwidth = sum(1 for c in s if '\uff01' <= c <= '\uff60')
+    return cjk >= 1 and garbage < 3 and fullwidth == 0
+
+def _normalize_name(s: str) -> str:
+    """NFKC-normalise a name (fullwidth→ASCII) and strip control characters."""
+    import unicodedata
+    if not s:
+        return s
+    s = unicodedata.normalize('NFKC', s)
+    s = ''.join(c for c in s if ord(c) >= 0x20 or c in ('\t',))
+    return s.strip()
 
 def _update_name_map(entries: dict):
     store = load_store(NAME_MAP_FILE)
@@ -225,6 +237,7 @@ def get_daily_quotation(date: datetime = None) -> pd.DataFrame:
             code     = str(code_int).zfill(5)
             name_eng = m.group(2).strip()
             name_chi = re.sub(r'[\u3000\uff20\uff64\s]+$', '', m.group(3)).strip()
+            name_chi = _normalize_name(name_chi)
             volume   = float(m.group(4).replace(',', ''))
             turnover = float(m.group(5).replace(',', ''))
             if not _is_valid_chinese(name_chi):
