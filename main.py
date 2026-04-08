@@ -583,6 +583,9 @@ def run_analysis():
     short_map     = {}   # code → short_ratio % (沽空股數 / 成交股數 × 100)
     short_vol_map = {}   # code → 沽空股數 (SH)
     short_st_map  = {}   # code → 沽空金額 ($) in HKD
+    # Pre-build fallback vol map from short_date's turnover library entry
+    _ref_ds = short_date if short_date else today_ds
+    _fallback_vol_day = tv_load_year(int(_ref_ds[:4])).get("by_date", {}).get(_ref_ds, {})
     for row in df_short.itertuples():
         code = row.stock_code
         sv   = int(row.short_volume)    # 沽空股數 (SH)
@@ -590,6 +593,10 @@ def run_analysis():
         short_vol_map[code] = sv
         short_st_map[code]  = st
         traded_vol = _short_vol_map_ref.get(code, {}).get("vol", 0)
+        # Fallback: look up vol from turnover library for the short date
+        if traded_vol == 0:
+            _fb = _fallback_vol_day.get(normalize_code(code), {})
+            traded_vol = int(_fb.get("vol", 0)) if isinstance(_fb, dict) else 0
         if traded_vol > 0:
             short_map[code] = round(sv / traded_vol * 100, 2)
 

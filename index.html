@@ -743,7 +743,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     </div>
     <!-- Right: top-10 table -->
     <div style="flex:1;min-width:0">
-      <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:8px">挾倉風險 Top 10</div>
+      <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:8px">挾倉風險 Top 15</div>
       <table id="squeeze-top10" style="width:100%;font-size:11px;border-collapse:collapse">
         <thead>
           <tr style="color:var(--muted);border-bottom:0.5px solid var(--border)">
@@ -1050,7 +1050,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 const fmt = (n, dp=0) => n == null ? '--' : Number(n).toLocaleString('zh-HK', {maximumFractionDigits:dp, minimumFractionDigits:dp});
 const fmtM = n => n == null ? '--' : (Math.abs(n) >= 1e8 ? (n/1e8).toFixed(2)+'億' : Math.round(n/1e4).toLocaleString('zh-HK')+'萬');
 const norm5 = c => String(c).replace(/^0+/, '').padStart(5, '0'); // mirrors normalize_code()
-const fmtPct = n => n == null ? '--' : n.toFixed(2)+'%';
+const fmtPct = n => (n == null || n === 0) ? '—' : n.toFixed(2)+'%';
 const sign = n => n > 0 ? '+' : '';
 
 function insightBadge(s) {
@@ -1070,9 +1070,12 @@ const fmtConsec = s => {
   return `${dir}${Math.abs(c)} (${pStr})`;
 };
 
-// HKEX uses ◆ (U+25C6) as a separator in some participant names (e.g. 易方達◆瓶◆ESG)
-// Replace with a plain space for clean display
-const cleanName = s => (s || '').replace(/◆/g, ' ').trim();
+// HKEX/CCASS use various separator characters in stock/participant names.
+// Replace ◆ (U+25C6), \ufffd (replacement char), and similar geometric shapes.
+const cleanName = s => (s || '')
+  .replace(/[\u25A0-\u25FF\ufffd\u0000-\u001F]/g, ' ')  // geometric shapes + control chars
+  .replace(/\s{2,}/g, ' ')
+  .trim();
 
 // ── Load data.json ────────────────────────────────────────────────────────
 const CACHE_KEY = 'hk_dashboard_data_v4';   // v3: SB-only filter restored
@@ -1093,7 +1096,11 @@ try {
 } catch(e) {}
 
 function applyData(d, stale) {
-  allStocks  = d.stocks || [];
+  allStocks  = (d.stocks || []).map(s => ({
+    ...s,
+    name_chi: cleanName(s.name_chi),
+    name:     cleanName(s.name),
+  }));
   updateTime = d.update_time || '';
   sbDate     = d.sb_date || '';
   sbSummary  = d.sb_summary || {};
@@ -2540,7 +2547,7 @@ function renderSqueezeTop10(stocks) {
   );
   const top10 = [...eligible]
     .sort((a,b) => (b.squeeze_score||0) - (a.squeeze_score||0))
-    .slice(0, 10);
+    .slice(0, 15);
   if (!top10.length) {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:12px">暫無數據</td></tr>';
     return;

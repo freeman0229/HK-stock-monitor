@@ -164,7 +164,7 @@ def fetch(d: date) -> str | None:
 
 _PAT = re.compile(
     r"^[*%\s]{0,8}(\d{1,5})\s+"           # g1  代號  (1–5 digits; * % prefix stripped; up to 7 leading spaces)
-    r"(\S[^\u3000\n]{1,25}?)\s{2,}"       # g2  NAME OF STOCK (ends at 2+ spaces)
+    r"(\S[^\u3000\n]{1,40}?)\s{2,}"       # g2  NAME OF STOCK (ends at 2+ spaces)
     r"(.{1,35}?)\s*"                       # g3  股票名稱
     r"(?:HKD|USD|CNY|RMB|EUR|GBP|AUD|JPY|SGD)\s+"  # CUR (skip; RMB used for H-share dual-currency counters)
     r"([\d,.]+)\s+"                        # g4  前收市 / PRV
@@ -210,6 +210,10 @@ def parse(body: str) -> dict:
             continue
         m = _PAT.match(line)
         if not m:
+            # Log lines that look like stock data but failed to parse
+            stripped = line.strip()
+            if stripped and stripped[0].isdigit() and len(stripped) > 30:
+                log.debug("parse: no match — %s", stripped[:80])
             continue
         code_int = int(m.group(1))
         code        = _normalize_code(code_int)
