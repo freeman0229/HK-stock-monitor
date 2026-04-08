@@ -31,7 +31,6 @@ Usage:
 """
 
 import os, json, re, time, logging, argparse, random
-from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
 from playwright.sync_api import sync_playwright
@@ -59,8 +58,6 @@ BLOCK_PATTERNS = [
     "429 Too Many",
 ]
 
-_PROXY = os.getenv("SDW_PROXY", "").strip() or None
-
 START_DATE            = date(2025, 4, 5)
 SCHEMA_VERSION        = 2
 SLEEP_MIN             = 2.0    # base delay between stocks (browser postback adds natural latency)
@@ -75,20 +72,6 @@ BLOCKED_COOLDOWN_SEC  = 1800   # 30 min cooldown when blocked
 def human_sleep(a: float, b: float):
     """Sleep for a random duration in [a, b] plus a small extra jitter."""
     time.sleep(random.uniform(a, b) + random.random() * 0.3)
-
-def _parse_proxy(proxy_url: str) -> dict | None:
-    """Convert proxy URL string to Playwright proxy config dict.
-    Handles both full URLs (http://user:pass@host:port) and bare host:port.
-    """
-    if not proxy_url:
-        return None
-    # Ensure scheme present so urlparse works correctly
-    raw = proxy_url if "://" in proxy_url else f"http://{proxy_url}"
-    p = urlparse(raw)
-    cfg = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
-    if p.username: cfg["username"] = p.username
-    if p.password: cfg["password"] = p.password
-    return cfg
 
 # ── Code ranges ───────────────────────────────────────────────────────────────
 
@@ -266,16 +249,13 @@ class SDWBrowser:
 
     CONTEXT_LIFE = 60   # requests per browser context before rotating
 
-    def __init__(self, proxy: str | None = None):
-        self._proxy_cfg     = _parse_proxy(proxy)
-        self._using_proxy   = self._proxy_cfg is not None
+    def __init__(self):
         self._pw            = None
         self._browser       = None
         self._context       = None
         self._page          = None
         self._req_count     = 0
         self._on_sdw        = False
-        self._proxy_failures = 0   # consecutive proxy errors — triggers fallback
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -285,30 +265,18 @@ class SDWBrowser:
         self._new_context()
         return self
 
-    def _launch_browser(self, force_direct: bool = False):
-        """Launch Chromium, with or without proxy."""
+    def _launch_browser(self):
+        """Launch Chromium in direct mode."""
         if self._browser:
             try: self._browser.close()
             except Exception: pass
 
-        proxy = self._proxy_cfg if (self._using_proxy and not force_direct) else None
         self._browser = self._pw.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
                   "--ignore-certificate-errors"],
-            proxy=proxy,
         )
-        mode = "proxy" if proxy else "direct (no proxy)"
-        log.info("🚀 Browser launched (%s)", mode)
-
-    def _fallback_to_direct(self):
-        """Switch to direct connection after repeated proxy failures."""
-        log.warning("🔀 Proxy failed %d times — switching to direct connection",
-                    self._proxy_failures)
-        self._using_proxy = False
-        self._proxy_failures = 0
-        self._launch_browser(force_direct=True)
-        self._new_context()
+        log.info("🚀 Browser launched (direct)")
 
     def __exit__(self, *args):
         try:
@@ -332,7 +300,7 @@ class SDWBrowser:
             viewport            = {"width": random.randint(1280, 1440),
                                    "height": random.randint(768, 900)},
             java_script_enabled = True,
-            ignore_https_errors = True,   # proxy SSL interception
+            ignore_https_errors = True,
         )
 
         # Pre-seed known cookies before any navigation so the site
@@ -452,43 +420,22 @@ class SDWBrowser:
                 # ── Parse results ─────────────────────────────────────────────
                 result = _parse_response(content, code5, date_str)
                 self._on_sdw = True
-                self._proxy_failures = 0   # reset on success
                 return result
 
             except Exception as e:
                 err_str = str(e)
-                is_proxy_err = any(p in err_str for p in [
-                    "ProxyError", "RemoteDisconnected", "Unable to connect to proxy",
-                    "proxy", "Proxy", "ERR_CONNECTION_CLOSED", "ERR_SSL_PROTOCOL_ERROR",
-                    "ERR_TUNNEL_CONNECTION_FAILED", "ERR_CONNECTION_RESET",
-                ])
-
                 if attempt < 3:
-                    if is_proxy_err:
-                        self._proxy_failures += 1
-                        wait = random.uniform(20, 40)
-                        log.warning("fetch (%s %s) proxy error attempt %d (failures=%d) — new context in %.0fs: %s",
-                                    code5, date_str, attempt, self._proxy_failures, wait, err_str[:200])
-                        time.sleep(wait)
-                        # After 3 consecutive proxy failures, switch to direct
-                        if self._proxy_cfg and self._proxy_failures >= 3:
-                            self._fallback_to_direct()
-                        else:
-                            self._new_context()
+                    wait = attempt * 15
+                    log.warning("fetch (%s %s) attempt %d failed — retry in %ds: %s",
+                                code5, date_str, attempt, wait, err_str[:200])
+                    time.sleep(wait)
+                    try:
+                        page.goto(SDW_URL, wait_until="load", timeout=60_000)
+                        self._on_sdw = True
+                    except Exception as nav_e:
+                        log.warning("re-nav failed: %s — new context", str(nav_e)[:100])
+                        self._new_context()
                         page = self._page
-                    else:
-                        self._proxy_failures = 0   # reset on non-proxy error
-                        wait = attempt * 15
-                        log.warning("fetch (%s %s) attempt %d failed — retry in %ds: %s",
-                                    code5, date_str, attempt, wait, err_str[:200])
-                        time.sleep(wait)
-                        try:
-                            page.goto(SDW_URL, wait_until="load", timeout=60_000)
-                            self._on_sdw = True
-                        except Exception as nav_e:
-                            log.warning("re-nav failed: %s — new context", str(nav_e)[:100])
-                            self._new_context()
-                            page = self._page
                 else:
                     log.error("fetch (%s %s): all 3 attempts failed: %s",
                               code5, date_str, err_str[:300])
@@ -504,22 +451,33 @@ def _parse_num(s) -> int:
         return 0
 
 def _parse_response(html: str, code5: str, date_str: str) -> dict | None:
-    """Parse the SDW results page HTML. Same logic as before, now standalone."""
-    soup     = BeautifulSoup(html, "html.parser")
+    """Parse the SDW results page HTML."""
+    soup      = BeautifulSoup(html, "html.parser")
     full_text = soup.get_text(" ", strip=True)
 
-    # 已發行股份
-    issued_sh = 0
-    for pat in [
-        r"已發行股份[^\d]{0,30}([\d,]{6,})",
-        r"Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
-        r"Number\s+of\s+Issued\s+Shares[^\d]{0,30}([\d,]{6,})",
-    ]:
-        m = re.search(pat, full_text)
-        if m:
-            issued_sh = _parse_num(m.group(1))
-            if issued_sh > 0:
-                break
+    # ── Helper: find the first large integer (≥ 6 digits) that follows a label ──
+    # Splits full_text into tokens; after finding the label token, returns the
+    # next token that looks like a large number.  Much more robust than a fixed
+    # character-window regex when the page flattens label + number with many
+    # intervening words (e.g. "總數 於中央結算系統的持股量 2,554,802,988").
+    def _find_after_label(labels: list[str], min_digits: int = 6) -> int:
+        tokens = full_text.split()
+        for i, tok in enumerate(tokens):
+            for lbl in labels:
+                if lbl in tok:
+                    # Scan forward for the next numeric token
+                    for j in range(i + 1, min(i + 30, len(tokens))):
+                        candidate = tokens[j].replace(",", "")
+                        if candidate.isdigit() and len(candidate) >= min_digits:
+                            return int(candidate)
+        return 0
+
+    # 總數 (CCASS Grand Total) — first large number after label
+    total_sh = _find_after_label(["總數", "Grand Total", "GrandTotal"])
+
+    # 已發行股份/權證/單位 (最近更新數目) — first large number after label
+    issued_sh = _find_after_label(["已發行股份", "Issued Shares", "IssuedShares",
+                                   "Number of Issued"])
 
     # Participant rows
     def clean(s):
@@ -551,37 +509,28 @@ def _parse_response(html: str, code5: str, date_str: str) -> dict | None:
         except (ValueError, TypeError):
             continue
 
-    # 總數
-    total_sh = 0
-    for pat in [r"總數[^\d]{0,20}([\d,]{6,})", r"Grand\s+Total[^\d]{0,20}([\d,]{6,})"]:
-        m = re.search(pat, full_text)
-        if m:
-            total_sh = _parse_num(m.group(1))
-            if total_sh > 0:
-                break
-
-    if total_sh == 0:
-        for tr in soup.find_all("tr"):
-            tds = [td.get_text(strip=True) for td in tr.find_all("td")]
-            if "總數" in " ".join(tds) or "Grand Total" in " ".join(tds):
-                for cell in reversed(tds):
-                    num = _parse_num(cell)
-                    if num > 1_000_000:
-                        total_sh = num
-                        break
-                if total_sh > 0:
-                    break
-
+    # Fallback: derive total_sh from participant sum if not found in page
     if total_sh == 0 and total_sh_fallback > 0:
         total_sh = total_sh_fallback
         log.warning("SDW %s %s: 總數 not found — using participant sum %d",
                     code5, date_str, total_sh)
+
+    log.debug("SDW %s %s: total_sh=%d  issued_sh=%d  participants=%d",
+              code5, date_str, total_sh, issued_sh, len(participants))
 
     if not participants:
         log.debug("SDW: 0 records for %s on %s", code5, date_str)
         return None
 
     participants.sort(key=lambda x: -x["sh"])
+
+    # Sanity check: 總數 must be ≤ 已發行股份 (CCASS-custodied ≤ total issued)
+    # If inverted, the regex likely matched the wrong number from the flattened text
+    if total_sh > 0 and issued_sh > 0 and total_sh > issued_sh:
+        log.warning("SDW %s %s: total_sh (%d) > issued_sh (%d) — values appear swapped, correcting",
+                    code5, date_str, total_sh, issued_sh)
+        total_sh, issued_sh = issued_sh, total_sh
+
     return {"p": participants, "total_sh": total_sh, "issued_sh": issued_sh}
 
 # ── Build / update ────────────────────────────────────────────────────────────
@@ -655,7 +604,7 @@ def build(update_only: bool = False, specific_date: date = None,
     if deadline:
         log.info("Time limit: %.0f minutes", max_minutes)
 
-    with SDWBrowser(proxy=_PROXY) as browser:
+    with SDWBrowser() as browser:
         for di, d in enumerate(dates_to_fetch, 1):
             if deadline and time.monotonic() >= deadline:
                 log.info("Time limit reached after %d/%d dates — stopping cleanly",

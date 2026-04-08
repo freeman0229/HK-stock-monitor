@@ -23,7 +23,8 @@ except ImportError:
 try:
     from ccass_sdw_library import get_latest_total_sh as sdw_get_total_sh, \
                               get_total_sh_bulk   as sdw_get_total_sh_bulk, \
-                              get_holders         as sdw_get_holders
+                              get_holders         as sdw_get_holders, \
+                              get_holders_history as sdw_get_holders_history
     _SDW_AVAILABLE = True
 except ImportError:
     _SDW_AVAILABLE = False
@@ -860,6 +861,18 @@ def run_analysis():
         else:
             concentration = round(sum(h.get('pct', 0) for h in _holders[:5]), 2)
 
+        # top10 holders metrics (denominator: 總數)
+        top10_sh  = sum(h.get('sh', 0) for h in _holders[:10])                          # 1. raw shares
+        top10_pct = round(top10_sh / _total_sh_conc * 100, 2) if _total_sh_conc > 0 and top10_sh > 0 else 0.0  # 2. % of 總數
+        # 3. WoW delta — compare against previous SDW snapshot
+        _prev_holders    = sdw_get_holders_history(code, 1, today_ds) if _SDW_AVAILABLE else []
+        _prev_top10_sh   = sum(h.get('sh', 0) for h in _prev_holders[:10]) if _prev_holders else 0
+        _prev_top10_pct  = round(_prev_top10_sh / _total_sh_conc * 100, 2) if _total_sh_conc > 0 and _prev_top10_sh > 0 else 0.0
+        top10_pct_delta  = round(top10_pct - _prev_top10_pct, 4) if _prev_top10_pct > 0 else 0.0
+
+        # VWAP = 成交金額 / 成交股數
+        vwap = round(turnover / today_vol, 4) if turnover > 0 and today_vol > 0 else 0.0
+
         # 換手率 (24-day) = (today 成交股數 + prior 23 days' 成交股數) / 總數 × 100
         vol_24d          = today_vol + sum(vol_hist24[:23])  # same window as avg_vol24
         turnover_24d     = round(vol_24d / _total_sh_conc * 100, 4) if _total_sh_conc > 0 and vol_24d > 0 else 0.0
@@ -921,6 +934,10 @@ def run_analysis():
             "tv_ratio":  tv_ratio,
             "pct_dev":   round(pct_dev, 4),
             "concentration": concentration,
+            "top10_sh":         top10_sh,         # sum(top 10 holders' 持股量)
+            "top10_pct":        top10_pct,         # top10_sh / 總數 × 100
+            "top10_pct_delta":  top10_pct_delta,   # top10_pct WoW change [pp]
+            "vwap":             vwap,               # 成交均價 = 成交金額 / 成交股數
             "turnover_24d":       turnover_24d,        # 換手率 = (today + prior 23d 成交股數) / 總數 × 100
             "delta_turnover_24d": delta_turnover_24d,  # current − prev 24d window [pp]
             "lockup_threshold": lockup_threshold(tv_avg24),
