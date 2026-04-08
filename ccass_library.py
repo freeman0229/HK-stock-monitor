@@ -31,7 +31,6 @@ import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
-from ccass_universe import normalize_code
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -49,9 +48,7 @@ HEADERS = {
 # Chinese mutualmarket page — cleaner table, GET-based with txtShareholdingDate param
 BASE_URL   = "https://www3.hkexnews.hk/sdw/search/mutualmarket_c.aspx"
 SLEEP_SEC  = 1.5
-START_DATE = date(2025, 3, 23)  # user-requested start: 23 Mar 2025
-                                # Note: 2025-03-23 is a Sunday — first
-                                # trading day is 2025-03-24
+START_DATE = date(2025, 1, 1)
 
 
 # ── Trading day helpers ───────────────────────────────────────────────────────
@@ -62,44 +59,8 @@ try:
 except ImportError:
     _HK_HOLIDAYS = set()
 
-# Mainland China holidays — CCASS southbound settles only on days both
-# HK and mainland exchanges are open. These are CN-only holidays where
-# HK is open (CNY extension, Golden Week, etc.).
-_CN_HOLIDAY_DATES = {
-    # 2024
-    "2024-01-01","2024-02-12","2024-02-13","2024-02-14","2024-02-15","2024-02-16",
-    "2024-04-04","2024-04-05","2024-05-01","2024-05-02","2024-05-03",
-    "2024-06-10","2024-09-16","2024-09-17",
-    "2024-10-01","2024-10-02","2024-10-03","2024-10-04","2024-10-07",
-    # 2025
-    "2025-01-01","2025-01-27","2025-01-28","2025-01-29","2025-01-30","2025-01-31",
-    "2025-04-04","2025-05-01","2025-05-02","2025-05-05",
-    "2025-06-02",
-    "2025-10-01","2025-10-02","2025-10-03","2025-10-06","2025-10-07","2025-10-08",
-    # 2026
-    "2026-01-01","2026-01-28","2026-01-29","2026-01-30","2026-02-02","2026-02-03","2026-02-04",
-    "2026-04-06","2026-05-01","2026-05-04","2026-05-05",
-    "2026-06-19",
-    "2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07","2026-10-08",
-}
-
-try:
-    _CN_LIB = hol.China()
-except Exception:
-    _CN_LIB = set()
-
-def _is_cn_holiday(d: date) -> bool:
-    return d.isoformat() in _CN_HOLIDAY_DATES or d in _CN_LIB
-
 def is_trading_day(d: date) -> bool:
-    """True only when both HK and mainland exchanges are open."""
-    if d.weekday() >= 5:
-        return False
-    if d in _HK_HOLIDAYS:
-        return False
-    if _is_cn_holiday(d):
-        return False
-    return True
+    return d.weekday() < 5 and d not in _HK_HOLIDAYS
 
 def last_trading_day(d: date) -> date:
     while not is_trading_day(d):
@@ -227,7 +188,7 @@ def fetch_ccass(d: date) -> dict | None:
             if not code_raw.isdigit() or not sh_raw.isdigit():
                 continue
 
-            code = normalize_code(code_raw)
+            code = str(int(code_raw)).zfill(5)
             records[code] = {
                 "sh":   int(sh_raw),
                 "pct":  float(pct_raw) if pct_raw else 0.0,
@@ -248,32 +209,11 @@ def fetch_ccass(d: date) -> dict | None:
 
 # ── Build / update ────────────────────────────────────────────────────────────
 
-
-def _dates_missing_name() -> set:
-    """Return stored dates where the name field is absent from records."""
-    missing = set()
-    for year in all_years():
-        p = lib_path(year)
-        if not os.path.exists(p):
-            continue
-        with open(p, encoding="utf-8") as f:
-            by_date = json.load(f).get("by_date", {})
-        for ds, day in by_date.items():
-            sample = next((v for v in day.values() if isinstance(v, dict)), None)
-            if sample and "name" not in sample:
-                missing.add(ds)
-    return missing
-
-
-def build(update_only: bool = False, fix_names: bool = False):
+def build(update_only: bool = False):
     stored  = all_stored_dates()
     end     = last_trading_day(date.today() - timedelta(days=1))
     start   = last_trading_day(START_DATE)
     trading = all_trading_days(start, end)
-
-    # HKEX CCASS mutualmarket only keeps ~12 months of rolling data.
-    # Dates older than 12 months will always return 0 records — stop retrying them.
-    cutoff_12m = date.today() - timedelta(days=366)
 
     if update_only and stored:
         last = date.fromisoformat(max(stored))
@@ -282,26 +222,6 @@ def build(update_only: bool = False, fix_names: bool = False):
     else:
         trading = [d for d in trading if d.isoformat() not in stored]
         log.info("Build: %d trading days to fetch", len(trading))
-
-    if fix_names:
-        # Also include stored dates where name field is missing,
-        # but only within HKEX's 12-month retention window
-        no_name = _dates_missing_name()
-        extra = [d for d in all_trading_days(start, end)
-                 if d.isoformat() in no_name
-                 and d not in trading
-                 and d >= cutoff_12m]
-        skipped_old = [d for d in all_trading_days(start, end)
-                       if d.isoformat() in no_name and d < cutoff_12m]
-        if extra:
-            log.info("fix-names: %d dates need name backfill", len(extra))
-            trading = sorted(set(trading) | set(extra))
-        if skipped_old:
-            log.info("fix-names: skipping %d dates older than 12 months "
-                     "(HKEX data expired): %s%s",
-                     len(skipped_old),
-                     ", ".join(d.isoformat() for d in skipped_old[:3]),
-                     "..." if len(skipped_old) > 3 else "")
 
     if not trading:
         log.info("Already up to date")
@@ -355,7 +275,7 @@ def build(update_only: bool = False, fix_names: bool = False):
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
 def stock_history(code: str) -> list:
-    code5 = normalize_code(code)
+    code5 = code.zfill(5)
     rows  = []
     for year in all_years():
         if not os.path.exists(lib_path(year)):
@@ -370,14 +290,14 @@ def stock_history(code: str) -> list:
 def query_stock(code: str, weeks: int = None):
     hist = stock_history(code)
     if not hist:
-        print(f"No CCASS data for {normalize_code(code)}")
+        print(f"No CCASS data for {code.zfill(5)}")
         return
     if weeks:
         cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
         hist = [(ds, d) for ds, d in hist if ds >= cutoff]
 
-    name = STOCKS.get(normalize_code(code), {}).get("zh", normalize_code(code))
-    print(f"\n{normalize_code(code)} — {name}  ({len(hist)} days)")
+    name = STOCKS.get(code.zfill(5), {}).get("zh", code.zfill(5))
+    print(f"\n{code.zfill(5)} — {name}  ({len(hist)} days)")
     print(f"{'Date':<12} {'Shareholding':>18} {'% Listed':>10} {'Δ':>14}")
     print("─" * 58)
     prev_sh = None
@@ -411,25 +331,25 @@ def query_date(ds: str):
 def export_stock_csv(code: str):
     hist = stock_history(code)
     if not hist:
-        print(f"No CCASS data for {normalize_code(code)}"); return
+        print(f"No CCASS data for {code.zfill(5)}"); return
     rows = []
     prev_sh = None
     for ds, data in hist:
         sh  = data.get("sh", 0)
         pct = data.get("pct", 0.0)
         delta = sh - prev_sh if prev_sh is not None else None
-        rows.append({"date": ds, "stock_code": normalize_code(code),
-                     "name_zh": STOCKS.get(normalize_code(code), {}).get("zh", ""),
+        rows.append({"date": ds, "stock_code": code.zfill(5),
+                     "name_zh": STOCKS.get(code.zfill(5), {}).get("zh", ""),
                      "shareholding": sh, "pct_listed": pct, "delta": delta})
         prev_sh = sh
-    path = f"{normalize_code(code)}_ccass_history.csv"
+    path = f"{code.zfill(5)}_ccass_history.csv"
     pd.DataFrame(rows).to_csv(path, index=False)
     print(f"Exported {len(rows)} rows to {path}")
 
 
 def get_ccass_name(code: str) -> str | None:
     """Return the most recent Chinese name for a stock from CCASS records."""
-    code5 = normalize_code(code)
+    code5 = code.zfill(5)
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
         if not os.path.exists(p): continue
@@ -448,8 +368,7 @@ def get_ccass_name(code: str) -> str | None:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="CCASS Southbound Library")
-    ap.add_argument("--update",     action="store_true", help="Fetch only new dates")
-    ap.add_argument("--fix-names",  action="store_true", help="Re-fetch dates missing the name field")
+    ap.add_argument("--update", action="store_true",  help="Fetch only new dates")
     ap.add_argument("--query",  metavar="CODE",        help="Stock history e.g. 00700")
     ap.add_argument("--date",   metavar="YYYY-MM-DD",  help="All stocks for a date")
     ap.add_argument("--weeks",  type=int,              help="Limit query to last N weeks")
@@ -459,7 +378,7 @@ if __name__ == "__main__":
     if   args.query:  query_stock(args.query, args.weeks)
     elif args.date:   query_date(args.date)
     elif args.export: export_stock_csv(args.export)
-    else:             build(update_only=args.update, fix_names=getattr(args, "fix_names", False))
+    else:             build(update_only=args.update)
 
 
 # ── API for main.py ───────────────────────────────────────────────────────────
@@ -469,7 +388,7 @@ def get_pct_history(code: str, n: int, before: str) -> list:
     Return the last n pct_listed values for a stock strictly before date `before`
     (YYYY-MM-DD), sorted newest-first. Used by main.py for pct_avg5/20.
     """
-    code5  = normalize_code(code)
+    code5  = code.zfill(5)
     result = []
     # Scan from most recent year backwards
     for year in sorted(all_years(), reverse=True):
@@ -495,7 +414,7 @@ def get_sh_history(code: str, n: int, before: str) -> list:
     Return the last n shareholding values for a stock strictly before `before`,
     sorted newest-first. Used by main.py for delta and consec computation.
     """
-    code5  = normalize_code(code)
+    code5  = code.zfill(5)
     result = []
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
