@@ -1074,8 +1074,22 @@ const fmtConsec = s => {
 // Replace ◆ (U+25C6), \ufffd (replacement char), and similar geometric shapes.
 const cleanName = s => (s || '')
   .replace(/[\u25A0-\u25FF\ufffd\u0000-\u001F]/g, ' ')  // geometric shapes + control chars
+  .replace(/[\uFFFD\uFFFE\uFFFF]/g, '')                  // unicode replacement chars (encoding garbage)
+  .replace(/[\x80-\xBF]/g, '')                            // stray UTF-8 continuation bytes
+  .replace(/[@\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')       // control chars + stray @
   .replace(/\s{2,}/g, ' ')
   .trim();
+
+// Validate a name is usable — reject if it looks like encoding garbage
+// (too many non-CJK, non-ASCII-letter chars relative to total length)
+const isValidName = s => {
+  if (!s || s.length < 2) return false;
+  const cjk     = (s.match(/[\u4E00-\u9FFF\u3400-\u4DBF]/g) || []).length;
+  const ascii   = (s.match(/[A-Za-z0-9 .&\-]/g) || []).length;
+  const garbage = (s.match(/[\u0080-\u00FF\u0100-\u024F]/g) || []).length;
+  // Name is valid if it has CJK chars, or is mostly ASCII, and little garbage
+  return garbage < 3 && (cjk > 0 || ascii > s.length * 0.5);
+};
 
 // ── Load data.json ────────────────────────────────────────────────────────
 const CACHE_KEY = 'hk_dashboard_data_v4';   // v3: SB-only filter restored
@@ -1098,8 +1112,13 @@ try {
 function applyData(d, stale) {
   allStocks  = (d.stocks || []).map(s => ({
     ...s,
-    name_chi: cleanName(s.name_chi),
-    name:     cleanName(s.name),
+    name_chi:   cleanName(s.name_chi),
+    name:       cleanName(s.name),
+    // main.py writes short_avg5 — alias to short_avg for frontend consistency
+    short_avg:  s.short_avg  || s.short_avg5 || 0,
+    // Cap short_ratio at 100% — values above indicate near-zero traded volume
+    // on the denominator (stock barely traded that day); not a meaningful signal.
+    short_ratio: Math.min(s.short_ratio || 0, 100),
   }));
   updateTime = d.update_time || '';
   sbDate     = d.sb_date || '';
@@ -1642,7 +1661,12 @@ function computeSfcCards() {
       const hkd_delta = prevHkd > 0 ? v.hkd - prevHkd : 0;
       // Match name from allStocks if available, fall back to SFC name field
       const stock = allStocks.find(s => norm5(s.code) === code);
-      const name  = (stock && stock.name_chi) || v.name || code;
+      // Prefer allStocks name (already validated Chinese); fall back to SFC
+      // Excel name only if it passes garbage detection — SFC sometimes stores
+      // names with wrong encoding that renders as "華夏 琡莖屉揀@" style garbage.
+      const rawSfcName = cleanName(v.name || '');
+      const sfcName    = isValidName(rawSfcName) ? rawSfcName : null;
+      const name  = (stock && stock.name_chi) || sfcName || code;
       return { code, name, hkd: v.hkd || 0, hkd_delta };
     })
     .filter(e => e.hkd > 0);
@@ -2418,7 +2442,10 @@ function renderShort() {
   const topVol  = [...sorted].filter(s => s.short_st > 0 && s.stock_type !== 'etf')
                              .sort((a,b) => (b.short_st||0) - (a.short_st||0))[0];
   // 日沽空比率 TOP — highest short_ratio = 沽空股數(SH) / 成交股數 × 100, exclude ETFs
-  const topRatio = [...sorted].filter(s => s.short_ratio > 0 && s.stock_type !== 'etf')
+  // Also require turnover > 0 to exclude stocks that barely traded (near-zero
+  // denominator inflates the ratio to impossible values like 1882%).
+  const topRatio = [...sorted].filter(s => s.short_ratio > 0 && s.short_ratio <= 100
+                                        && s.stock_type !== 'etf' && s.turnover > 0)
                               .sort((a,b) => b.short_ratio - a.short_ratio)[0];
   // 累積沽空 TOP — highest Aggregated Reportable Short Positions (HK$) from SFC
   const topSfc  = [...sorted].filter(s => s.sfc_hkd > 0)
@@ -2587,6 +2614,12 @@ function drawShortRiskMap(stocks) {
   // Filter: stocks with meaningful short activity
   const pts = stocks.filter(s =>
     s.turnover > 0 && s.short_ratio > 0 && (s.days_to_cover||0) > 0
+    && (
+      (s.concentration||0) >= 20 ||
+      (s.vol_ratio||0)     >= 2  ||
+      (s.days_to_cover||0) >= 5  ||
+      (s.short_avg > 0 && s.short_ratio >= s.short_avg * 1.5)
+    )
   );
 
   const PAD = {top:24, right:72, bottom:50, left:56};
