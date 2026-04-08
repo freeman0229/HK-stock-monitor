@@ -3,6 +3,8 @@ name: Daily Sync
 on:
   schedule:
     - cron: '0 12 * * 1-5'   # 12:00 UTC / 20:00 HKT (Mon–Fri)
+    - cron: '0 14 * * 1-5'   # 14:00 UTC / 22:00 HKT (Mon–Fri) — SFC check
+    - cron: '0 14 * * 4,5'   # 14:00 UTC / 22:00 HKT (Thu+Fri)  — SDW weekly
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
   workflow_dispatch:
     inputs:
@@ -13,17 +15,19 @@ on:
         type: choice
         options:
           - daily
+          - sfc-check
           - sfc-weekly
           - di-weekly
           - both-weekly
-          - ccass-build      # full CCASS build from 2025-01-01 (run multiple times)
-          - sc-top10-build   # full Stock Connect top10 build (run multiple times)
-          - sdw-build        # full SDW participant holdings backfill (run multiple times)
-          - sfc-reparse      # re-parse all cached SFC Excel files (fixes hkd=0 bug)
+          - ccass-build
+          - sc-top10-build
+          - sdw-build
+          - sdw-weekly
+          - sfc-build
+          - turnover-build   # rebuild turnover library from scratch
+          - short-build      # rebuild short selling library from scratch
+          - ccass-universe   # rebuild CCASS universe
 
-# Cancel any in-progress run of the same workflow when a new one is triggered.
-# This prevents multiple github-pages artifacts accumulating across runs,
-# which causes deploy-pages@v4 to fail with "Multiple artifacts found".
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -34,7 +38,7 @@ jobs:
   daily:
     name: Daily analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     permissions:
       contents: write
     if: |
@@ -46,23 +50,36 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
+      - run: playwright install chromium
+
+      - name: Fetch today's turnover data
+        run: python build_turnover.py
+
+      - name: Fetch today's short selling data
+        run: python build_short.py
 
       - name: Update Stock Connect top10 (today + repair incomplete history)
         run: python sc_top10_library.py --update
 
-      - name: Refresh CCASS participant list (weekly)
-        run: python ccass_participant_library.py --update
+      - name: Update CCASS southbound holdings (today)
+        run: python ccass_library.py --update --fix-names
 
-      - name: SDW participant holdings (Thu/Fri weekly)
+      - name: SDW backfill (3-4 ranges alternating, 5 min budget, 90s cooldown)
+        env:
+          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: |
-          DOW=$(date +%u)   # 1=Mon … 4=Thu, 5=Fri
-          if [ "$DOW" = "4" ] || [ "$DOW" = "5" ]; then
-            # Use --date so we only fetch THIS week — --update would try all
-            # 50+ missing weeks, hit the 45-min timeout, and commit nothing.
-            python ccass_sdw_library.py --date "$(date +%Y-%m-%d)"
+          DOY=$((10#$(date +%j)))
+          if [ $((DOY % 2)) -eq 0 ]; then
+            RANGES="0001_1000 2001_3000 4001_7000 10000plus"
           else
-            echo "Not Thu/Fri (DOW=$DOW) — skipping SDW fetch"
+            RANGES="1001_2000 3001_4000 7001_9999"
           fi
+          for range in $RANGES; do
+            echo "--- SDW range $range ---"
+            python ccass_sdw_library.py --update --range $range --max-minutes 5
+            echo "Cooling down 90s before next range..."
+            sleep 90
+          done
 
       - name: Run daily analysis
         env:
@@ -77,15 +94,53 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in ccass_20*.json ccass_sdw_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
+          for f in ccass_20*.json ccass_sdw_*_20*.json ccass_sdw_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || \
             (git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── CCASS full build (manual, resume-able) ───────────────────────────────────
+  # ── SFC nightly check (Mon–Fri 22:00 HKT) ────────────────────────────────────
+  sfc-check:
+    name: SFC nightly check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 14 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'sfc-check')
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Restore SFC cache
+        uses: actions/cache@v4
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
+          restore-keys: sfc-cache-
+      - name: Fetch any new SFC reports
+        run: python sfc_library.py
+      - name: Save SFC cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --staged --quiet || \
+            (git commit -m "SFC check: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── CCASS full build (manual) ────────────────────────────────────────────────
   ccass-build:
-    name: CCASS full build (2025-01-01 to today)
+    name: CCASS full build (2025-03-23 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
     permissions:
@@ -98,8 +153,8 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - name: Build CCASS library (resumes from last saved date)
-        run: python ccass_library.py
+      - name: Build CCASS library
+        run: python ccass_library.py --fix-names
       - name: Commit progress
         run: |
           git config --global user.name "Bot"
@@ -108,9 +163,9 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "CCASS build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── Stock Connect top10 full build (manual, resume-able) ─────────────────────
+  # ── Stock Connect top10 full build (manual) ───────────────────────────────────
   sc-top10-build:
-    name: Stock Connect top10 full build
+    name: Stock Connect top10 full build (2025-09-01 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
     permissions:
@@ -129,9 +184,9 @@ jobs:
           path: sc_cache
           key: sc-top10-cache-${{ github.run_id }}
           restore-keys: sc-top10-cache-
-      - name: Clear stale sc_cache (stored parsed JSON, not raw JS)
+      - name: Clear stale sc_cache
         run: python sc_top10_library.py --clear-cache
-      - name: Build Stock Connect top10 library (resumes from last saved date)
+      - name: Build Stock Connect top10 library
         run: python sc_top10_library.py
       - name: Commit progress
         run: |
@@ -141,34 +196,90 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SC top10 build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SDW full backfill (manual, resume-able) ─────────────────────────────────
+  # ── SDW full backfill (manual, 7 parallel ranges) ────────────────────────────
   sdw-build:
-    name: SDW participant holdings full backfill
+    name: SDW backfill — range ${{ matrix.range }}
     runs-on: ubuntu-latest
-    timeout-minutes: 320
+    timeout-minutes: 100
     permissions:
       contents: write
     if: |
       github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-build'
+    strategy:
+      fail-fast: false
+      matrix:
+        range: [0001_1000, 1001_2000, 2001_3000, 3001_4000, 4001_7000, 7001_9999, 10000plus]
 
     steps:
       - uses: actions/checkout@v4.2.2
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - name: Build SDW holdings library (resumes from last stored date)
-        run: python ccass_sdw_library.py
-      - name: Commit progress
+      - run: playwright install chromium
+      - name: Check SFC library files exist
+        run: |
+          if ! ls sfc_20*.json 1>/dev/null 2>&1; then
+            echo "ERROR: No sfc_20*.json files. Run sfc-build first."
+            exit 1
+          fi
+      - name: Migrate old single-file SDW data
+        run: python ccass_sdw_library.py --migrate
+      - name: Build SDW range ${{ matrix.range }}
+        env:
+          SDW_PROXY: ${{ secrets.SDW_PROXY }}
+        run: python ccass_sdw_library.py --range ${{ matrix.range }} --max-minutes 80
+      - name: Commit
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
-          for f in ccass_sdw_20*.json; do [ -f "$f" ] && git add "$f"; done
-          git diff --staged --quiet || \
-            (git commit -m "SDW build: $(date +'%Y-%m-%d %H:%M')" && git push)
+          for f in ccass_sdw_${{ matrix.range }}_20*.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --staged --quiet || git commit -m "SDW ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && break
+            echo "Push attempt $i failed — retrying in 10s..."
+            sleep 10
+          done
 
-  # ── SFC weekly (Saturday 10:00 HKT) ─────────────────────────────────────────
+  # ── SDW weekly (Thu+Fri 22:00 HKT) ───────────────────────────────────────────
+  sdw-weekly:
+    name: SDW weekly — range ${{ matrix.range }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 14 * * 4,5') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-weekly')
+    strategy:
+      fail-fast: false
+      matrix:
+        range: [0001_1000, 1001_2000, 2001_3000, 3001_4000, 4001_7000, 7001_9999, 10000plus]
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+      - name: Fetch latest Friday SDW data for range ${{ matrix.range }}
+        env:
+          SDW_PROXY: ${{ secrets.SDW_PROXY }}
+        run: python ccass_sdw_library.py --update --range ${{ matrix.range }} --max-minutes 75
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in ccass_sdw_${{ matrix.range }}_20*.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --staged --quiet || git commit -m "SDW weekly ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && break
+            echo "Push attempt $i failed — retrying in 10s..."
+            sleep 10
+          done
+
+  # ── SFC weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
   sfc-weekly:
-    name: SFC weekly short position library
+    name: SFC short position library
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -188,52 +299,138 @@ jobs:
           path: sfc_cache
           key: sfc-cache-${{ github.run_id }}
           restore-keys: sfc-cache-
+      - name: Update CCASS participant list
+        run: python ccass_participant_library.py --update
+
+      - name: Update CCASS universe
+        run: python ccass_universe.py
+
       - name: Update SFC library
-        run: python sfc_library.py --update
+        run: python sfc_library.py
       - name: Re-parse cached Excel files
         run: python sfc_library.py --reparse
+      - name: Save SFC cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
       - name: Commit
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
           for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
+          [ -f "ccass_participants.json" ] && git add "ccass_participants.json"
+          [ -f "ccass_universe.json" ] && git add "ccass_universe.json"
           git diff --staged --quiet || \
             (git commit -m "SFC weekly: $(date +'%Y-%m-%d')" && git push)
 
-  # ── SFC reparse (manual — repairs hkd=0 in historical JSON from cache) ───────
-  sfc-reparse:
-    name: SFC reparse cached Excel files
+  # ── Turnover + short full rebuild (manual) ───────────────────────────────────
+  # Re-fetches every trading day from START_DATE. Use --rebuild to overwrite existing.
+  # turnover_{YYYY}.json: name_en, name_zh, prev_close, close, vol, tv
+  # short_{YYYY}.json:    name, sv (股數SH), st (金額$)
+  turnover-build:
+    name: Turnover + short full rebuild (2026-02-02 to today)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     permissions:
       contents: write
     if: |
-      github.event_name == 'workflow_dispatch' && inputs.job == 'sfc-reparse'
+      github.event_name == 'workflow_dispatch' && inputs.job == 'turnover-build'
 
     steps:
       - uses: actions/checkout@v4.2.2
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - name: Restore SFC cache
+
+      - name: Rebuild turnover library (all stocks, all columns)
+        run: python build_turnover.py --rebuild
+
+      - name: Rebuild short selling library (all stocks, all columns)
+        run: python build_short.py --rebuild
+
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in turnover_20*.json short_20*.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          git diff --staged --quiet || \
+            (git commit -m "Turnover+short rebuild: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── Short selling full rebuild (manual) ──────────────────────────────────────
+  # Re-fetches every date from START_DATE using next trading day's file.
+  # short_{YYYY}.json: name, sv (股數SH), st (金額$)
+  short-build:
+    name: Short selling library full rebuild (2026-02-02 to today)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'short-build'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+
+      - name: Rebuild short selling library (all stocks, all columns)
+        run: python build_short.py --rebuild
+
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in short_20*.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          git diff --staged --quiet || \
+            (git commit -m "Short rebuild: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── SFC full backfill (manual) ────────────────────────────────────────────────
+  sfc-build:
+    name: SFC full backfill (2018-01-01 to today)
+    runs-on: ubuntu-latest
+    timeout-minutes: 320
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'sfc-build'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Restore SFC Excel cache
         uses: actions/cache@v4
         with:
           path: sfc_cache
           key: sfc-cache-${{ github.run_id }}
           restore-keys: sfc-cache-
-      - name: Reparse all cached Excel files
+      - name: Full SFC backfill
+        run: python sfc_library.py
+      - name: Re-parse all cached Excel files
         run: python sfc_library.py --reparse
-      - name: Inspect results
-        run: python sfc_library.py --inspect
+      - name: Save SFC Excel cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sfc_cache
+          key: sfc-cache-${{ github.run_id }}
       - name: Commit
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
           for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
           git diff --staged --quiet || \
-            (git commit -m "SFC reparse: $(date +'%Y-%m-%d')" && git push)
+            (git commit -m "SFC build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── DI weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
+  # ── DI weekly (Saturday 10:00 HKT) ───────────────────────────────────────────
   di-weekly:
     name: DI substantial shareholder library
     runs-on: ubuntu-latest
@@ -264,3 +461,28 @@ jobs:
           for f in di_20*.json; do [ -f "$f" ] && git add "$f"; done
           git diff --staged --quiet || \
             (git commit -m "DI weekly: $(date +'%Y-%m-%d')" && git push)
+
+  # ── CCASS universe build (manual) ────────────────────────────────────────────
+  ccass-universe:
+    name: CCASS universe build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'ccass-universe'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Build CCASS universe
+        run: python ccass_universe.py
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          [ -f "ccass_universe.json" ] && git add "ccass_universe.json"
+          git diff --staged --quiet || \
+            (git commit -m "CCASS universe build: $(date +'%Y-%m-%d %H:%M')" && git push)
