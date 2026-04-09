@@ -840,6 +840,75 @@ def migrate_to_range_split():
     log.info("Migration complete")
 
 
+def migrate_from_old_ranges():
+    """Migrate old 7-range split files into the new 4-range split format.
+
+    Reads ccass_sdw_{OLD_LABEL}_{YYYY}.json files (0001_1000, 1001_2000, etc.)
+    and merges their data into the new 4-range files, skipping codes no longer
+    in the universe and skipping dates already present in the target file.
+    Safe to re-run — existing records are never overwritten.
+    """
+    OLD_RANGE_LABELS = [
+        "0001_1000", "1001_2000", "2001_3000", "3001_4000",
+        "4001_7000", "7001_9999", "10000plus",
+    ]
+
+    for year in range(START_DATE.year, date.today().year + 1):
+        # Check if any old range files exist for this year
+        old_files = [
+            (label, f"ccass_sdw_{label}_{year}.json")
+            for label in OLD_RANGE_LABELS
+            if os.path.exists(f"ccass_sdw_{label}_{year}.json")
+        ]
+        if not old_files:
+            continue
+
+        log.info("Found %d old range file(s) for %d — merging into new 4-range format",
+                 len(old_files), year)
+
+        # Load all new range files for this year (create if missing)
+        new_libs = {label: load_range(year, label) for label, _, _ in RANGES}
+
+        total_migrated = 0
+        total_skipped  = 0
+        total_existing = 0
+
+        for old_label, old_path in old_files:
+            with open(old_path, encoding="utf-8") as f:
+                old_by_date = json.load(f).get("by_date", {})
+
+            migrated = skipped = existing = 0
+            for ds, stocks in old_by_date.items():
+                for code, raw in stocks.items():
+                    try:
+                        rl = code_range(code)
+                    except ValueError:
+                        skipped += 1
+                        continue
+                    # Never overwrite data already fetched by the new build
+                    if code in new_libs[rl]["by_date"].get(ds, {}):
+                        existing += 1
+                        continue
+                    new_libs[rl]["by_date"].setdefault(ds, {})[code] = _to_v2(raw)
+                    migrated += 1
+
+            log.info("  %s: %d merged, %d skipped (not in universe), %d already present",
+                     old_label, migrated, skipped, existing)
+            total_migrated += migrated
+            total_skipped  += skipped
+            total_existing += existing
+
+        # Save all new range files that received data
+        for label, lib in new_libs.items():
+            if lib["by_date"]:
+                save_range(year, label, lib)
+
+        log.info("Year %d: %d total merged, %d skipped, %d already present",
+                 year, total_migrated, total_skipped, total_existing)
+
+    log.info("Old-range migration complete")
+
+
 # ── API ───────────────────────────────────────────────────────────────────────
 
 def _load_for_code(code: str, ds: str) -> dict:
@@ -991,11 +1060,16 @@ if __name__ == "__main__":
     ap.add_argument("--query",       metavar="CODE")
     ap.add_argument("--top",         type=int, default=20)
     ap.add_argument("--range",       metavar="LABEL")
-    ap.add_argument("--migrate",     action="store_true")
+    ap.add_argument("--migrate",     action="store_true",
+                    help="Migrate old single-file ccass_sdw_{YYYY}.json to 4-range format")
+    ap.add_argument("--migrate-old", action="store_true",
+                    help="Migrate old 7-range files to new 4-range format (run after backfill)")
     args = ap.parse_args()
 
     if args.migrate:
         migrate_to_range_split()
+    elif getattr(args, "migrate_old", False):
+        migrate_from_old_ranges()
     elif args.query:
         _query(args.query, args.top, args.date)
     else:
