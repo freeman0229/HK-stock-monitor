@@ -2,7 +2,7 @@
 ccass_sdw_library.py — CCASS Per-Stock Participant Holdings Library
 ====================================================================
 Fetches weekly CCASS participant-level shareholding for ALL stocks
-in the ccass_universe (single authoritative source).
+listed in the SFC short-position universe.
 
 Source (holdings):  https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx
 Stock universe:     ccass_universe.get_universe_codes()
@@ -64,7 +64,7 @@ BLOCK_PATTERNS = [
     "429 Too Many",
 ]
 
-_PROXY = os.getenv("SDW_PROXY", "").strip() or None
+_PROXY = None  # proxy removed — direct connection to HKEX
 
 START_DATE            = date(2025, 4, 5)
 SCHEMA_VERSION        = 2
@@ -81,7 +81,6 @@ def human_sleep(a: float, b: float):
     """Sleep for a random duration in [a, b] plus a small extra jitter."""
     time.sleep(random.uniform(a, b) + random.random() * 0.3)
 
-
 def _parse_proxy(proxy_url: str) -> dict | None:
     """Convert proxy URL string to Playwright proxy config dict.
     Handles both full URLs (http://user:pass@host:port) and bare host:port.
@@ -90,19 +89,13 @@ def _parse_proxy(proxy_url: str) -> dict | None:
         return None
     # Ensure scheme present so urlparse works correctly
     raw = proxy_url if "://" in proxy_url else f"http://{proxy_url}"
-    p   = urlparse(raw)
+    p = urlparse(raw)
     cfg = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
-    if p.username:
-        cfg["username"] = p.username
-    if p.password:
-        cfg["password"] = p.password
+    if p.username: cfg["username"] = p.username
+    if p.password: cfg["password"] = p.password
     return cfg
 
-
 # ── Code ranges ───────────────────────────────────────────────────────────────
-# Mirrors ccass_universe.py inclusion rules exactly.
-# Each tuple: (file_label, range_lo, range_hi) using integer code values.
-# The two ETF exceptions (07489, 07618) have their own dedicated range.
 
 RANGES = [
     ("0001_3999",    1,  3999),   # HK Main Board (primary)
@@ -111,12 +104,10 @@ RANGES = [
     ("9600_9999", 9600,  9999),   # WVR / W-share + overflow
 ]
 
-
 def code_range(code: str) -> str:
     """Return the RANGES label for a normalised 5-digit code string.
 
-    Raises ValueError if the code does not fall in any known range —
-    meaning it should never have been in the universe in the first place.
+    Raises ValueError if the code does not fall in any known range.
     """
     n = int(normalize_code(code))
     for label, lo, hi in RANGES:
@@ -127,7 +118,6 @@ def code_range(code: str) -> str:
         "check ccass_universe inclusion rules"
     )
 
-
 # ── HK holidays ───────────────────────────────────────────────────────────────
 
 _HK_HOLIDAYS = {
@@ -135,14 +125,14 @@ _HK_HOLIDAYS = {
     date(2025, 4, 4),  date(2025, 4, 18), date(2025, 4, 19), date(2025, 4, 21),
     date(2025, 5, 1),  date(2025, 5, 5),  date(2025, 6, 2),  date(2025, 7, 1),
     date(2025, 9, 30), date(2025, 10, 1), date(2025, 10, 29),
-    date(2025, 12, 25), date(2025, 12, 26),
+    date(2025, 12, 25),date(2025, 12, 26),
     date(2026, 1, 1),  date(2026, 1, 28), date(2026, 1, 29), date(2026, 1, 30),
     date(2026, 2, 2),  date(2026, 2, 3),  date(2026, 2, 4),
     date(2026, 2, 17), date(2026, 2, 18), date(2026, 2, 19), date(2026, 2, 20),
     date(2026, 4, 3),  date(2026, 4, 4),  date(2026, 4, 5),  date(2026, 4, 6),
     date(2026, 5, 1),  date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 1),
     date(2026, 9, 7),  date(2026, 10, 1), date(2026, 10, 26),
-    date(2026, 12, 25), date(2026, 12, 26),
+    date(2026, 12, 25),date(2026, 12, 26),
 }
 try:
     import holidays as _hol
@@ -160,14 +150,11 @@ def _fetch_date_for_friday(friday: date) -> date | None:
         return thu
     return None
 
-
 def all_fetch_dates(up_to: date = None) -> list[date]:
-    """Return all scheduled fetch dates from START_DATE up to *up_to* (inclusive)."""
     up_to  = up_to or date.today()
     result = []
-    # Advance to the first Friday on or after START_DATE
     d = START_DATE
-    while d.weekday() != 4:  # 4 = Friday
+    while d.weekday() != 4:
         d += timedelta(days=1)
     while d <= up_to:
         fd = _fetch_date_for_friday(d)
@@ -176,12 +163,10 @@ def all_fetch_dates(up_to: date = None) -> list[date]:
         d += timedelta(weeks=1)
     return result
 
-
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
 def lib_path(year: int, range_label: str) -> str:
     return f"ccass_sdw_{range_label}_{year}.json"
-
 
 def load_range(year: int, range_label: str) -> dict:
     p = lib_path(year, range_label)
@@ -190,7 +175,6 @@ def load_range(year: int, range_label: str) -> dict:
             return json.load(f)
     return {"meta": {"year": year, "range": range_label,
                      "schema_version": SCHEMA_VERSION}, "by_date": {}}
-
 
 def save_range(year: int, range_label: str, lib: dict):
     n_dates  = len(lib["by_date"])
@@ -209,7 +193,6 @@ def save_range(year: int, range_label: str, lib: dict):
     kb = os.path.getsize(p) / 1024
     log.info("Saved %s  %d dates  %d stocks  %.0f KB", p, n_dates, n_stocks, kb)
 
-
 def all_stored_dates() -> set[str]:
     stored = set()
     for year in range(START_DATE.year, date.today().year + 1):
@@ -220,9 +203,8 @@ def all_stored_dates() -> set[str]:
                     stored.update(json.load(f).get("by_date", {}).keys())
     return stored
 
-
 def _stored_codes_for_date(ds: str) -> set[str]:
-    year  = int(ds[:4])
+    year = int(ds[:4])
     codes = set()
     for label, _, _ in RANGES:
         p = lib_path(year, label)
@@ -232,7 +214,6 @@ def _stored_codes_for_date(ds: str) -> set[str]:
             codes.update(json.load(f).get("by_date", {}).get(ds, {}).keys())
     return codes
 
-
 # ── Schema normalisation ──────────────────────────────────────────────────────
 
 def _to_v2(raw) -> dict:
@@ -241,7 +222,6 @@ def _to_v2(raw) -> dict:
     if isinstance(raw, dict):
         return raw if "p" in raw else {"p": [], "total_sh": 0, "issued_sh": 0}
     return {"p": [], "total_sh": 0, "issued_sh": 0}
-
 
 # ── Stock universe ────────────────────────────────────────────────────────────
 
@@ -277,7 +257,6 @@ def get_sdw_universe() -> list[str]:
 
     log.warning("No universe available — returning empty list")
     return []
-
 
 # ── Playwright browser wrapper ────────────────────────────────────────────────
 
@@ -324,23 +303,21 @@ class SDWBrowser:
     def _new_context(self):
         """Close old context and open a fresh one with a new UA and cookies."""
         if self._context:
-            try:
-                self._context.close()
-            except Exception:
-                pass
+            try: self._context.close()
+            except Exception: pass
 
         ua = random.choice(_USER_AGENTS)
         self._context = self._browser.new_context(
-            user_agent          = ua,
-            locale              = random.choice(["zh-HK", "en-GB", "en-US"]),
-            timezone_id         = "Asia/Hong_Kong",
-            viewport            = {"width": random.randint(1280, 1440),
-                                   "height": random.randint(768, 900)},
+            user_agent     = ua,
+            locale         = random.choice(["zh-HK", "en-GB", "en-US"]),
+            timezone_id    = "Asia/Hong_Kong",
+            viewport       = {"width": random.randint(1280, 1440),
+                               "height": random.randint(768, 900)},
             java_script_enabled = True,
         )
-        self._page      = self._context.new_page()
+        self._page     = self._context.new_page()
         self._req_count = 0
-        self._on_sdw    = False
+        self._on_sdw   = False
         log.info("🌐 New browser context (UA: %s…)", ua[:60])
 
         # Navigate to SDW page to seed cookies
@@ -395,10 +372,10 @@ class SDWBrowser:
                         const codeEl = document.getElementById('txtStockCode');
                         if (codeEl) codeEl.value = code5;
                         // Clear participant fields
-                        const pidEl = document.getElementById('txtParticipantID');
-                        const pnmEl = document.getElementById('txtParticipantName');
-                        if (pidEl) pidEl.value = '';
-                        if (pnmEl) pnmEl.value = '';
+                        const pidEl  = document.getElementById('txtParticipantID');
+                        const pnmEl  = document.getElementById('txtParticipantName');
+                        if (pidEl)  pidEl.value  = '';
+                        if (pnmEl)  pnmEl.value  = '';
                         // Submit — same as clicking btnSearch
                         if (typeof __doPostBack === 'function') {
                             __doPostBack('btnSearch', '');
@@ -430,7 +407,7 @@ class SDWBrowser:
                 return result
 
             except Exception as e:
-                err_str      = str(e)
+                err_str = str(e)
                 is_proxy_err = any(pat in err_str for pat in [
                     "ProxyError", "RemoteDisconnected", "Unable to connect to proxy",
                     "proxy", "Proxy",
@@ -462,7 +439,6 @@ class SDWBrowser:
                     self._on_sdw = False
                     return None
 
-
 # ── HTML response parser ──────────────────────────────────────────────────────
 
 def _parse_num(s) -> int:
@@ -474,12 +450,11 @@ def _parse_num(s) -> int:
 
 def _clean_cell(s: str) -> str:
     """Strip leading 'Label: ' prefix from a table cell value."""
-    return re.sub(r'^[^:：]+[:：]\s*', '', s).strip()
-
+    return re.sub(r'^[^:::：]+[:：]\s*', '', s).strip()
 
 def _parse_response(html: str, code5: str, date_str: str) -> dict | None:
-    """Parse the SDW results page HTML. Returns {p, total_sh, issued_sh} or None."""
-    soup      = BeautifulSoup(html, "html.parser")
+    """Parse the SDW results page HTML. Same logic as before, now standalone."""
+    soup     = BeautifulSoup(html, "html.parser")
     full_text = soup.get_text(" ", strip=True)
 
     # 已發行股份
@@ -500,12 +475,12 @@ def _parse_response(html: str, code5: str, date_str: str) -> dict | None:
     total_sh_fallback = 0
 
     for tr in soup.find_all("tr"):
-        tds     = [td.get_text(strip=True) for td in tr.find_all("td")]
+        tds = [td.get_text(strip=True) for td in tr.find_all("td")]
         if len(tds) < 5:
             continue
-        pid_raw = _clean_cell(tds[0])
-        sh_raw  = _clean_cell(tds[3]).replace(",", "")
-        pct_raw = _clean_cell(tds[4]).replace("%", "").strip()
+        pid_raw = clean(tds[0])
+        sh_raw  = clean(tds[3]).replace(",", "")
+        pct_raw = clean(tds[4]).replace("%", "").strip()
         if not pid_raw or not sh_raw.isdigit():
             continue
         if pid_raw.lower() in ("參與者編號", "id", "participant id"):
@@ -555,7 +530,6 @@ def _parse_response(html: str, code5: str, date_str: str) -> dict | None:
     participants.sort(key=lambda x: -x["sh"])
     return {"p": participants, "total_sh": total_sh, "issued_sh": issued_sh}
 
-
 # ── Build / update ────────────────────────────────────────────────────────────
 
 def build(update_only: bool = False, specific_date: date = None,
@@ -577,7 +551,7 @@ def build(update_only: bool = False, specific_date: date = None,
         log.error("Empty stock universe — aborting")
         return
 
-    # Filter to owned range(s) if requested
+    # Filter to owned range if requested
     if range_label:
         owned_lo, owned_hi = owned_ranges[0][1], owned_ranges[0][2]
         universe = [c for c in universe if owned_lo <= int(normalize_code(c)) <= owned_hi]
@@ -591,8 +565,8 @@ def build(update_only: bool = False, specific_date: date = None,
         all_dates = all_fetch_dates()
         if update_only:
             stored_all = all_stored_dates()
-            last       = date.fromisoformat(max(stored_all)) if stored_all else None
-            all_dates  = [d for d in all_dates if last is None or d > last]
+            last = date.fromisoformat(max(stored_all)) if stored_all else None
+            all_dates = [d for d in all_dates if last is None or d > last]
             log.info("Update mode: %d new dates after %s",
                      len(all_dates), last.isoformat() if last else "none")
 
@@ -608,7 +582,7 @@ def build(update_only: bool = False, specific_date: date = None,
 
             dates_to_fetch = [d for d in all_dates if not _range_complete(d.isoformat())]
         else:
-            stored_all     = all_stored_dates()
+            stored_all = all_stored_dates()
             dates_to_fetch = [d for d in all_dates if d.isoformat() not in stored_all]
 
         log.info("%s: %d dates to fetch (%d in schedule)",
@@ -636,7 +610,8 @@ def build(update_only: bool = False, specific_date: date = None,
             range_libs = {label: load_range(year, label) for label, _, _ in owned_ranges}
 
             if range_label:
-                already = set(range_libs[owned_ranges[0][0]]["by_date"].get(ds, {}).keys())
+                lbl     = owned_ranges[0][0]
+                already = set(range_libs[lbl]["by_date"].get(ds, {}).keys())
             else:
                 already = _stored_codes_for_date(ds)
             todo = [c for c in universe if c not in already]
@@ -646,7 +621,7 @@ def build(update_only: bool = False, specific_date: date = None,
             timed_out     = False
             blocked       = False
             consec_errors = 0
-            _dirty_ranges: set[str] = set()
+            _dirty_ranges = set()
 
             for ci, code in enumerate(todo, 1):
 
@@ -725,11 +700,9 @@ def build(update_only: bool = False, specific_date: date = None,
 
     log.info("Build complete")
 
-
 # ── Migration ─────────────────────────────────────────────────────────────────
 
 def migrate_to_range_split():
-    """Migrate old single-file ccass_sdw_{YYYY}.json to the 4-range split format."""
     for year in range(START_DATE.year, date.today().year + 1):
         old_path = f"ccass_sdw_{year}.json"
         if not os.path.exists(old_path):
@@ -744,8 +717,8 @@ def migrate_to_range_split():
             continue
         log.info("Migrating ccass_sdw_%d.json (%d dates)...", year, len(by_date))
         range_libs = {label: load_range(year, label) for label, _, _ in RANGES}
-        migrated   = 0
-        skipped    = 0
+        migrated = 0
+        skipped = 0
         for ds, stocks in by_date.items():
             for code, raw in stocks.items():
                 try:
@@ -762,7 +735,6 @@ def migrate_to_range_split():
                  migrated, year, skipped)
     log.info("Migration complete")
 
-
 # ── API ───────────────────────────────────────────────────────────────────────
 
 def _load_for_code(code: str, ds: str) -> dict:
@@ -774,31 +746,22 @@ def _load_for_code(code: str, ds: str) -> dict:
     with open(p, encoding="utf-8") as f:
         return json.load(f).get("by_date", {}).get(ds, {})
 
-
 def get_holders(stock_code: str, ds: str) -> list:
     code5 = normalize_code(stock_code)
-    raw   = _load_for_code(code5, ds).get(code5)
+    raw = _load_for_code(code5, ds).get(code5)
     return _to_v2(raw)["p"] if raw is not None else []
-
 
 def get_total_sh(stock_code: str, ds: str) -> int:
     code5 = normalize_code(stock_code)
-    raw   = _load_for_code(code5, ds).get(code5)
+    raw = _load_for_code(code5, ds).get(code5)
     return _to_v2(raw).get("total_sh", 0) if raw is not None else 0
-
 
 def get_issued_sh(stock_code: str, ds: str) -> int:
     code5 = normalize_code(stock_code)
-    raw   = _load_for_code(code5, ds).get(code5)
+    raw = _load_for_code(code5, ds).get(code5)
     return _to_v2(raw).get("issued_sh", 0) if raw is not None else 0
 
-
 def get_latest_total_sh(stock_code: str, before: str = None) -> int:
-    """Return the most recent total shareholding for *stock_code* before *before* (YYYY-MM-DD).
-
-    Note: cutoff comparison uses ISO date string ordering (YYYY-MM-DD), which
-    sorts correctly as a plain string — do not pass datetime strings with time components.
-    """
     code5  = normalize_code(stock_code)
     label  = code_range(code5)
     cutoff = before or (date.today() + timedelta(days=1)).isoformat()
@@ -819,7 +782,6 @@ def get_latest_total_sh(stock_code: str, before: str = None) -> int:
                 return total_sh
     return 0
 
-
 def get_total_sh_bulk(ds: str) -> dict:
     result = {}
     year   = int(ds[:4])
@@ -834,7 +796,6 @@ def get_total_sh_bulk(ds: str) -> dict:
             if ts > 0:
                 result[code5] = ts
     return result
-
 
 def get_holders_history(stock_code: str, n: int, before: str) -> list:
     code5  = normalize_code(stock_code)
@@ -863,7 +824,6 @@ def get_holders_history(stock_code: str, n: int, before: str) -> list:
             if len(result) >= n:
                 return result
     return result
-
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -904,7 +864,6 @@ def _query(code: str, top: int, ds: str = None):
     hist = get_holders_history(code5, 6, (date.today() + timedelta(days=1)).isoformat())
     if hist:
         print(f"\nAvailable dates: {[h['date'] for h in hist]}")
-
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="CCASS SDW Participant Holdings Library")
