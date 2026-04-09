@@ -387,6 +387,14 @@ class SDWBrowser:
                 )
                 page.wait_for_load_state("networkidle", timeout=45_000)
 
+                # ── Wait for ASP.NET postback to finish rendering ─────────────
+                # networkidle fires before the results table is fully painted;
+                # wait for any <table> or a short fixed delay as fallback.
+                try:
+                    page.wait_for_selector("table", timeout=8_000)
+                except Exception:
+                    human_sleep(1.0, 1.5)  # fallback if no table (e.g. no results)
+
                 # ── Check for block ───────────────────────────────────────────
                 content = page.content()
                 if any(pat in content for pat in BLOCK_PATTERNS):
