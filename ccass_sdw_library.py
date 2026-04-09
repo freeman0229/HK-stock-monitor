@@ -2,7 +2,7 @@
 ccass_sdw_library.py — CCASS Per-Stock Participant Holdings Library
 ====================================================================
 Fetches weekly CCASS participant-level shareholding for ALL stocks
-listed in the SFC short-position universe.
+in the ccass_universe (single authoritative source).
 
 Source (holdings):  https://www3.hkexnews.hk/sdw/search/searchsdw_c.aspx
 Stock universe:     ccass_universe.get_universe_codes()
@@ -18,6 +18,8 @@ Library files split by stock code range — one set of 4 files per year:
 
 Fetch strategy: Playwright Chromium (headless) — fills the search form
 like a real user, bypassing Akamai BotManager detection entirely.
+Proxy is optional (SDW_PROXY env var); falls back to direct after 3
+consecutive proxy failures.
 
 Usage:
   python ccass_sdw_library.py                    # full backfill
@@ -64,11 +66,11 @@ BLOCK_PATTERNS = [
     "429 Too Many",
 ]
 
-_PROXY = None  # proxy removed — direct connection to HKEX
+_PROXY = os.getenv("SDW_PROXY", "").strip() or None
 
 START_DATE            = date(2025, 4, 5)
 SCHEMA_VERSION        = 2
-SLEEP_MIN             = 2.0    # base delay between stocks (browser postback adds natural latency)
+SLEEP_MIN             = 2.0    # base delay between stocks
 SLEEP_MAX             = 5.0
 PRE_SLEEP_MIN         = 0.5    # think time before each search
 PRE_SLEEP_MAX         = 1.5
@@ -81,21 +83,26 @@ def human_sleep(a: float, b: float):
     """Sleep for a random duration in [a, b] plus a small extra jitter."""
     time.sleep(random.uniform(a, b) + random.random() * 0.3)
 
+
 def _parse_proxy(proxy_url: str) -> dict | None:
     """Convert proxy URL string to Playwright proxy config dict.
     Handles both full URLs (http://user:pass@host:port) and bare host:port.
     """
     if not proxy_url:
         return None
-    # Ensure scheme present so urlparse works correctly
     raw = proxy_url if "://" in proxy_url else f"http://{proxy_url}"
-    p = urlparse(raw)
+    p   = urlparse(raw)
     cfg = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
-    if p.username: cfg["username"] = p.username
-    if p.password: cfg["password"] = p.password
+    if p.username:
+        cfg["username"] = p.username
+    if p.password:
+        cfg["password"] = p.password
     return cfg
 
+
 # ── Code ranges ───────────────────────────────────────────────────────────────
+# Mirrors ccass_universe.py inclusion rules exactly.
+# Each tuple: (file_label, range_lo, range_hi) using integer code values.
 
 RANGES = [
     ("0001_3999",    1,  3999),   # HK Main Board (primary)
@@ -104,10 +111,12 @@ RANGES = [
     ("9600_9999", 9600,  9999),   # WVR / W-share + overflow
 ]
 
+
 def code_range(code: str) -> str:
     """Return the RANGES label for a normalised 5-digit code string.
 
-    Raises ValueError if the code does not fall in any known range.
+    Raises ValueError if the code does not fall in any known range —
+    meaning it should never have been in the universe in the first place.
     """
     n = int(normalize_code(code))
     for label, lo, hi in RANGES:
@@ -118,6 +127,7 @@ def code_range(code: str) -> str:
         "check ccass_universe inclusion rules"
     )
 
+
 # ── HK holidays ───────────────────────────────────────────────────────────────
 
 _HK_HOLIDAYS = {
@@ -125,14 +135,14 @@ _HK_HOLIDAYS = {
     date(2025, 4, 4),  date(2025, 4, 18), date(2025, 4, 19), date(2025, 4, 21),
     date(2025, 5, 1),  date(2025, 5, 5),  date(2025, 6, 2),  date(2025, 7, 1),
     date(2025, 9, 30), date(2025, 10, 1), date(2025, 10, 29),
-    date(2025, 12, 25),date(2025, 12, 26),
+    date(2025, 12, 25), date(2025, 12, 26),
     date(2026, 1, 1),  date(2026, 1, 28), date(2026, 1, 29), date(2026, 1, 30),
     date(2026, 2, 2),  date(2026, 2, 3),  date(2026, 2, 4),
     date(2026, 2, 17), date(2026, 2, 18), date(2026, 2, 19), date(2026, 2, 20),
     date(2026, 4, 3),  date(2026, 4, 4),  date(2026, 4, 5),  date(2026, 4, 6),
     date(2026, 5, 1),  date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 1),
     date(2026, 9, 7),  date(2026, 10, 1), date(2026, 10, 26),
-    date(2026, 12, 25),date(2026, 12, 26),
+    date(2026, 12, 25), date(2026, 12, 26),
 }
 try:
     import holidays as _hol
@@ -150,11 +160,13 @@ def _fetch_date_for_friday(friday: date) -> date | None:
         return thu
     return None
 
+
 def all_fetch_dates(up_to: date = None) -> list[date]:
+    """Return all scheduled fetch dates from START_DATE up to *up_to* (inclusive)."""
     up_to  = up_to or date.today()
     result = []
     d = START_DATE
-    while d.weekday() != 4:
+    while d.weekday() != 4:  # 4 = Friday
         d += timedelta(days=1)
     while d <= up_to:
         fd = _fetch_date_for_friday(d)
@@ -163,10 +175,12 @@ def all_fetch_dates(up_to: date = None) -> list[date]:
         d += timedelta(weeks=1)
     return result
 
+
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
 def lib_path(year: int, range_label: str) -> str:
     return f"ccass_sdw_{range_label}_{year}.json"
+
 
 def load_range(year: int, range_label: str) -> dict:
     p = lib_path(year, range_label)
@@ -175,6 +189,7 @@ def load_range(year: int, range_label: str) -> dict:
             return json.load(f)
     return {"meta": {"year": year, "range": range_label,
                      "schema_version": SCHEMA_VERSION}, "by_date": {}}
+
 
 def save_range(year: int, range_label: str, lib: dict):
     n_dates  = len(lib["by_date"])
@@ -193,6 +208,7 @@ def save_range(year: int, range_label: str, lib: dict):
     kb = os.path.getsize(p) / 1024
     log.info("Saved %s  %d dates  %d stocks  %.0f KB", p, n_dates, n_stocks, kb)
 
+
 def all_stored_dates() -> set[str]:
     stored = set()
     for year in range(START_DATE.year, date.today().year + 1):
@@ -203,8 +219,9 @@ def all_stored_dates() -> set[str]:
                     stored.update(json.load(f).get("by_date", {}).keys())
     return stored
 
+
 def _stored_codes_for_date(ds: str) -> set[str]:
-    year = int(ds[:4])
+    year  = int(ds[:4])
     codes = set()
     for label, _, _ in RANGES:
         p = lib_path(year, label)
@@ -214,6 +231,7 @@ def _stored_codes_for_date(ds: str) -> set[str]:
             codes.update(json.load(f).get("by_date", {}).get(ds, {}).keys())
     return codes
 
+
 # ── Schema normalisation ──────────────────────────────────────────────────────
 
 def _to_v2(raw) -> dict:
@@ -222,6 +240,7 @@ def _to_v2(raw) -> dict:
     if isinstance(raw, dict):
         return raw if "p" in raw else {"p": [], "total_sh": 0, "issued_sh": 0}
     return {"p": [], "total_sh": 0, "issued_sh": 0}
+
 
 # ── Stock universe ────────────────────────────────────────────────────────────
 
@@ -239,7 +258,6 @@ def get_sdw_universe() -> list[str]:
     except Exception as e:
         log.warning("Could not load universe from ccass_universe: %s — falling back to SDW cache", e)
 
-    # Fallback: use whatever codes are already stored in SDW files
     codes: set[str] = set()
     for year in range(START_DATE.year, date.today().year + 1):
         for label, _, _ in RANGES:
@@ -258,6 +276,7 @@ def get_sdw_universe() -> list[str]:
     log.warning("No universe available — returning empty list")
     return []
 
+
 # ── Playwright browser wrapper ────────────────────────────────────────────────
 
 class SDWBrowser:
@@ -265,30 +284,29 @@ class SDWBrowser:
     Manages a Playwright Chromium browser that fills the SDW search form
     like a real user — date field, stock code, then click 搜尋.
 
-    Context is rotated every CONTEXT_LIFE requests to refresh cookies
-    without paying the full browser startup cost each time.
+    Proxy is optional. After 3 consecutive proxy failures the browser
+    automatically relaunches in direct (no-proxy) mode.
+    Context is rotated every CONTEXT_LIFE requests to refresh cookies.
     """
 
     CONTEXT_LIFE = 60   # requests per browser context before rotating
 
     def __init__(self, proxy: str | None = None):
-        self._proxy_cfg  = _parse_proxy(proxy)
-        self._pw         = None
-        self._browser    = None
-        self._context    = None
-        self._page       = None
-        self._req_count  = 0
-        self._on_sdw     = False   # whether page is already on SDW_URL
+        self._proxy_cfg      = _parse_proxy(proxy)
+        self._using_proxy    = self._proxy_cfg is not None
+        self._pw             = None
+        self._browser        = None
+        self._context        = None
+        self._page           = None
+        self._req_count      = 0
+        self._on_sdw         = False
+        self._proxy_failures = 0   # consecutive proxy errors — triggers fallback
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def __enter__(self):
-        self._pw      = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-            proxy=self._proxy_cfg,
-        )
+        self._pw = sync_playwright().start()
+        self._launch_browser()
         self._new_context()
         return self
 
@@ -300,33 +318,86 @@ class SDWBrowser:
         except Exception:
             pass
 
+    def _launch_browser(self, force_direct: bool = False):
+        """Launch Chromium, with or without proxy."""
+        if self._browser:
+            try:
+                self._browser.close()
+            except Exception:
+                pass
+        proxy = self._proxy_cfg if (self._using_proxy and not force_direct) else None
+        self._browser = self._pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+                  "--ignore-certificate-errors"],
+            proxy=proxy,
+        )
+        mode = "proxy" if proxy else "direct (no proxy)"
+        log.info("🚀 Browser launched (%s)", mode)
+
+    def _fallback_to_direct(self):
+        """Switch to direct connection after repeated proxy failures."""
+        log.warning("🔀 Proxy failed %d times — switching to direct connection",
+                    self._proxy_failures)
+        self._using_proxy    = False
+        self._proxy_failures = 0
+        self._launch_browser(force_direct=True)
+        self._new_context()
+
     def _new_context(self):
         """Close old context and open a fresh one with a new UA and cookies."""
         if self._context:
-            try: self._context.close()
-            except Exception: pass
+            try:
+                self._context.close()
+            except Exception:
+                pass
 
         ua = random.choice(_USER_AGENTS)
         self._context = self._browser.new_context(
-            user_agent     = ua,
-            locale         = random.choice(["zh-HK", "en-GB", "en-US"]),
-            timezone_id    = "Asia/Hong_Kong",
-            viewport       = {"width": random.randint(1280, 1440),
-                               "height": random.randint(768, 900)},
+            user_agent          = ua,
+            locale              = "zh-HK",
+            timezone_id         = "Asia/Hong_Kong",
+            viewport            = {"width": random.randint(1280, 1440),
+                                   "height": random.randint(768, 900)},
             java_script_enabled = True,
+            ignore_https_errors = True,   # proxy SSL interception
         )
-        self._page     = self._context.new_page()
+
+        # Pre-seed consent cookies so Akamai treats us as a returning zh-HK user
+        consent_val = (
+            "isGpcEnabled=0&datestamp=Wed+Apr+01+2026+16%3A00%3A00+GMT%2B0100"
+            "&version=202303.2.0&browserGpcFlag=0&isIABGlobal=false"
+            "&hosts=&landingPath=NotLandingPage"
+            "&groups=C0001%3A1%2CC0003%3A1%2CC0004%3A1%2CC0002%3A1"
+            "&AwaitingReconsent=false&geolocation=HK%3BHKG"
+        )
+        for domain in [".hkexnews.hk", ".www3.hkexnews.hk", "www3.hkexnews.hk"]:
+            self._context.add_cookies([
+                {"name": "sclang",               "value": "zh-HK",       "domain": domain, "path": "/"},
+                {"name": "s_cc",                 "value": "true",        "domain": domain, "path": "/"},
+                {"name": "OptanonAlertBoxClosed", "value": "2026-04-01T16:00:00.000Z", "domain": domain, "path": "/"},
+                {"name": "OptanonConsent",        "value": consent_val,  "domain": domain, "path": "/"},
+            ])
+
+        self._page      = self._context.new_page()
         self._req_count = 0
-        self._on_sdw   = False
+        self._on_sdw    = False
         log.info("🌐 New browser context (UA: %s…)", ua[:60])
 
-        # Navigate to SDW page to seed cookies
+        # Step 1: Visit main homepage to seed Akamai bm_* cookies
         try:
-            self._page.goto(SDW_URL, wait_until="networkidle", timeout=60_000)
-            self._on_sdw = True
-            human_sleep(1.0, 2.5)
+            self._page.goto("https://www.hkexnews.hk/", wait_until="load", timeout=45_000)
+            human_sleep(2.0, 4.0)
         except Exception as e:
-            log.warning("Initial SDW navigation failed: %s", e)
+            log.warning("Homepage warm-up failed: %s", str(e)[:80])
+
+        # Step 2: Navigate to SDW page so Akamai sets www3-scoped bm_* cookies
+        try:
+            self._page.goto(SDW_URL, wait_until="load", timeout=60_000)
+            self._on_sdw = True
+            human_sleep(1.5, 3.0)
+        except Exception as e:
+            log.warning("Initial SDW navigation failed: %s", str(e)[:80])
             self._on_sdw = False
 
     # ── fetch ─────────────────────────────────────────────────────────────────
@@ -335,7 +406,9 @@ class SDWBrowser:
         """
         Fill date + stock code in the SDW search form, click 搜尋,
         wait for the ASP.NET postback to complete, then parse the result.
-        Returns {p, total_sh, issued_sh} or None.
+
+        Returns {p, total_sh, issued_sh} on success (p may be empty for stocks
+        with no CCASS data). Returns None only on network/parse failure.
         """
         code5    = normalize_code(stock_code)
         date_str = d.strftime("%Y/%m/%d")
@@ -352,48 +425,46 @@ class SDWBrowser:
             try:
                 # Ensure we're on the SDW page
                 if not self._on_sdw:
-                    page.goto(SDW_URL, wait_until="networkidle", timeout=60_000)
+                    page.goto(SDW_URL, wait_until="load", timeout=60_000)
                     self._on_sdw = True
                     human_sleep(1.0, 2.0)
 
-                # ── Set date + stock code + submit entirely via JS ────────────
-                # The date field is readonly (datepicker widget).
-                # Rather than fighting the UI, we set all form values via JS
-                # and call __doPostBack directly — same as what btnSearch does.
-                page.evaluate(
-                    """([dateStr, code5]) => {
-                        // Set date (remove readonly so value assignment works)
-                        const dateEl = document.getElementById('txtShareholdingDate');
-                        if (dateEl) {
-                            dateEl.removeAttribute('readonly');
-                            dateEl.value = dateStr;
-                        }
-                        // Set stock code
-                        const codeEl = document.getElementById('txtStockCode');
-                        if (codeEl) codeEl.value = code5;
-                        // Clear participant fields
-                        const pidEl  = document.getElementById('txtParticipantID');
-                        const pnmEl  = document.getElementById('txtParticipantName');
-                        if (pidEl)  pidEl.value  = '';
-                        if (pnmEl)  pnmEl.value  = '';
-                        // Submit — same as clicking btnSearch
-                        if (typeof __doPostBack === 'function') {
-                            __doPostBack('btnSearch', '');
-                        } else {
-                            document.getElementById('btnSearch').click();
-                        }
-                    }""",
-                    [date_str, code5]
-                )
-                page.wait_for_load_state("networkidle", timeout=45_000)
+                # ── Set fields + submit via JS ────────────────────────────────
+                # expect_response catches the server response for both full page
+                # navigation and AJAX partial updates — set it up BEFORE the JS
+                # fires so we don't miss the response.
+                with page.expect_response(
+                    lambda r: "searchsdw_c.aspx" in r.url,
+                    timeout=45_000
+                ):
+                    page.evaluate(
+                        """([dateStr, code5]) => {
+                            const dateEl = document.getElementById('txtShareholdingDate');
+                            if (dateEl) {
+                                dateEl.removeAttribute('readonly');
+                                dateEl.value = dateStr;
+                            }
+                            const codeEl = document.getElementById('txtStockCode');
+                            if (codeEl) codeEl.value = code5;
+                            const pidEl = document.getElementById('txtParticipantID');
+                            const pnmEl = document.getElementById('txtParticipantName');
+                            if (pidEl) pidEl.value = '';
+                            if (pnmEl) pnmEl.value = '';
+                            if (typeof __doPostBack === 'function') {
+                                __doPostBack('btnSearch', '');
+                            } else {
+                                document.getElementById('btnSearch').click();
+                            }
+                        }""",
+                        [date_str, code5]
+                    )
 
-                # ── Wait for ASP.NET postback to finish rendering ─────────────
-                # networkidle fires before the results table is fully painted;
-                # wait for any <table> or a short fixed delay as fallback.
-                try:
-                    page.wait_for_selector("table", timeout=8_000)
-                except Exception:
-                    human_sleep(1.0, 1.5)  # fallback if no table (e.g. no results)
+                # Wait until DOM is fully settled — reliable for both full
+                # navigation and AJAX partial updates.
+                page.wait_for_function(
+                    "document.readyState === 'complete'",
+                    timeout=45_000
+                )
 
                 # ── Check for block ───────────────────────────────────────────
                 content = page.content()
@@ -410,32 +481,41 @@ class SDWBrowser:
 
                 # ── Parse results ─────────────────────────────────────────────
                 result = _parse_response(content, code5, date_str)
-                # Stay on results page — next stock just re-submits the form
-                self._on_sdw = True
+                self._on_sdw    = True
+                self._proxy_failures = 0   # reset on success
                 return result
 
             except Exception as e:
-                err_str = str(e)
+                err_str      = str(e)
                 is_proxy_err = any(pat in err_str for pat in [
                     "ProxyError", "RemoteDisconnected", "Unable to connect to proxy",
-                    "proxy", "Proxy",
+                    "proxy", "Proxy", "ERR_CONNECTION_CLOSED", "ERR_SSL_PROTOCOL_ERROR",
+                    "ERR_TUNNEL_CONNECTION_FAILED", "ERR_CONNECTION_RESET",
                 ])
 
                 if attempt < 3:
                     if is_proxy_err:
+                        self._proxy_failures += 1
                         wait = random.uniform(20, 40)
-                        log.warning("fetch (%s %s) proxy error attempt %d — new context in %.0fs: %s",
-                                    code5, date_str, attempt, wait, err_str[:200])
+                        log.warning(
+                            "fetch (%s %s) proxy error attempt %d (failures=%d) — new context in %.0fs: %s",
+                            code5, date_str, attempt, self._proxy_failures, wait, err_str[:200]
+                        )
                         time.sleep(wait)
-                        self._new_context()
+                        # After 3 consecutive proxy failures switch to direct
+                        if self._proxy_cfg and self._proxy_failures >= 3:
+                            self._fallback_to_direct()
+                        else:
+                            self._new_context()
                         page = self._page
                     else:
+                        self._proxy_failures = 0   # reset on non-proxy error
                         wait = attempt * 15
                         log.warning("fetch (%s %s) attempt %d failed — retry in %ds: %s",
                                     code5, date_str, attempt, wait, err_str[:200])
                         time.sleep(wait)
                         try:
-                            page.goto(SDW_URL, wait_until="networkidle", timeout=60_000)
+                            page.goto(SDW_URL, wait_until="load", timeout=60_000)
                             self._on_sdw = True
                         except Exception as nav_e:
                             log.warning("re-nav failed: %s — new context", str(nav_e)[:100])
@@ -446,6 +526,7 @@ class SDWBrowser:
                               code5, date_str, err_str[:300])
                     self._on_sdw = False
                     return None
+
 
 # ── HTML response parser ──────────────────────────────────────────────────────
 
@@ -458,11 +539,16 @@ def _parse_num(s) -> int:
 
 def _clean_cell(s: str) -> str:
     """Strip leading 'Label: ' prefix from a table cell value."""
-    return re.sub(r'^[^:::：]+[:：]\s*', '', s).strip()
+    return re.sub(r'^[^:：]+[:：]\s*', '', s).strip()
 
-def _parse_response(html: str, code5: str, date_str: str) -> dict | None:
-    """Parse the SDW results page HTML. Same logic as before, now standalone."""
-    soup     = BeautifulSoup(html, "html.parser")
+
+def _parse_response(html: str, code5: str, date_str: str) -> dict:
+    """Parse the SDW results page HTML.
+
+    Returns {p, total_sh, issued_sh}. p is empty list for stocks with no
+    CCASS data — this is a valid result, not an error. Never returns None.
+    """
+    soup      = BeautifulSoup(html, "html.parser")
     full_text = soup.get_text(" ", strip=True)
 
     # 已發行股份
@@ -483,12 +569,12 @@ def _parse_response(html: str, code5: str, date_str: str) -> dict | None:
     total_sh_fallback = 0
 
     for tr in soup.find_all("tr"):
-        tds = [td.get_text(strip=True) for td in tr.find_all("td")]
+        tds     = [td.get_text(strip=True) for td in tr.find_all("td")]
         if len(tds) < 5:
             continue
-        pid_raw = clean(tds[0])
-        sh_raw  = clean(tds[3]).replace(",", "")
-        pct_raw = clean(tds[4]).replace("%", "").strip()
+        pid_raw = _clean_cell(tds[0])
+        sh_raw  = _clean_cell(tds[3]).replace(",", "")
+        pct_raw = _clean_cell(tds[4]).replace("%", "").strip()
         if not pid_raw or not sh_raw.isdigit():
             continue
         if pid_raw.lower() in ("參與者編號", "id", "participant id"):
@@ -532,11 +618,11 @@ def _parse_response(html: str, code5: str, date_str: str) -> dict | None:
                     code5, date_str, total_sh)
 
     if not participants:
-        log.debug("SDW: 0 records for %s on %s", code5, date_str)
-        return None
+        log.debug("SDW: 0 records for %s on %s — no CCASS data for this date", code5, date_str)
 
     participants.sort(key=lambda x: -x["sh"])
     return {"p": participants, "total_sh": total_sh, "issued_sh": issued_sh}
+
 
 # ── Build / update ────────────────────────────────────────────────────────────
 
@@ -573,8 +659,8 @@ def build(update_only: bool = False, specific_date: date = None,
         all_dates = all_fetch_dates()
         if update_only:
             stored_all = all_stored_dates()
-            last = date.fromisoformat(max(stored_all)) if stored_all else None
-            all_dates = [d for d in all_dates if last is None or d > last]
+            last       = date.fromisoformat(max(stored_all)) if stored_all else None
+            all_dates  = [d for d in all_dates if last is None or d > last]
             log.info("Update mode: %d new dates after %s",
                      len(all_dates), last.isoformat() if last else "none")
 
@@ -590,7 +676,7 @@ def build(update_only: bool = False, specific_date: date = None,
 
             dates_to_fetch = [d for d in all_dates if not _range_complete(d.isoformat())]
         else:
-            stored_all = all_stored_dates()
+            stored_all     = all_stored_dates()
             dates_to_fetch = [d for d in all_dates if d.isoformat() not in stored_all]
 
         log.info("%s: %d dates to fetch (%d in schedule)",
@@ -618,8 +704,7 @@ def build(update_only: bool = False, specific_date: date = None,
             range_libs = {label: load_range(year, label) for label, _, _ in owned_ranges}
 
             if range_label:
-                lbl     = owned_ranges[0][0]
-                already = set(range_libs[lbl]["by_date"].get(ds, {}).keys())
+                already = set(range_libs[owned_ranges[0][0]]["by_date"].get(ds, {}).keys())
             else:
                 already = _stored_codes_for_date(ds)
             todo = [c for c in universe if c not in already]
@@ -629,7 +714,7 @@ def build(update_only: bool = False, specific_date: date = None,
             timed_out     = False
             blocked       = False
             consec_errors = 0
-            _dirty_ranges = set()
+            _dirty_ranges: set[str] = set()
 
             for ci, code in enumerate(todo, 1):
 
@@ -646,29 +731,38 @@ def build(update_only: bool = False, specific_date: date = None,
                 # ── FETCH ─────────────────────────────────────────────────────
                 entry = browser.fetch(code, d)
 
-                if entry:
-                    rl = code_range(code)
-                    range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
-                    _dirty_ranges.add(rl)
-                    fetched += 1
-                    consec_errors = 0
-
-                else:
+                if entry is None:
+                    # Real error — network/block/parse failure
                     consec_errors += 1
+                    log.warning("  ✗ [%d/%d] %s returned None (consec_errors=%d)",
+                                ci, len(todo), code, consec_errors)
 
-                    # ── EARLY BACKOFF ─────────────────────────────────────────
                     if consec_errors >= 3:
                         backoff = random.uniform(60, 120)
                         log.warning("  ⚠️ Early backoff (%d errors) — sleeping %.0fs",
                                     consec_errors, backoff)
                         time.sleep(backoff)
 
-                    # ── CIRCUIT BREAKER ───────────────────────────────────────
                     if consec_errors >= CIRCUIT_BREAKER_LIMIT:
                         log.error("  🚫 Circuit breaker: %d consecutive errors — blocked",
                                   consec_errors)
                         blocked = True
                         break
+
+                elif not entry.get("p"):
+                    # Valid empty result — stock has no CCASS data for this date
+                    consec_errors = 0
+                    log.debug("  — [%d/%d] %s no CCASS data", ci, len(todo), code)
+
+                else:
+                    # Success with participants
+                    rl = code_range(code)
+                    range_libs[rl]["by_date"].setdefault(ds, {})[code] = entry
+                    _dirty_ranges.add(rl)
+                    fetched += 1
+                    consec_errors = 0
+                    log.info("  ✓ [%d/%d] %s saved (%d participants)",
+                             ci, len(todo), code, len(entry["p"]))
 
                 # ── BASE DELAY ────────────────────────────────────────────────
                 human_sleep(SLEEP_MIN, SLEEP_MAX)
@@ -708,9 +802,11 @@ def build(update_only: bool = False, specific_date: date = None,
 
     log.info("Build complete")
 
+
 # ── Migration ─────────────────────────────────────────────────────────────────
 
 def migrate_to_range_split():
+    """Migrate old single-file ccass_sdw_{YYYY}.json to the 4-range split format."""
     for year in range(START_DATE.year, date.today().year + 1):
         old_path = f"ccass_sdw_{year}.json"
         if not os.path.exists(old_path):
@@ -725,8 +821,8 @@ def migrate_to_range_split():
             continue
         log.info("Migrating ccass_sdw_%d.json (%d dates)...", year, len(by_date))
         range_libs = {label: load_range(year, label) for label, _, _ in RANGES}
-        migrated = 0
-        skipped = 0
+        migrated   = 0
+        skipped    = 0
         for ds, stocks in by_date.items():
             for code, raw in stocks.items():
                 try:
@@ -743,6 +839,7 @@ def migrate_to_range_split():
                  migrated, year, skipped)
     log.info("Migration complete")
 
+
 # ── API ───────────────────────────────────────────────────────────────────────
 
 def _load_for_code(code: str, ds: str) -> dict:
@@ -754,22 +851,31 @@ def _load_for_code(code: str, ds: str) -> dict:
     with open(p, encoding="utf-8") as f:
         return json.load(f).get("by_date", {}).get(ds, {})
 
+
 def get_holders(stock_code: str, ds: str) -> list:
     code5 = normalize_code(stock_code)
-    raw = _load_for_code(code5, ds).get(code5)
+    raw   = _load_for_code(code5, ds).get(code5)
     return _to_v2(raw)["p"] if raw is not None else []
+
 
 def get_total_sh(stock_code: str, ds: str) -> int:
     code5 = normalize_code(stock_code)
-    raw = _load_for_code(code5, ds).get(code5)
+    raw   = _load_for_code(code5, ds).get(code5)
     return _to_v2(raw).get("total_sh", 0) if raw is not None else 0
+
 
 def get_issued_sh(stock_code: str, ds: str) -> int:
     code5 = normalize_code(stock_code)
-    raw = _load_for_code(code5, ds).get(code5)
+    raw   = _load_for_code(code5, ds).get(code5)
     return _to_v2(raw).get("issued_sh", 0) if raw is not None else 0
 
+
 def get_latest_total_sh(stock_code: str, before: str = None) -> int:
+    """Return the most recent total shareholding for *stock_code* before *before* (YYYY-MM-DD).
+
+    Note: cutoff comparison uses ISO date string ordering (YYYY-MM-DD) —
+    do not pass datetime strings with time components.
+    """
     code5  = normalize_code(stock_code)
     label  = code_range(code5)
     cutoff = before or (date.today() + timedelta(days=1)).isoformat()
@@ -790,6 +896,7 @@ def get_latest_total_sh(stock_code: str, before: str = None) -> int:
                 return total_sh
     return 0
 
+
 def get_total_sh_bulk(ds: str) -> dict:
     result = {}
     year   = int(ds[:4])
@@ -804,6 +911,7 @@ def get_total_sh_bulk(ds: str) -> dict:
             if ts > 0:
                 result[code5] = ts
     return result
+
 
 def get_holders_history(stock_code: str, n: int, before: str) -> list:
     code5  = normalize_code(stock_code)
@@ -832,6 +940,7 @@ def get_holders_history(stock_code: str, n: int, before: str) -> list:
             if len(result) >= n:
                 return result
     return result
+
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -873,6 +982,7 @@ def _query(code: str, top: int, ds: str = None):
     if hist:
         print(f"\nAvailable dates: {[h['date'] for h in hist]}")
 
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="CCASS SDW Participant Holdings Library")
     ap.add_argument("--update",      action="store_true")
@@ -892,4 +1002,4 @@ if __name__ == "__main__":
         build(update_only=args.update,
               specific_date=date.fromisoformat(args.date) if args.date else None,
               max_minutes=args.max_minutes,
-              range_label=args.range)
+              range_label=getattr(args, "range", None))
