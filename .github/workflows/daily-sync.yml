@@ -65,8 +65,6 @@ jobs:
         run: python ccass_library.py --update --fix-names
 
       - name: SDW backfill (0001_3999 on even days; lighter ranges on odd days)
-        env:
-          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: |
           DOY=$((10#$(date +%j)))
           if [ $((DOY % 2)) -eq 0 ]; then
@@ -196,7 +194,7 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SC top10 build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SDW full backfill (manual, 3 parallel ranges + 7489_7618 piggybacked) ────
+  # ── SDW full backfill (manual, 7 parallel ranges) ────────────────────────────
   sdw-build:
     name: SDW backfill — range ${{ matrix.range }}
     runs-on: ubuntu-latest
@@ -225,8 +223,6 @@ jobs:
       - name: Migrate old single-file SDW data
         run: python ccass_sdw_library.py --migrate
       - name: Build SDW range ${{ matrix.range }}
-        env:
-          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: |
           python ccass_sdw_library.py --range ${{ matrix.range }} --max-minutes 80
           if [ "${{ matrix.range }}" = "9600_9999" ]; then
@@ -248,7 +244,7 @@ jobs:
             sleep 10
           done
 
-  # ── SDW weekly (Thu+Fri 22:00 HKT, 3 parallel ranges + 7489_7618 piggybacked) ─
+  # ── SDW weekly (Thu+Fri 22:00 HKT) ───────────────────────────────────────────
   sdw-weekly:
     name: SDW weekly — range ${{ matrix.range }}
     runs-on: ubuntu-latest
@@ -270,8 +266,6 @@ jobs:
       - run: pip install -r requirements.txt
       - run: playwright install chromium
       - name: Fetch latest Friday SDW data for range ${{ matrix.range }}
-        env:
-          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: |
           python ccass_sdw_library.py --update --range ${{ matrix.range }} --max-minutes 75
           if [ "${{ matrix.range }}" = "9600_9999" ]; then
