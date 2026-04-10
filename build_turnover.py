@@ -168,8 +168,8 @@ def fetch(d: date) -> str | None:
 
 _PAT = re.compile(
     r"^[*%\s]{0,12}(\d{1,5})\s+"          # g1  代號  (1–5 digits; * % prefix stripped; up to 11 leading spaces)
-    r"(\S[^\u3000\n]{1,40}?)\s{2,}"       # g2  NAME OF STOCK (ends at 2+ spaces)
-    r"(.{1,35}?)\s*"                       # g3  股票名稱
+    r"(\S[^\u4e00-\u9fff\u3000\n]{1,40}?)\s+"  # g2  NAME OF STOCK (stops at CJK or any space)
+    r"([\u4e00-\u9fff\uff01-\uffef][^\n]{0,35}?)\s*"  # g3  股票名稱 (must start with CJK/fullwidth)
     r"(?:HKD|USD|CNY|RMB|EUR|GBP|AUD|JPY|SGD)\s+"  # CUR (skip; RMB used for H-share dual-currency counters)
     r"([\d,.]+)\s+"                        # g4  前收市 / PRV
     r"[\d,.NA-]+\s+"                       # BID  (skip)
