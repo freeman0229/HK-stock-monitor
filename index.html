@@ -1455,6 +1455,8 @@ function renderBshui() {
   if (sbLabel) {
     if (sbDate && sbDate !== todayStr) {
       sbLabel.innerHTML = `按總成交額排序 ｜ <span style="color:var(--gold)">⏳ 顯示 ${sbDate} 數據（今日數據尚未發布）</span>`;
+    } else if (sbDate) {
+      sbLabel.textContent = `按總成交額排序 ｜ 北水佔比 = 北水買入及賣出 ÷ 成交金額 ｜ ${sbDate}`;
     } else {
       sbLabel.textContent = '按總成交額排序 ｜ 北水佔比 = 北水買入及賣出 ÷ 成交金額';
     }
