@@ -23,7 +23,6 @@ Rules:
   • TRADING SUSPENDED lines are skipped.
   • If code appears more than once, keep the higher-vol record.
   • Incremental by default — skips dates already in library.
-  • If code appears more than once, keep the higher-vol record.
 
 Usage:
   python build_turnover.py               # fetch only missing dates (normal daily use)
@@ -33,12 +32,17 @@ Usage:
   python build_turnover.py --from 260201 # override start date (YYMMDD)
 """
 
-import os, re, json, time, logging, argparse
+import argparse
+import json
+import logging
+import os
+import re
+import time
 from datetime import date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
-from ccass_universe import is_included as _is_included, normalize_code as _normalize_code
+from ccass_universe import is_included as _is_included, normalize_code
 
 try:
     import holidays as _hol
@@ -202,6 +206,7 @@ def parse(body: str) -> dict:
         close      (float)  收市
         vol        (int)    成交股數
         tv         (int)    成交金額
+        vwap       (float)  成交金額 / 成交股數 (volume-weighted average price)
     """
     out = {}
     for line in body.splitlines():
@@ -216,7 +221,7 @@ def parse(body: str) -> dict:
                 log.debug("parse: no match — %s", stripped[:80])
             continue
         code_int = int(m.group(1))
-        code        = _normalize_code(code_int)
+        code        = normalize_code(code_int)
         if not _is_included(code):
             continue
         name_en     = m.group(2).strip()
@@ -232,7 +237,6 @@ def parse(body: str) -> dict:
             continue
         # Keep higher-vol record if code appears twice
         if code not in out or vol > out[code]["vol"]:
-            vwap = round(tv / vol, 4) if vol > 0 else 0.0
             out[code] = {
                 "name_en":    name_en,
                 "name_zh":    name_zh,
@@ -242,7 +246,7 @@ def parse(body: str) -> dict:
                 "close":      close,
                 "vol":        vol,
                 "tv":         tv,
-                "vwap":       vwap,
+                "vwap":       round(tv / vol, 4),
             }
     return out
 
