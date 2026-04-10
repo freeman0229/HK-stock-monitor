@@ -2,7 +2,7 @@
 di_library.py — HKEx Disclosure of Interests (DI) Library Builder
 ===================================================================
 Scrapes substantial shareholder (≥5%) filing notices from the HKEx DI system
-for stocks in ccass_universe, from 2018-03-01 to today.
+for stocks in ccass_universe, rolling 2-year window to today.
 
 Source: https://di.hkex.com.hk/filing/di/NSAllFormList.aspx
 Forms:  Form 1 (individual SS), Form 2 (corporate SS), Form 3A (director)
@@ -68,7 +68,7 @@ def _get_stock_codes() -> list[str]:
 HEADERS    = {"User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
                "Referer":   "https://di.hkex.com.hk/"}
 BASE_URL   = "https://di.hkex.com.hk/filing/di/NSAllFormList.aspx"
-START_DATE = date(2018, 3, 1)
+START_DATE = date.today().replace(year=date.today().year - 2)  # rolling 2-year window
 SLEEP_SEC  = 1.2
 CACHE_DIR  = "di_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
