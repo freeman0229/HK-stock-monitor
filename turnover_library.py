@@ -21,13 +21,17 @@ API for main.py:
   from turnover_library import save_day, get_tv, get_tv_history, all_stored_dates
 """
 
-import os, json, logging
+import json
+import logging
+import os
 from datetime import date, datetime
+
+from ccass_universe import normalize_code
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-START_DATE = date(2018, 3, 1)
+START_DATE = date(2026, 2, 2)   # aligns with build_turnover.py START_DATE
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
 
@@ -124,7 +128,7 @@ def get_vol_history(code: str, n: int, before: str) -> list:
     Return last n share volume values for a stock before date `before`
     (YYYY-MM-DD), newest-first. Skips days with no data.
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
@@ -148,7 +152,7 @@ def get_tv_history(code: str, n: int, before: str) -> list:
     Return last n turnover values (HKD) for a stock before date `before`
     (YYYY-MM-DD), newest-first. Skips days with no data.
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
@@ -173,7 +177,7 @@ def get_close_history(code: str, n: int, before: str) -> list:
     (YYYY-MM-DD), newest-first. Skips days with no data.
     Alias: get_price_history (preferred name for chart construction).
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
@@ -206,7 +210,7 @@ def get_close(code: str, ds_yyyymmdd: str) -> float:
     if not os.path.exists(p):
         return 0.0
     with open(p, encoding="utf-8") as f:
-        rec = json.load(f).get("by_date", {}).get(ds, {}).get(code.zfill(5), {})
+        rec = json.load(f).get("by_date", {}).get(ds, {}).get(normalize_code(code), {})
     if isinstance(rec, dict):
         return float(rec.get("close", 0.0))
     return 0.0
