@@ -167,7 +167,7 @@ def fetch(d: date) -> str | None:
 # TRADING SUSPENDED / 暫停買賣 lines have no numeric data — skipped before regex.
 
 _PAT = re.compile(
-    r"^[*%\s]{0,8}(\d{1,5})\s+"           # g1  代號  (1–5 digits; * % prefix stripped; up to 7 leading spaces)
+    r"^[*%\s]{0,12}(\d{1,5})\s+"          # g1  代號  (1–5 digits; * % prefix stripped; up to 11 leading spaces)
     r"(\S[^\u3000\n]{1,40}?)\s{2,}"       # g2  NAME OF STOCK (ends at 2+ spaces)
     r"(.{1,35}?)\s*"                       # g3  股票名稱
     r"(?:HKD|USD|CNY|RMB|EUR|GBP|AUD|JPY|SGD)\s+"  # CUR (skip; RMB used for H-share dual-currency counters)
@@ -218,7 +218,7 @@ def parse(body: str) -> dict:
             # Log lines that look like stock data but failed to parse
             stripped = line.strip()
             if stripped and stripped[0].isdigit() and len(stripped) > 30:
-                log.debug("parse: no match — %s", stripped[:80])
+                log.warning("parse: no match — %s", stripped[:80])
             continue
         code_int = int(m.group(1))
         code        = normalize_code(code_int)
