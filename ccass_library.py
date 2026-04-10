@@ -26,20 +26,22 @@ Usage:
   python ccass_library.py --export 00700
 """
 
-import os, sys, json, time, re, logging, argparse
-import requests
+import argparse
+import json
+import logging
+import os
+import re
+import time
+
 import pandas as pd
+import requests
 from bs4 import BeautifulSoup
 from datetime import date, timedelta
 
+from ccass_universe import normalize_code
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from stock_ref import STOCKS
-except ImportError:
-    STOCKS = {}
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
@@ -48,7 +50,13 @@ HEADERS = {
 # Chinese mutualmarket page — cleaner table, GET-based with txtShareholdingDate param
 BASE_URL   = "https://www3.hkexnews.hk/sdw/search/mutualmarket_c.aspx"
 SLEEP_SEC  = 1.5
-START_DATE = date(2025, 3, 23)  # user-requested start: 23 Mar 2025
+START_DATE = date(2025, 3, 23)  # Note: 2025-03-23 is a Sunday — first
+                                # trading day is 2025-03-24
+
+
+def _clean_cell(s: str) -> str:
+    """Strip leading 'Label: ' prefix from a table cell value."""
+    return re.sub(r'^[^:：]+[:：]\s*', '', s).strip()
                                 # Note: 2025-03-23 is a Sunday — first
                                 # trading day is 2025-03-24
 
@@ -101,9 +109,12 @@ def is_trading_day(d: date) -> bool:
     return True
 
 def last_trading_day(d: date) -> date:
-    while not is_trading_day(d):
+    """Return the most recent trading day on or before d."""
+    for _ in range(14):   # safety limit — no holiday run longer than 2 weeks
+        if is_trading_day(d):
+            return d
         d -= timedelta(days=1)
-    return d
+    raise ValueError(f"last_trading_day: no trading day found within 14 days of {d}")
 
 def all_trading_days(start: date, end: date) -> list:
     days, d = [], start
@@ -215,18 +226,15 @@ def fetch_ccass(d: date) -> dict | None:
             if len(tds) < 4:
                 continue
 
-            def clean(s):
-                return re.sub(r'^[^:：]+[:：]\s*', '', s).strip()
-
-            code_raw = clean(tds[0]).replace(",", "")
-            name_raw = clean(tds[1]).strip()
-            sh_raw   = clean(tds[2]).replace(",", "")
-            pct_raw  = clean(tds[3]).replace("%", "").strip()
+            code_raw = _clean_cell(tds[0]).replace(",", "")
+            name_raw = _clean_cell(tds[1]).strip()
+            sh_raw   = _clean_cell(tds[2]).replace(",", "")
+            pct_raw  = _clean_cell(tds[3]).replace("%", "").strip()
 
             if not code_raw.isdigit() or not sh_raw.isdigit():
                 continue
 
-            code = str(int(code_raw)).zfill(5)
+            code = normalize_code(code_raw)
             records[code] = {
                 "sh":   int(sh_raw),
                 "pct":  float(pct_raw) if pct_raw else 0.0,
@@ -234,8 +242,8 @@ def fetch_ccass(d: date) -> dict | None:
             }
 
         if not records:
-            log.warning("CCASS: 0 records for %s", date_str)
-            return None
+            log.debug("CCASS: 0 records for %s — data may not be published yet", date_str)
+            return {}
 
         log.info("CCASS %s: %d stocks", date_str, len(records))
         return records
@@ -320,7 +328,12 @@ def build(update_only: bool = False, fix_names: bool = False):
             log.info("  [%d/%d] %s", i, len(days), d.isoformat())
             records = fetch_ccass(d)
             if records is None:
+                # Network/parse failure — retry next run
                 missing.append(d)
+                continue
+            if not records:
+                # Empty response — data not published yet, skip silently
+                log.debug("  %s: no data published yet — skipping", d.isoformat())
                 continue
             lib["by_date"][d.isoformat()] = records
             time.sleep(SLEEP_SEC)
@@ -354,7 +367,7 @@ def build(update_only: bool = False, fix_names: bool = False):
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
 def stock_history(code: str) -> list:
-    code5 = code.zfill(5)
+    code5 = normalize_code(code)
     rows  = []
     for year in all_years():
         if not os.path.exists(lib_path(year)):
@@ -367,16 +380,17 @@ def stock_history(code: str) -> list:
     return sorted(rows)
 
 def query_stock(code: str, weeks: int = None):
-    hist = stock_history(code)
+    code5 = normalize_code(code)
+    hist  = stock_history(code5)
     if not hist:
-        print(f"No CCASS data for {code.zfill(5)}")
+        print(f"No CCASS data for {code5}")
         return
     if weeks:
         cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
         hist = [(ds, d) for ds, d in hist if ds >= cutoff]
 
-    name = STOCKS.get(code.zfill(5), {}).get("zh", code.zfill(5))
-    print(f"\n{code.zfill(5)} — {name}  ({len(hist)} days)")
+    name = get_ccass_name(code5) or code5
+    print(f"\n{code5} — {name}  ({len(hist)} days)")
     print(f"{'Date':<12} {'Shareholding':>18} {'% Listed':>10} {'Δ':>14}")
     print("─" * 58)
     prev_sh = None
@@ -404,31 +418,33 @@ def query_date(ds: str):
     print(f"{'Code':<8} {'Name':<36} {'Shareholding':>18} {'%':>8}")
     print("─" * 74)
     for code, data in rows[:100]:
-        zh = STOCKS.get(code, {}).get("zh", "")
+        zh = data.get("name", "") or get_ccass_name(code) or ""
         print(f"{code:<8} {zh[:35]:<36} {data['sh']:>18,} {data['pct']:>7.2f}%")
 
 def export_stock_csv(code: str):
-    hist = stock_history(code)
+    code5 = normalize_code(code)
+    hist  = stock_history(code5)
     if not hist:
-        print(f"No CCASS data for {code.zfill(5)}"); return
+        print(f"No CCASS data for {code5}"); return
+    name_zh = get_ccass_name(code5) or ""
     rows = []
     prev_sh = None
     for ds, data in hist:
         sh  = data.get("sh", 0)
         pct = data.get("pct", 0.0)
         delta = sh - prev_sh if prev_sh is not None else None
-        rows.append({"date": ds, "stock_code": code.zfill(5),
-                     "name_zh": STOCKS.get(code.zfill(5), {}).get("zh", ""),
+        rows.append({"date": ds, "stock_code": code5,
+                     "name_zh": data.get("name", "") or name_zh,
                      "shareholding": sh, "pct_listed": pct, "delta": delta})
         prev_sh = sh
-    path = f"{code.zfill(5)}_ccass_history.csv"
+    path = f"{code5}_ccass_history.csv"
     pd.DataFrame(rows).to_csv(path, index=False)
     print(f"Exported {len(rows)} rows to {path}")
 
 
 def get_ccass_name(code: str) -> str | None:
     """Return the most recent Chinese name for a stock from CCASS records."""
-    code5 = code.zfill(5)
+    code5 = normalize_code(code)
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
         if not os.path.exists(p): continue
@@ -443,34 +459,13 @@ def get_ccass_name(code: str) -> str | None:
     return None
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="CCASS Southbound Library")
-    ap.add_argument("--update",     action="store_true", help="Fetch only new dates")
-    ap.add_argument("--fix-names",  action="store_true", help="Re-fetch dates missing the name field")
-    ap.add_argument("--query",  metavar="CODE",        help="Stock history e.g. 00700")
-    ap.add_argument("--date",   metavar="YYYY-MM-DD",  help="All stocks for a date")
-    ap.add_argument("--weeks",  type=int,              help="Limit query to last N weeks")
-    ap.add_argument("--export", metavar="CODE",        help="Export to CSV")
-    args = ap.parse_args()
-
-    if   args.query:  query_stock(args.query, args.weeks)
-    elif args.date:   query_date(args.date)
-    elif args.export: export_stock_csv(args.export)
-    else:             build(update_only=args.update, fix_names=getattr(args, "fix_names", False))
-
-
-# ── API for main.py ───────────────────────────────────────────────────────────
-
 def get_pct_history(code: str, n: int, before: str) -> list:
     """
     Return the last n pct_listed values for a stock strictly before date `before`
     (YYYY-MM-DD), sorted newest-first. Used by main.py for pct_avg5/20.
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
-    # Scan from most recent year backwards
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
         if not os.path.exists(p):
@@ -494,7 +489,7 @@ def get_sh_history(code: str, n: int, before: str) -> list:
     Return the last n shareholding values for a stock strictly before `before`,
     sorted newest-first. Used by main.py for delta and consec computation.
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
@@ -512,3 +507,22 @@ def get_sh_history(code: str, n: int, before: str) -> list:
             if len(result) >= n:
                 return result
     return result
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="CCASS Southbound Library")
+    ap.add_argument("--update",     action="store_true", help="Fetch only new dates")
+    ap.add_argument("--fix-names",  action="store_true", help="Re-fetch dates missing the name field")
+    ap.add_argument("--query",  metavar="CODE",        help="Stock history e.g. 00700")
+    ap.add_argument("--date",   metavar="YYYY-MM-DD",  help="All stocks for a date")
+    ap.add_argument("--weeks",  type=int,              help="Limit query to last N weeks")
+    ap.add_argument("--export", metavar="CODE",        help="Export to CSV")
+    args = ap.parse_args()
+
+    if   args.query:  query_stock(args.query, args.weeks)
+    elif args.date:   query_date(args.date)
+    elif args.export: export_stock_csv(args.export)
+    else:             build(update_only=args.update, fix_names=getattr(args, "fix_names", False))
+
