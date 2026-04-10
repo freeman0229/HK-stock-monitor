@@ -38,10 +38,14 @@ API for other modules:
   from ccass_participant_library import get_participant, get_all_participants, get_group, group_holdings
 """
 
-import os, json, logging, argparse
+import argparse
+import json
+import logging
+import os
+from datetime import date, timedelta
+
 import requests
 from bs4 import BeautifulSoup
-from datetime import date, timedelta
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -90,8 +94,7 @@ def fetch() -> dict | None:
     Returns {participant_id: participant_name} or None on failure.
     """
     try:
-        from datetime import date as _date
-        url = f"{URL_BASE}?sortby=partid&shareholdingdate={_date.today().strftime('%Y%m%d')}"
+        url = f"{URL_BASE}?sortby=partid&shareholdingdate={date.today().strftime('%Y%m%d')}"
         r = requests.get(url, headers=HEADERS, timeout=30)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
@@ -135,10 +138,12 @@ def fetch() -> dict | None:
 
 def build(update_only: bool = False):
     """Fetch and save the participant list."""
-    if update_only and not is_stale():
-        log.info("Participant list is up to date (last updated: %s)",
-                 load_lib()["meta"].get("last_updated"))
-        return
+    if update_only:
+        lib = load_lib()
+        if not is_stale():
+            log.info("Participant list is up to date (last updated: %s)",
+                     lib["meta"].get("last_updated"))
+            return
 
     participants = fetch()
     if participants is None:
@@ -154,19 +159,10 @@ def build(update_only: bool = False):
 def get_participant(pid: str) -> str | None:
     """
     Return the name for a participant ID, or None if not found.
-    Case-insensitive lookup.
+    Participant IDs are always uppercase in the source — normalise before lookup.
     """
-    lib = load_lib()
-    p = lib.get("participants", {})
-    # Exact match first
-    if pid in p:
-        return p[pid]
-    # Case-insensitive
-    pid_up = pid.upper()
-    for k, v in p.items():
-        if k.upper() == pid_up:
-            return v
-    return None
+    p = load_lib().get("participants", {})
+    return p.get(pid.upper())
 
 
 def get_all_participants() -> dict:
@@ -192,6 +188,7 @@ def search_participants(query: str) -> list[tuple[str, str]]:
 # ── Participant groups ────────────────────────────────────────────────────────
 
 # Major institutional holders (大型券商/託管行)
+# Note: these sets require manual maintenance as membership changes.
 DAHU_IDS = {
     "B01555", "B01451", "B01224",
     "C00010", "C00019", "C00074", "C00093", "C00039", "C00111",
@@ -238,6 +235,9 @@ def group_holdings(holders: list) -> dict:
         groups[g]["sh"]  += h.get("sh", 0)
         groups[g]["pct"] += h.get("pct", 0.0)
         groups[g]["participants"].append(h)
+    # Round pct to avoid floating point accumulation drift
+    for g in groups.values():
+        g["pct"] = round(g["pct"], 4)
     return groups
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
