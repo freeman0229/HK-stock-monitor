@@ -1,18 +1,19 @@
-import os, json, time, logging, re
+import json
+import logging
+import os
+import re
+import time
+from datetime import date, datetime, timedelta
+
+import holidays
 import pandas as pd
 import requests
-import holidays
 from bs4 import BeautifulSoup
-from datetime import date, datetime, timedelta
 from stock_ref import get_zh_name, get_industry, get_type, STOCKS
-from ccass_universe import is_included as _universe_included, normalize_code
-from ccass_library import get_pct_history, get_sh_history
-from short_library import (get_short_history, get_short_ratio_history,
-                            load_year as sl_load_year)
-from turnover_library import (load_year as tv_load_year,
-                               get_tv_history, get_vol_history,
-                               get_close_history, get_close,
-                               load_recent as tv_load_recent, get_tv)
+from ccass_universe import get_universe, is_included as _universe_included, normalize_code
+from ccass_library import get_pct_history, get_sh_history, load_year as _cc_load_year
+from short_library import get_short_ratio_history, load_year as sl_load_year
+from turnover_library import load_year as tv_load_year, load_recent as tv_load_recent
 from sc_top10_library import get_top10, get_top10_history, get_sb_summary
 try:
     from sfc_library import get_short_position as sfc_get_position, \
@@ -50,9 +51,11 @@ def is_trading_day(d: datetime = None) -> bool:
 
 def last_trading_day(d: datetime = None) -> datetime:
     d = d or datetime.now()
-    while not is_trading_day(d):
+    for _ in range(14):   # safety limit — no holiday run longer than 2 weeks
+        if is_trading_day(d):
+            return d
         d -= timedelta(days=1)
-    return d
+    raise ValueError(f"last_trading_day: no trading day found within 14 days of {d}")
 
 # ── Mainland China stock exchange holidays (southbound settlement) ────────────
 _CN_HOLIDAY_DATES = {
@@ -103,9 +106,6 @@ def ccass_trade_date(settlement_date: datetime) -> datetime:
     return business_days_back(settlement_date, 2)
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
-def fmt_code(val) -> str:
-    return normalize_code(val)   # canonical 5-digit via ccass_universe
-
 def to_num(s) -> float:
     try:    return float(str(s).replace(",", "").strip())
     except (ValueError, TypeError, AttributeError): return 0.0
@@ -209,11 +209,19 @@ def get_short_sell_today(trading_day: datetime) -> pd.DataFrame:
                 trading_day.strftime("%Y-%m-%d"))
     return EMPTY_SHORT, None
 
-def save_short_sell(date: datetime, df: pd.DataFrame):
-    """No-op — short data is now saved by build_turnover.py, not main.py."""
-    pass
-
 # ── Source 3: CCASS southbound ────────────────────────────────────────────────
+
+def _hv(soup, name: str) -> str:
+    """Extract hidden ASP.NET form field value from a BeautifulSoup object."""
+    tag = soup.find("input", {"name": name})
+    return tag["value"] if tag else ""
+
+
+def _clean_cell(s: str) -> str:
+    """Strip leading 'Label: ' prefix from a table cell value."""
+    return s.split(":")[-1].strip() if ":" in s else s.strip()
+
+
 CCASS_URL   = "https://www3.hkexnews.hk/sdw/search/mutualmarket_c.aspx"
 EMPTY_CCASS = pd.DataFrame(columns=["stock_code", "name", "shareholding", "pct_listed"])
 
@@ -227,16 +235,12 @@ def get_ccass_southbound(date: datetime = None) -> pd.DataFrame:
         r1.raise_for_status()
         soup = BeautifulSoup(r1.text, "html.parser")
 
-        def hv(name):
-            tag = soup.find("input", {"name": name})
-            return tag["value"] if tag else ""
-
         r2 = s.post(f"{CCASS_URL}?t=hk", data={
             "__EVENTTARGET":        "btnSearch",
             "__EVENTARGUMENT":      "",
-            "__VIEWSTATE":          hv("__VIEWSTATE"),
-            "__VIEWSTATEGENERATOR": hv("__VIEWSTATEGENERATOR"),
-            "__EVENTVALIDATION":    hv("__EVENTVALIDATION"),
+            "__VIEWSTATE":          _hv(soup, "__VIEWSTATE"),
+            "__VIEWSTATEGENERATOR": _hv(soup, "__VIEWSTATEGENERATOR"),
+            "__EVENTVALIDATION":    _hv(soup, "__EVENTVALIDATION"),
             "txtShareholdingDate":  date_str,
             "t":                    "hk",
         }, timeout=30)
@@ -248,20 +252,18 @@ def get_ccass_southbound(date: datetime = None) -> pd.DataFrame:
             log.warning("CCASS: no table for %s", date_str)
             return EMPTY_CCASS
 
-        def clean(s): return s.split(":")[-1].strip() if ":" in s else s.strip()
-
         rows = []
         for tr in table.find_all("tr"):
             tds = [td.get_text(strip=True) for td in tr.find_all("td")]
             if len(tds) < 4:
                 continue
-            cr = clean(tds[0]).replace(",", "")
-            sr = clean(tds[2]).replace(",", "")
+            cr = _clean_cell(tds[0]).replace(",", "")
+            sr = _clean_cell(tds[2]).replace(",", "")
             if not cr.isdigit() or not sr.isdigit():
                 continue
-            pr = clean(tds[3]).replace("%", "").strip()
-            rows.append({"stock_code":   fmt_code(cr),
-                         "name":         clean(tds[1]),
+            pr = _clean_cell(tds[3]).replace("%", "").strip()
+            rows.append({"stock_code":   normalize_code(cr),
+                         "name":         _clean_cell(tds[1]),
                          "shareholding": int(sr),
                          "pct_listed":   float(pr) if pr else 0.0})
 
@@ -332,10 +334,6 @@ def get_ccass_delta_and_avg(stock_codes: list, today_map: dict,
 # ── Turnover history ──────────────────────────────────────────────────────────
 RANK_HISTORY_FILE = "rank_history.json"
 
-def save_daily_turnover(date: datetime, df: pd.DataFrame):
-    """No-op — turnover data is written by build_turnover.py, not main.py."""
-    pass
-
 def save_rank_history(date: datetime, results: list):
     store = load_store(RANK_HISTORY_FILE)
     store[date.strftime("%Y%m%d")] = {r["code"]: r["rank"] for r in results}
@@ -349,10 +347,6 @@ def get_prev_ranks(exclude_date: datetime = None) -> dict:
     today_key = exclude_date.strftime("%Y%m%d") if exclude_date else datetime.now().strftime("%Y%m%d")
     keys = sorted(k for k in store.keys() if k != today_key)
     return store[keys[-1]] if keys else {}
-
-def _turnover_avg(code: str, before: str, n: int) -> float:
-    vals = get_tv_history(code, n, before)
-    return sum(vals) / len(vals) if vals else 0.0
 
 # ── Stock classification ──────────────────────────────────────────────────────
 def classify_stock(code: str, name: str) -> str:
@@ -473,6 +467,7 @@ def run_analysis():
     today_ds = trading_day.strftime("%Y-%m-%d")
 
     _seed_name_map_from_ref()
+    _universe_names = get_universe()  # {code5: {"zh": ..., "en": ...}} — HKEX authoritative names
 
     # ── 1. Daily quotation — read from turnover library (build_turnover.py owns writes) ──
     _nm      = load_store(NAME_MAP_FILE)
@@ -729,24 +724,28 @@ def run_analysis():
     prev_ranks = get_prev_ranks(exclude_date=trading_day)
 
     # ── 9. Name lookup ────────────────────────────────────────────────────────
-    _nm = load_store(NAME_MAP_FILE)
     # Pre-build short name lookup to avoid O(N) DataFrame scan per stock
     _short_name_map = {} if df_short.empty else dict(
         zip(df_short["stock_code"], df_short["name"])
     )
 
     def _get_names(code: str) -> tuple[str, str]:
-        """Return (name_eng, name_chi) from best available source."""
-        # Priority: stock_ref > quotation > short sell > CCASS > name_map > code
-        ref_zh   = get_zh_name(code)
+        """Return (name_eng, name_chi) from best available source.
+
+        Priority (chi): stock_ref (verified) > ccass_universe (HKEX SDW) >
+                        quotation > short sell > CCASS live > name_map > code
+        Priority (eng): quotation > ccass_universe > name_map > stock_ref > code
+        """
+        ref_zh   = get_zh_name(code)                  # ~130 curated stocks
+        uni      = _universe_names.get(code, {})       # HKEX SDW — full universe
         q        = quote_map.get(code, {})
         sh_name  = _short_name_map.get(code, "")
         cc_name  = ccass_name_map.get(code, "")
         nm_entry = _nm.get(code, {})
 
-        name_chi = (ref_zh or q.get("name_chi") or sh_name or cc_name
-                    or nm_entry.get("zh") or nm_entry.get("en") or code)
-        name_eng = (q.get("name") or nm_entry.get("en") or ref_zh or code)
+        name_chi = (ref_zh or uni.get("zh") or q.get("name_chi")
+                    or sh_name or cc_name or nm_entry.get("zh") or code)
+        name_eng = (q.get("name") or uni.get("en") or nm_entry.get("en") or ref_zh or code)
         return name_eng, name_chi
 
     # ── Pre-load all library data into memory for fast per-stock lookups ──────
@@ -760,14 +759,10 @@ def run_analysis():
             out.update(load_fn(y).get("by_date", {}))
         return out
 
-    from turnover_library import load_year as _tv_load_year
-    from short_library    import load_year as _sh_load_year_inner
-    from ccass_library    import load_year as _cc_load_year
-
     _years = list(range(2024, trading_day.year + 1))  # last 2 years sufficient for 24-day history
-    _tv_all   = _flat_by_date(_tv_load_year,          _years)
-    _sh_all   = _flat_by_date(_sh_load_year_inner,    _years)
-    _cc_all   = _flat_by_date(_cc_load_year,          _years)
+    _tv_all   = _flat_by_date(tv_load_year,     _years)
+    _sh_all   = _flat_by_date(sl_load_year,     _years)
+    _cc_all   = _flat_by_date(_cc_load_year,    _years)
     log.info("Pre-loaded: %d tv days | %d short days | %d ccass days",
              len(_tv_all), len(_sh_all), len(_cc_all))
 
@@ -854,7 +849,7 @@ def run_analysis():
             # Try latest available SDW date if today not yet fetched
             _holders = sdw_get_holders(code, (trading_day - timedelta(days=8)).strftime('%Y-%m-%d')) \
                        if _SDW_AVAILABLE else []
-        _total_sh_conc = _sdw_total_sh_map.get(normalize_code(code), 0)
+        _total_sh_conc = _sdw_total_sh_map.get(code5, 0)
         if _holders and _total_sh_conc > 0:
             top5_sh = sum(h.get('sh', 0) for h in _holders[:5])
             concentration = round(top5_sh / _total_sh_conc * 100, 2)
@@ -883,6 +878,27 @@ def run_analysis():
 
         stock_type = classify_stock(code, name_eng)
         _, ind_zh  = get_industry(code)
+
+        # ── 挾倉風險評分 (squeeze score 0–12) ────────────────────────────────
+        # Mirrors squeezeScoreBreakdown() in index.html — must stay in sync.
+        # Components:
+        #   concS  0–4  持倉集中度 (concentration %)
+        #   srS    0–3  沽空比率 vs type thresholds
+        #   srB    0–1  沽空比率 above short_avg (momentum)
+        #   dtcS   0–3  回補天數 (days to cover)
+        #   dtcB   0–1  dtc above 10-day average (momentum)
+        _sq_lo, _sq_hi, _sq_spike = THRESHOLDS.get(stock_type, THRESHOLDS["general"])[:3]
+        _sh10 = _sh_hist(code5, 10, today_ds)
+        dtc_avg_10d = round(
+            sum(h["sv"] / avg_vol24 for h in _sh10 if avg_vol24 > 0) / len(_sh10), 2
+        ) if _sh10 and avg_vol24 > 0 else 0.0
+
+        conc_s = 4 if concentration >= 30 else 3 if concentration >= 20 else 2 if concentration >= 10 else 1 if concentration >= 5 else 0
+        sr_s   = 3 if short_ratio > _sq_hi + _sq_spike else 2 if short_ratio > _sq_hi else 1 if short_ratio > _sq_lo else 0
+        sr_b   = 1 if short_avg > 0 and short_ratio > short_avg else 0
+        dtc_s  = 3 if days_to_cover > 10 else 2 if days_to_cover >= 6 else 1 if days_to_cover >= 3 else 0
+        dtc_b  = 1 if dtc_avg_10d > 0 and days_to_cover > dtc_avg_10d else 0
+        squeeze_score = conc_s + sr_s + sr_b + dtc_s + dtc_b
 
         sb          = sb_map.get(code, {})
         # Signals need price history — suppress for stocks with no turnover history
@@ -948,6 +964,8 @@ def run_analysis():
             "pct_listed": round(pct_listed, 4),
             "pct_delta":  round(pct_delta,  4),
             "insight": insight,
+            "squeeze_score": squeeze_score,   # 0–12 挾倉風險評分
+            "dtc_avg_10d":   dtc_avg_10d,     # 10-day average days-to-cover
         })
 
     # ── 11. Persist ───────────────────────────────────────────────────────────

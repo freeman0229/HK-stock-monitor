@@ -621,7 +621,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="tick-item"><span class="tn">恒生指數</span><span class="tv" id="ti-HSI-2">--</span><span class="tv" id="ti-HSI-chg-2" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">國企指數</span><span class="tv" id="ti-HSCE-2">--</span><span class="tv" id="ti-HSCE-chg-2" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">恒生科技</span><span class="tv" id="ti-HSTECH-2">--</span><span class="tv" id="ti-HSTECH-chg-2" style="font-size:11px;margin-left:3px"></span></div>
-    <div class="tick-item"><span class="tn">上證綜指</span><span class="tv" id="ti-SSE-2">--</span><span class="tv" id="ti-SSE-chg" style="font-size:11px;margin-left:3px"></span></div>
+    <div class="tick-item"><span class="tn">上證綜指</span><span class="tv" id="ti-SSE-2">--</span><span class="tv" id="ti-SSE-chg-2" style="font-size:11px;margin-left:3px"></span></div>
     <div class="tick-item"><span class="tn">深證成指</span><span class="tv" id="ti-SZSE-2">--</span><span class="tv" id="ti-SZSE-chg-2" style="font-size:11px;margin-left:3px"></span></div>
   </div>
 </div>
@@ -1227,6 +1227,8 @@ function generateMockData() {
       sb_consec: Math.floor(Math.random()*6),
       sb_net_prev: Math.round(sbn * (0.5 + Math.random())),
       insight: insightPool[Math.floor(Math.random()*insightPool.length)],
+      squeeze_score: Math.floor(Math.random() * 13),
+      dtc_avg_10d:   parseFloat((Math.random() * 8).toFixed(2)),
     };
   });
 }
@@ -2528,8 +2530,8 @@ function renderShort() {
 // Tier 1 active  : short_ratio > shortHi + DTC >= 3 + vol_ratio >= 1.8 + turnover > 0
 // Tier 2 buildup : short_ratio > shortHi + DTC >= 3 + turnover > 0, vol_ratio < 1.8
 // ── 挾倉風險評分 (0–12) ─────────────────────────────────────────────────────
-// Mirrors squeeze_score() in main.py — reads pre-computed s.squeeze_score from
-// data.json but also exposed here for tooltip display of component breakdown.
+// squeeze_score is computed in main.py and written to data.json.
+// squeezeScoreBreakdown() here mirrors that logic for tooltip display only.
 const SQUEEZE_THRESHOLDS = {
   etf:      [40.0, 70.0, 15.0],
   stable:   [ 5.0, 10.0, 15.0],
@@ -2541,7 +2543,7 @@ function squeezeScoreBreakdown(s) {
   const sr   = s.short_ratio   || 0;
   const sa   = s.short_avg     || 0;
   const dtc  = s.days_to_cover || 0;
-  const da   = s.dtc_avg_10d   || 0;
+  const da   = s.dtc_avg_10d   || 0;  // pre-computed 10d DTC avg from main.py
   const [lo, hi, spike] = SQUEEZE_THRESHOLDS[s.stock_type] || SQUEEZE_THRESHOLDS.general;
 
   const concS  = conc>=30?4:conc>=20?3:conc>=10?2:conc>=5?1:0;
@@ -2561,7 +2563,7 @@ function squeezeRisk(score) {
 function renderSqueezeTop10(stocks) {
   const tbody = document.getElementById('squeeze-top10-body');
   if (!tbody) return;
-  // Use pre-computed squeeze_score from data.json; fallback to 0
+  // squeeze_score is pre-computed in main.py and written to data.json
   const eligible = stocks.filter(s =>
     s.turnover > 0 && (s.short_ratio||0) > 0 && (s.days_to_cover||0) > 0
   );
