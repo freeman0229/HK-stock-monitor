@@ -426,11 +426,12 @@ def classify_insight(stock_type, short_ratio, short_avg,
             and pct_dev  >= 0.5):                                 return "🐉 異常亢奮"
     if (1.8 <= vol_ratio  <= 2.5
             and 1.5 <= tv_ratio <= 2.0
-            and 0.2 <= pct_dev  <= 0.5):                          return "🏦 北水增持"
+            and 0.2 <= pct_dev  <= 0.5):                          return "🏦 大戶增持"
+    if sb_net > 0 and pct_delta > 0:                             return "🏦 北水增持"
 
     # SFC structural signals: week-on-week jump vs threshold
-    if sfc_week_delta >= sfc_up:                                  return "⚠️ 沽空倉位急增"
-    if sfc_week_delta <= sfc_dn:                                  return "📊 沽空倉位大減"
+    if sfc_week_delta >= sfc_up:                                  return f"⚠️ 沽空倉位急增 +{sfc_week_delta:.1f}pp"
+    if sfc_week_delta <= sfc_dn:                                  return f"📊 沽空倉位大減 {sfc_week_delta:.1f}pp"
 
     # 換手率 delta signals: current 24d vs prev 24d rolling window
     if delta_turnover_24d >= _TURNOVER_DELTA_HIGH:                return "📈 換手急升"
@@ -439,7 +440,7 @@ def classify_insight(stock_type, short_ratio, short_avg,
     flow_out   = sb_net < 0 and pct_delta < 0
     high_short = short_ratio > hi + spike_warn and vol_ratio > 2
     if flow_out:                  return "🚨 北水流出"
-    if high_short:                return "🚨 異常高沽空"
+    if high_short:                return "🚨 不尋常沽空"
 
     if (short_avg > lo and short_ratio < short_avg * cover_drop
             and r_today > 1.30):                                  return "📉 空頭平倉"
@@ -879,7 +880,7 @@ def run_analysis():
         stock_type = classify_stock(code, name_eng)
         _, ind_zh  = get_industry(code)
 
-        # ── 挾倉風險評分 (squeeze score 0–12) ────────────────────────────────
+        # ── 挾倉風險評分 (squeeze score 0–14) ────────────────────────────────
         # Mirrors squeezeScoreBreakdown() in index.html — must stay in sync.
         # Components:
         #   concS  0–4  持倉集中度 (concentration %)
@@ -887,6 +888,7 @@ def run_analysis():
         #   srB    0–1  沽空比率 above short_avg (momentum)
         #   dtcS   0–3  回補天數 (days to cover)
         #   dtcB   0–1  dtc above 10-day average (momentum)
+        #   volS   0–2  成交量倍數 ≥2.5→2, ≥2.0→1 (mirrors 異常亢奮/挾倉風險 thresholds)
         _sq_lo, _sq_hi, _sq_spike = THRESHOLDS.get(stock_type, THRESHOLDS["general"])[:3]
         _sh10 = _sh_hist(code5, 10, today_ds)
         dtc_avg_10d = round(
@@ -898,7 +900,8 @@ def run_analysis():
         sr_b   = 1 if short_avg > 0 and short_ratio > short_avg else 0
         dtc_s  = 3 if days_to_cover > 10 else 2 if days_to_cover >= 6 else 1 if days_to_cover >= 3 else 0
         dtc_b  = 1 if dtc_avg_10d > 0 and days_to_cover > dtc_avg_10d else 0
-        squeeze_score = conc_s + sr_s + sr_b + dtc_s + dtc_b
+        vol_s  = 2 if vol_ratio >= 2.5 else 1 if vol_ratio >= 2.0 else 0   # mirrors 異常亢奮/挾倉風險 thresholds
+        squeeze_score = conc_s + sr_s + sr_b + dtc_s + dtc_b + vol_s
 
         sb          = sb_map.get(code, {})
         # Signals need price history — suppress for stocks with no turnover history
@@ -964,7 +967,7 @@ def run_analysis():
             "pct_listed": round(pct_listed, 4),
             "pct_delta":  round(pct_delta,  4),
             "insight": insight,
-            "squeeze_score": squeeze_score,   # 0–12 挾倉風險評分
+            "squeeze_score": squeeze_score,   # 0–14 挾倉風險評分
             "dtc_avg_10d":   dtc_avg_10d,     # 10-day average days-to-cover
         })
 

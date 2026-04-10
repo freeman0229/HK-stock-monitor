@@ -1055,7 +1055,7 @@ const sign = n => n > 0 ? '+' : '';
 
 function insightBadge(s) {
   if (!s) return '<span class="na-txt">—</span>';
-  const up = ['🔥','🐉','⭐','🎯','📊'].some(e => s.startsWith(e));
+  const up = ['🔥','🐉','⭐','🎯','📊','🏦'].some(e => s.startsWith(e));
   const dn = ['⚠️','⚠','🚨','📉','❄'].some(e => s.startsWith(e));
   const cls = up ? 'ins-buy' : (dn ? 'ins-sell' : 'ins-warn');
   return `<span class="insight ${cls}">${s}</span>`;
@@ -1200,7 +1200,7 @@ function generateMockData() {
     const sbn = i < SB_TOP ? (i % 3 === 2 ? -flowMag : flowMag) : 0;
     const cd  = Math.round((Math.random()-0.4)*5e6);
     const cc  = Math.round(Math.random()*8)-2;
-    const insightPool = ['🔥 挾倉風險', '🐉 異常亢奮', '🏦 北水增持', '🚨 北水流出', '🚨 異常高沽空', '📉 空頭平倉', '⚠️ 沽空倉位急增', '📊 沽空倉位大減', '', '', ''];
+    const insightPool = ['🔥 挾倉風險', '🐉 異常亢奮', '🏦 大戶增持', '🏦 北水增持', '🚨 北水流出', '🚨 不尋常沽空', '📉 空頭平倉', '⚠️ 沽空倉位急增 +1.8pp', '📊 沽空倉位大減 -2.1pp', '', '', ''];
     // Mock exchange ranks: dual-listed stocks (i < 8) appear on both; last 2 are single-exchange
     // Realistic mock: net buy → buy > sell; net sell → sell > buy
     const absMag = Math.abs(sbn);
@@ -1227,7 +1227,7 @@ function generateMockData() {
       sb_consec: Math.floor(Math.random()*6),
       sb_net_prev: Math.round(sbn * (0.5 + Math.random())),
       insight: insightPool[Math.floor(Math.random()*insightPool.length)],
-      squeeze_score: Math.floor(Math.random() * 13),
+      squeeze_score: Math.floor(Math.random() * 15),
       dtc_avg_10d:   parseFloat((Math.random() * 8).toFixed(2)),
     };
   });
@@ -2544,6 +2544,7 @@ function squeezeScoreBreakdown(s) {
   const sa   = s.short_avg     || 0;
   const dtc  = s.days_to_cover || 0;
   const da   = s.dtc_avg_10d   || 0;  // pre-computed 10d DTC avg from main.py
+  const vr   = s.vol_ratio     || 0;
   const [lo, hi, spike] = SQUEEZE_THRESHOLDS[s.stock_type] || SQUEEZE_THRESHOLDS.general;
 
   const concS  = conc>=30?4:conc>=20?3:conc>=10?2:conc>=5?1:0;
@@ -2551,12 +2552,13 @@ function squeezeScoreBreakdown(s) {
   const srB    = (sa>0 && sr>sa) ? 1 : 0;
   const dtcS   = dtc>10?3:dtc>=6?2:dtc>=3?1:0;
   const dtcB   = (da>0 && dtc>da) ? 1 : 0;
-  const total  = concS + srS + srB + dtcS + dtcB;
-  return { concS, srS, srB, dtcS, dtcB, total };
+  const volS   = vr>=2.5?2:vr>=2.0?1:0;
+  const total  = concS + srS + srB + dtcS + dtcB + volS;
+  return { concS, srS, srB, dtcS, dtcB, volS, total };
 }
 function squeezeRisk(score) {
-  if (score >= 9) return { label:'高風險', color:'#c0252d' };
-  if (score >= 5) return { label:'中風險', color:'#ba7517' };
+  if (score >= 10) return { label:'高風險', color:'#c0252d' };
+  if (score >= 6)  return { label:'中風險', color:'#ba7517' };
   return              { label:'低風險', color:'#1a7a3c' };
 }
 
@@ -2577,7 +2579,7 @@ function renderSqueezeTop10(stocks) {
   tbody.innerHTML = top10.map((s, i) => {
     const score = s.squeeze_score || 0;
     const risk  = squeezeRisk(score);
-    const scoreBar = '█'.repeat(Math.round(score/12*8));
+    const scoreBar = '█'.repeat(Math.round(score/14*8));
     return `<tr style="border-bottom:0.5px solid var(--border)">
       <td style="padding:4px 4px;color:var(--muted)">${i+1}</td>
       <td style="padding:4px 4px">
