@@ -27,6 +27,7 @@ on:
           - turnover-build   # rebuild turnover library from scratch
           - short-build      # rebuild short selling library from scratch
           - ccass-universe   # rebuild CCASS universe
+          - sdw-migrate      # one-time: migrate old 7-range SDW files to new 4-range format
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -496,3 +497,34 @@ jobs:
           [ -f "ccass_universe.json" ] && git add "ccass_universe.json"
           git diff --staged --quiet || \
             (git commit -m "CCASS universe build: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── SDW migrate old ranges (one-time) ────────────────────────────────────────
+  # Merges old 7-range files (0001_1000, 1001_2000, 2001_3000, 3001_4000,
+  # 4001_7000, 7001_9999, 10000plus) into new 4-range format (0001_3999,
+  # 6000_6999, 9600_9999, 7489_7618). Never overwrites existing data.
+  # After confirming migration, manually delete old range files from repo.
+  sdw-migrate:
+    name: SDW migrate old 7-range → new 4-range format
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-migrate'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Migrate old SDW range files to new 4-range format
+        run: python ccass_sdw_library.py --migrate-old
+      - name: Commit migrated files
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in ccass_sdw_0001_3999_*.json ccass_sdw_6000_6999_*.json ccass_sdw_9600_9999_*.json ccass_sdw_7489_7618_*.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          git diff --staged --quiet || \
+            (git commit -m "SDW migrate: old 7-range → new 4-range: $(date +'%Y-%m-%d %H:%M')" && git push)
