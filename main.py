@@ -336,7 +336,22 @@ RANK_HISTORY_FILE = "rank_history.json"
 
 def save_rank_history(date: datetime, results: list):
     store = load_store(RANK_HISTORY_FILE)
-    store[date.strftime("%Y%m%d")] = {r["code"]: r["rank"] for r in results}
+    store[date.strftime("%Y%m%d")] = {
+        r["code"]: {
+            "rank":             r["rank"],
+            "close":            r.get("close", 0.0),
+            "vol":              r.get("vol", 0),
+            "tv":               r.get("turnover", 0),
+            "vwap":             r.get("vwap", 0.0),
+            "short_ratio":      r.get("short_ratio", 0.0),
+            "sfc_pct":          r.get("sfc_pct", 0.0),
+            "concentration":    r.get("concentration", 0.0),
+            "lockup_threshold": r.get("lockup_threshold", 60.0),
+            "turnover_24d":     r.get("turnover_24d", 0.0),
+            "pct_listed":       r.get("pct_listed", 0.0),
+        }
+        for r in results
+    }
     save_store(RANK_HISTORY_FILE, store)
 
 def get_prev_ranks(exclude_date: datetime = None) -> dict:
@@ -346,7 +361,14 @@ def get_prev_ranks(exclude_date: datetime = None) -> dict:
         return {}
     today_key = exclude_date.strftime("%Y%m%d") if exclude_date else datetime.now().strftime("%Y%m%d")
     keys = sorted(k for k in store.keys() if k != today_key)
-    return store[keys[-1]] if keys else {}
+    if not keys:
+        return {}
+    day = store[keys[-1]]
+    # Handle both old format {code: rank} and new format {code: {rank, ...}}
+    return {
+        code: (v["rank"] if isinstance(v, dict) else v)
+        for code, v in day.items()
+    }
 
 # ── Stock classification ──────────────────────────────────────────────────────
 def classify_stock(code: str, name: str) -> str:
@@ -957,6 +979,8 @@ def run_analysis():
             "top10_pct":        top10_pct,         # top10_sh / 總數 × 100
             "top10_pct_delta":  top10_pct_delta,   # top10_pct WoW change [pp]
             "vwap":             vwap,               # 成交均價 = 成交金額 / 成交股數
+            "vol":              today_vol,           # 成交股數 (shares)
+            "close":            q.get("close", 0.0), # 收市價
             "turnover_24d":       turnover_24d,        # 換手率 = (today + prior 23d 成交股數) / 總數 × 100
             "delta_turnover_24d": delta_turnover_24d,  # current − prev 24d window [pp]
             "lockup_threshold": lockup_threshold(tv_avg24),
