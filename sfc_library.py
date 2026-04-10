@@ -45,11 +45,20 @@ API:
   from sfc_library import get_short_position, get_position_history, get_total_history
 """
 
-import os, json, re, time, logging, argparse, io
+import argparse
+import csv as _csv
+import io
+import json
+import logging
+import os
+import re
+import time
 from datetime import date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
+
+from ccass_universe import normalize_code
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -95,6 +104,17 @@ HEADERS = {
 }
 
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+
+def _to_num(v) -> float:
+    """Convert a cell value to float, stripping commas and spaces. Returns 0.0 on failure."""
+    if v is None:
+        return 0.0
+    try:
+        return float(str(v).replace(",", "").replace(" ", "").strip())
+    except Exception:
+        return 0.0
+
 
 # ── Schema helpers ────────────────────────────────────────────────────────────
 
@@ -308,8 +328,6 @@ def _parse_csv(data: bytes, report_date: date) -> dict | None:
     Returns {code5: {sh, hkd, name}, "__total__": {sh, hkd}} or None.
     pct is NOT stored — SFC files never included it; computed at runtime via SDW.
     """
-    import csv as _csv
-
     try:
         text = data.decode("utf-8-sig", errors="replace")  # strip BOM if present
     except Exception as e:
@@ -353,12 +371,6 @@ def _parse_csv(data: bytes, report_date: date) -> dict | None:
     log.info("CSV header at row %d: code=%s name=%s sh=%s hkd=%s",
              header_idx, col_code, col_name, col_sh, col_hkd)
 
-    def _n(v) -> float:
-        try:
-            return float(str(v).replace(",", "").replace(" ", "").strip())
-        except Exception:
-            return 0.0
-
     result    = {}
     total_sh  = 0.0
     total_hkd = 0.0
@@ -372,10 +384,10 @@ def _parse_csv(data: bytes, report_date: date) -> dict | None:
         code_int = int(raw_code)
         if code_int < 1 or code_int > 9999:
             continue
-        code5 = str(code_int).zfill(5)
+        code5 = normalize_code(code_int)
 
-        sh   = _n(row[col_sh])  if col_sh  is not None and len(row) > col_sh  else 0.0
-        hkd  = _n(row[col_hkd]) if col_hkd is not None and len(row) > col_hkd else 0.0
+        sh   = _to_num(row[col_sh])  if col_sh  is not None and len(row) > col_sh  else 0.0
+        hkd  = _to_num(row[col_hkd]) if col_hkd is not None and len(row) > col_hkd else 0.0
         name = str(row[col_name]).strip() if col_name is not None and len(row) > col_name else ""
 
         if sh <= 0 and hkd <= 0:
@@ -498,14 +510,6 @@ def _parse_excel(data: bytes, report_date: date) -> dict | None:
              header_idx, col_code, col_name, col_sh, col_hkd, col_pct)
 
     # ── Parse data rows ───────────────────────────────────────────────────────
-    def to_num(v) -> float:
-        if v is None:
-            return 0.0
-        try:
-            return float(str(v).replace(",", "").replace(" ", ""))
-        except Exception:
-            return 0.0
-
     result    = {}
     total_sh  = 0.0
     total_hkd = 0.0
@@ -519,10 +523,10 @@ def _parse_excel(data: bytes, report_date: date) -> dict | None:
         code_int = int(raw_code)
         if code_int < 1 or code_int > 9999:
             continue
-        code5 = str(code_int).zfill(5)
+        code5 = normalize_code(code_int)
 
-        sh   = to_num(row[col_sh])  if col_sh  is not None else 0.0
-        hkd  = to_num(row[col_hkd]) if col_hkd is not None else 0.0
+        sh   = _to_num(row[col_sh])  if col_sh  is not None else 0.0
+        hkd  = _to_num(row[col_hkd]) if col_hkd is not None else 0.0
         name = str(row[col_name]).strip() if col_name is not None and row[col_name] else ""
 
         if sh <= 0 and hkd <= 0:
@@ -742,7 +746,7 @@ def get_short_position(code: str, ds: str) -> dict:
     if not os.path.exists(p):
         return {}
     with open(p, encoding="utf-8") as f:
-        raw = json.load(f).get("by_date", {}).get(ds, {}).get(code.zfill(5), {})
+        raw = json.load(f).get("by_date", {}).get(ds, {}).get(normalize_code(code), {})
     return _normalise_record(raw)
 
 def get_position_history(code: str, n: int, before: str) -> list:
@@ -751,7 +755,7 @@ def get_position_history(code: str, n: int, before: str) -> list:
     Returns [{date, sh, hkd, name}, ...].
     Transparently handles old compact schema.
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     for year in sorted(range(START_DATE.year, date.today().year + 1), reverse=True):
         p = lib_path(year)
@@ -795,9 +799,9 @@ def get_total_history(n: int, before: str) -> list:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _query(code: str, top: int):
-    code5 = code.zfill(5)
+    code5 = normalize_code(code)
     hist  = get_position_history(code5, top,
-                                  (date.today() + timedelta(1)).isoformat())
+                                  (date.today() + timedelta(days=1)).isoformat())
     if not hist:
         print(f"No data for {code5}"); return
     print(f"\n{code5}  ({len(hist)} weeks)")
