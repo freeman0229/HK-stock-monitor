@@ -1,7 +1,10 @@
 """
 stock_ref.py — HK Stock Reference Database
 ============================================
-Single source of truth for stock codes, names and industry groupings.
+Curated reference for ~130 key stocks: names, industry groupings and signal
+type buckets. This is NOT the full trading universe — for the complete stock
+universe use ccass_universe.get_universe_codes().
+
 Codes are official HKEX 5-digit codes (identical across HKEX, etnet, CCASS).
 
 Structure:
@@ -30,6 +33,8 @@ Type buckets (for signal thresholds):
   bluechip — normal short 10–20%  (large-cap tech, insurance, transport)
   general  — normal short 10–25%  (everything else)
 """
+
+from ccass_universe import normalize_code
 
 STOCKS: dict[str, dict] = {
 
@@ -175,25 +180,26 @@ STOCKS: dict[str, dict] = {
 # ── Lookup helpers ────────────────────────────────────────────────────────────
 
 def get_zh_name(code: str) -> str | None:
-    entry = STOCKS.get(code.zfill(5))
+    entry = STOCKS.get(normalize_code(code))
     return entry["zh"] if entry else None
 
 def get_en_name(code: str) -> str | None:
-    entry = STOCKS.get(code.zfill(5))
+    entry = STOCKS.get(normalize_code(code))
     return entry["en"] if entry else None
 
 def get_industry(code: str) -> tuple[str, str]:
-    entry = STOCKS.get(code.zfill(5))
+    entry = STOCKS.get(normalize_code(code))
     return (entry["industry"], entry["ind_zh"]) if entry else ("GEN", "其他")
 
 def get_type(code: str) -> str | None:
-    entry = STOCKS.get(code.zfill(5))
+    entry = STOCKS.get(normalize_code(code))
     return entry["type"] if entry else None
 
 def get_stock_info(code: str) -> dict:
-    entry = STOCKS.get(code.zfill(5), {})
+    code5 = normalize_code(code)
+    entry = STOCKS.get(code5, {})
     return {
-        "code":        code.zfill(5),
+        "code":        code5,
         "en":          entry.get("en", ""),
         "zh":          entry.get("zh", ""),
         "industry":    entry.get("industry", "GEN"),
