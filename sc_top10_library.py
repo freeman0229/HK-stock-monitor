@@ -39,9 +39,17 @@ Usage:
   python sc_top10_library.py --export     # export all to CSV
 """
 
-import os, sys, json, time, re, logging, argparse
+import argparse
+import json
+import logging
+import os
+import re
+import time
+
 import requests
 from datetime import date, timedelta
+
+from ccass_universe import normalize_code
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -61,9 +69,11 @@ HEADERS = {
 
 try:
     import holidays as _hol
-    _HK = _hol.HongKong()
+    _HK     = _hol.HongKong()
+    _CN_LIB = _hol.China()
 except Exception:
-    _HK = set()
+    _HK     = set()
+    _CN_LIB = set()
 
 # Mainland China public holidays — Stock Connect is closed when EITHER
 # exchange is on holiday.
@@ -87,6 +97,7 @@ try:
 except Exception:
     _CN_LIB = set()
 
+
 def _is_cn_holiday(d: date) -> bool:
     return d.isoformat() in _CN_HOLIDAY_DATES or d in _CN_LIB
 
@@ -100,9 +111,12 @@ def is_trading_day(d: date) -> bool:
     return True
 
 def last_trading_day(d: date) -> date:
-    while not is_trading_day(d):
+    """Return the most recent trading day on or before d."""
+    for _ in range(14):   # safety limit — no holiday run longer than 2 weeks
+        if is_trading_day(d):
+            return d
         d -= timedelta(days=1)
-    return d
+    raise ValueError(f"last_trading_day: no trading day found within 14 days of {d}")
 
 def all_trading_days(start: date, end: date) -> list:
     days, d = [], start
@@ -176,9 +190,9 @@ def _parse_summary(table: dict) -> dict:
         "etf":    result.get("etf_turnover",     0.0),
     }
 
-def _parse_top10(table: dict, is_southbound: bool) -> list:
+def _parse_top10(table: dict) -> list:
     """
-    Parse style:2 top10Table — per-stock rows.
+    Parse style:2 top10Table — southbound per-stock rows.
     Defensive against HKEX returning row values as ints/floats instead of strings.
     """
     stocks  = []
@@ -189,48 +203,27 @@ def _parse_top10(table: dict, is_southbound: bool) -> list:
             continue
         row = tds[0]
         try:
-            if not is_southbound:
-                if len(row) < 4:
-                    continue
-                rank = _to_i(row[0])
-                if rank <= 0:
-                    continue
-                try:
-                    code_int = int(float(str(row[1]).strip()))
-                except (ValueError, TypeError):
-                    skipped += 1
-                    continue
-                if code_int <= 0:
-                    skipped += 1
-                    continue
-                stocks.append({
-                    "rank":  rank,
-                    "code":  str(code_int).zfill(6),
-                    "name":  _clean_name(str(row[2])),
-                    "total": _to_i(row[3]),
-                })
-            else:
-                if len(row) < 6:
-                    continue
-                rank = _to_i(row[0])
-                if rank <= 0:
-                    continue
-                try:
-                    code_int = int(float(str(row[1]).strip()))
-                except (ValueError, TypeError):
-                    skipped += 1
-                    continue
-                if code_int <= 0:
-                    skipped += 1
-                    continue
-                stocks.append({
-                    "rank":  rank,
-                    "code":  str(code_int).zfill(5),
-                    "name":  _clean_name(str(row[2])),
-                    "buy":   _to_i(row[3]),
-                    "sell":  _to_i(row[4]),
-                    "total": _to_i(row[5]),
-                })
+            if len(row) < 6:
+                continue
+            rank = _to_i(row[0])
+            if rank <= 0:
+                continue
+            try:
+                code_int = int(float(str(row[1]).strip()))
+            except (ValueError, TypeError):
+                skipped += 1
+                continue
+            if code_int <= 0:
+                skipped += 1
+                continue
+            stocks.append({
+                "rank":  rank,
+                "code":  normalize_code(code_int),
+                "name":  _clean_name(str(row[2])),
+                "buy":   _to_i(row[3]),
+                "sell":  _to_i(row[4]),
+                "total": _to_i(row[5]),
+            })
         except Exception as e:
             skipped += 1
             log.debug("_parse_top10: skipped row: %s", e)
@@ -260,7 +253,7 @@ def parse_js(text: str) -> dict | None:
             if content["style"] == 1:
                 result["sse_summary"] = _parse_summary(tbl)
             elif content["style"] == 2:
-                for s in _parse_top10(tbl, is_southbound=True):
+                for s in _parse_top10(tbl):
                     sse_stocks[s["code"]] = s
 
     szse_sb     = markets.get("SZSE Southbound")
@@ -271,7 +264,7 @@ def parse_js(text: str) -> dict | None:
             if content["style"] == 1:
                 result["szse_summary"] = _parse_summary(tbl)
             elif content["style"] == 2:
-                for s in _parse_top10(tbl, is_southbound=True):
+                for s in _parse_top10(tbl):
                     szse_stocks[s["code"]] = s
 
     # Merge SSE + SZSE keeping per-exchange breakdown
@@ -372,7 +365,7 @@ def _is_valid_top10(rec: dict) -> bool:
     top10 = rec.get("top10", [])
     if len(top10) < 10:
         return False
-    valid_codes = [s for s in top10 if s.get("code", "").isdigit()]
+    valid_codes = [s for s in top10 if len(s.get("code", "")) == 5]
     return len(valid_codes) >= 10
 
 def _incomplete_dates() -> set:
@@ -541,7 +534,7 @@ def get_top10_history(code: str, n: int, before: str) -> list:
     Return last n days where code appeared in top10, before date `before`.
     Each entry: {"date": "YYYY-MM-DD", "buy": int, "sell": int, "total": int}
     """
-    code5  = code.zfill(5)
+    code5  = normalize_code(code)
     result = []
     for year in sorted(all_years(), reverse=True):
         p = lib_path(year)
