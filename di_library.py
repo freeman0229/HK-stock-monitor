@@ -2,7 +2,7 @@
 di_library.py — HKEx Disclosure of Interests (DI) Library Builder
 ===================================================================
 Scrapes substantial shareholder (≥5%) filing notices from the HKEx DI system
-for stocks in stock_ref.py, from 2018-03-01 to today.
+for stocks in ccass_universe, from 2018-03-01 to today.
 
 Source: https://di.hkex.com.hk/filing/di/NSAllFormList.aspx
 Forms:  Form 1 (individual SS), Form 2 (corporate SS), Form 3A (director)
@@ -31,36 +31,39 @@ Structure:
 }
 
 Usage:
-  python di_library.py                  # full build for all stocks in stock_ref
+  python di_library.py                  # full build for all stocks in ccass_universe
   python di_library.py --update         # current year only (for daily-sync cron)
   python di_library.py --stock 00700    # single stock
   python di_library.py --query 00700    # print history
   python di_library.py --query 00700 --weeks 52
 """
 
-import os, sys, json, time, re, logging, argparse
+import argparse
+import json
+import logging
+import os
+import re
+import time
+from datetime import date, datetime, timedelta
+
 import requests
 from bs4 import BeautifulSoup
-from datetime import date, timedelta, datetime
+
+from ccass_universe import get_universe_codes, normalize_code
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from stock_ref import STOCKS
-    STOCK_CODES = list(STOCKS.keys())
-except ImportError:
-    STOCKS = {}
-    STOCK_CODES = [
-        "00700","09988","01810","03690","09618","01299","02318","00005",
-        "00939","01398","03988","02388","00883","00386","00857","00016",
-        "00012","00388","02628","01211","00175","02015","00293","00941",
-        "00066","00002","00003","02800","02828","03033","01088","01177",
-        "01093","02269","02359","06160","09999","09888","09626","00027",
-        "01928","09633","06862","01876","00291","02319","00823","01109",
-        "00960","00762",
-    ]
+def _get_stock_codes() -> list[str]:
+    """Return the stock universe — ccass_universe is the single source of truth."""
+    try:
+        codes = get_universe_codes()
+        if codes:
+            return codes
+    except Exception as e:
+        log.warning("Could not load universe from ccass_universe: %s", e)
+    log.warning("Empty universe — returning empty list")
+    return []
 
 HEADERS    = {"User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
                "Referer":   "https://di.hkex.com.hk/"}
@@ -124,6 +127,13 @@ def _save_cache(code: str, year: int, records: list):
 
 
 # ── Scraping ──────────────────────────────────────────────────────────────────
+
+def _first_num(cell: str):
+    """Extract the first number from a cell string. Returns float or None."""
+    cell = cell.replace(",", "")
+    nums = re.findall(r'[\-\+]?\d+(?:\.\d+)?', cell)
+    return float(nums[0]) if nums else None
+
 
 def _parse_table(soup) -> list[dict]:
     """Parse DI filing table from BeautifulSoup response."""
@@ -195,18 +205,13 @@ def _parse_table(soup) -> list[dict]:
                 break
 
         # Numeric fields — parse all numbers from each cell
-        def first_num(cell):
-            cell = cell.replace(',', '')
-            nums = re.findall(r'[\-\+]?\d+(?:\.\d+)?', cell)
-            return float(nums[0]) if nums else None
-
         shares_delta = None
         avg_price    = None
         shares_held  = None
         pct_held     = None
 
         for cell in cells:
-            val = first_num(cell)
+            val = _first_num(cell)
             if val is None:
                 continue
             if '%' in cell and pct_held is None:
@@ -240,7 +245,8 @@ def _parse_table(soup) -> list[dict]:
 
 def fetch_di_stock_year(code: str, year: int) -> list[dict]:
     """Fetch all DI pages for one stock in one calendar year."""
-    code_4 = str(int(code)).zfill(4)
+    code5  = normalize_code(code)
+    code_4 = str(int(code5)).zfill(4)
     y_start = max(date(year, 1, 1), START_DATE)
     y_end   = min(date(year, 12, 31), date.today())
     if y_start > y_end:
@@ -284,15 +290,17 @@ def fetch_di_stock_year(code: str, year: int) -> list[dict]:
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def build(codes: list = None, update_only: bool = False):
-    codes  = [c.zfill(5) for c in (codes or STOCK_CODES)]
-    years  = all_years()
-    today  = date.today().year
+    codes = [normalize_code(c) for c in (codes or _get_stock_codes())]
+    if not codes:
+        log.error("Empty stock universe — aborting")
+        return
+    years = all_years()
+    today = date.today().year
 
     log.info("DI library: %d stocks, %d years", len(codes), len(years))
 
     for year in years:
-        lib     = load_year(year)
-        changed = False
+        lib = load_year(year)
 
         for i, code in enumerate(codes, 1):
             # Skip completed past years unless missing from lib
@@ -311,7 +319,6 @@ def build(codes: list = None, update_only: bool = False):
 
             lib["by_stock"][code] = records
             if records:
-                changed = True
                 log.info("  %s %d: %d filings", code, year, len(records))
 
         save_year(year, lib)
@@ -334,7 +341,7 @@ def build(codes: list = None, update_only: bool = False):
 # ── Query ─────────────────────────────────────────────────────────────────────
 
 def query_stock(code: str, weeks: int = None):
-    code5 = code.zfill(5)
+    code5 = normalize_code(code)
     all_records = []
     for year in all_years():
         if not os.path.exists(lib_path(year)):
@@ -352,7 +359,7 @@ def query_stock(code: str, weeks: int = None):
         cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
         all_records = [r for r in all_records if r["date"] >= cutoff]
 
-    name = STOCKS.get(code5, {}).get("zh", code5)
+    name = code5
     print(f"\n{code5} — {name}  ({len(all_records)} filings)")
     print(f"{'Date':<12} {'Shareholder':<36} {'原因':<5} {'Δ Shares':>14} {'Held':>14} {'%':>7}")
     print("─" * 94)
