@@ -28,7 +28,6 @@ Rules:
   • Codes 1–99999. * or % prefix before code is stripped.
   • If code appears more than once, keep the higher-sv record.
   • Incremental by default — skips dates already in library.
-  • If code appears more than once, keep the higher-sv record.
 
 Usage:
   python build_short.py               # fetch only missing dates (normal daily use)
@@ -38,7 +37,12 @@ Usage:
   python build_short.py --from 260201 # override start date (YYMMDD)
 """
 
-import os, re, json, time, logging, argparse
+import argparse
+import json
+import logging
+import os
+import re
+import time
 from datetime import date, timedelta
 
 import requests
@@ -102,9 +106,11 @@ def all_trading_days(start: date, end: date) -> list:
 def next_trading_day(d: date) -> date:
     """Return the next trading day after d."""
     d += timedelta(days=1)
-    while not is_trading_day(d):
+    for _ in range(14):   # safety limit — no holiday run longer than 2 weeks
+        if is_trading_day(d):
+            return d
         d += timedelta(days=1)
-    return d
+    raise ValueError(f"next_trading_day: no trading day found within 14 days")
 
 # ── Library I/O ───────────────────────────────────────────────────────────────
 
@@ -200,7 +206,7 @@ def parse(body: str) -> dict:
     Record schema:
         name  (str)   股票名稱
         sv    (int)   股數(SH)  ← short sell shares
-        st    (float) 金額($)   ← short sell HKD amount
+        st    (int)   金額($)   ← short sell HKD amount
     """
     lines    = body.splitlines()
     in_short = False
@@ -230,12 +236,8 @@ def parse(body: str) -> dict:
             continue
 
         name = m.group(2).strip()
-
-        if name in _SKIP_NAMES or not name:
-            continue
-
         sv = int(m.group(3).replace(",", ""))      # 股數(SH)
-        st = float(m.group(4).replace(",", ""))    # 金額($)
+        st = int(m.group(4).replace(",", ""))      # 金額($)
 
         if sv <= 0:
             continue
@@ -245,10 +247,15 @@ def parse(body: str) -> dict:
             out[code] = {"name": name, "sv": sv, "st": st}
 
     if not out:
-        log.warning(
-            "parse: 0 short records — column header '股數...SH' may not have "
-            "matched. Check build_short.log and verify Big5 decoding."
-        )
+        if in_short:
+            # Header was found but no records — valid for some dates
+            log.debug("parse: short section found but 0 records extracted")
+        else:
+            # Header never found — likely a parse/encoding failure
+            log.warning(
+                "parse: short section header '股數...SH' not found — "
+                "check Big5 decoding or file structure"
+            )
     return out
 
 # ── Incremental skip ─────────────────────────────────────────────────────────
@@ -286,6 +293,8 @@ def build(start: date, end: date, dry_run: bool = False, rebuild: bool = False):
     if not rebuild:
         existing = _existing_dates()
         short_dates = [d for d in short_dates if d.isoformat() not in existing]
+        # Today's short data is not published until the next trading day's file
+        short_dates = [d for d in short_dates if d < date.today()]
         log.info("Short build: %d new dates to fetch  (skipping %d already saved)  dry_run=%s",
                  len(short_dates), len(all_trading_days(start, end)) - len(short_dates), dry_run)
     else:
