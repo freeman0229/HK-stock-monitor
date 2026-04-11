@@ -636,7 +636,7 @@ def _parse_response(html: str, code5: str, date_str: str) -> dict:
 
 def build(update_only: bool = False, specific_date: date = None,
           max_minutes: float = 0, range_label: str = None,
-          month: str = None):
+          month: str = None, code_lo: int = None, code_hi: int = None):
     deadline = (time.monotonic() + max_minutes * 60) if max_minutes > 0 else None
 
     if range_label:
@@ -659,6 +659,13 @@ def build(update_only: bool = False, specific_date: date = None,
         owned_lo, owned_hi = owned_ranges[0][1], owned_ranges[0][2]
         universe = [c for c in universe if owned_lo <= int(normalize_code(c)) <= owned_hi]
         log.info("Filtered universe: %d codes in range %s", len(universe), range_label)
+
+    # Optional sub-range filter within a range (for parallel backfill jobs)
+    if code_lo is not None or code_hi is not None:
+        lo = code_lo or 0
+        hi = code_hi or 99999
+        universe = [c for c in universe if lo <= int(normalize_code(c)) <= hi]
+        log.info("Sub-range filter %d–%d: %d codes", lo, hi, len(universe))
     else:
         log.info("Stock universe: %d codes across %d ranges", len(universe), len(RANGES))
 
@@ -1079,6 +1086,10 @@ if __name__ == "__main__":
     ap.add_argument("--range",       metavar="LABEL")
     ap.add_argument("--month",       metavar="YYMM",
                     help="Restrict to a specific month e.g. 2504 = Apr 2025")
+    ap.add_argument("--code-lo",     type=int, metavar="N",
+                    help="Lower bound for stock code sub-range filter (inclusive)")
+    ap.add_argument("--code-hi",     type=int, metavar="N",
+                    help="Upper bound for stock code sub-range filter (inclusive)")
     ap.add_argument("--migrate",     action="store_true",
                     help="Migrate old single-file ccass_sdw_{YYYY}.json to 4-range format")
     ap.add_argument("--migrate-old", action="store_true",
@@ -1096,4 +1107,6 @@ if __name__ == "__main__":
               specific_date=date.fromisoformat(args.date) if args.date else None,
               max_minutes=args.max_minutes,
               range_label=getattr(args, "range", None),
-              month=getattr(args, "month", None))
+              month=getattr(args, "month", None),
+              code_lo=getattr(args, "code_lo", None),
+              code_hi=getattr(args, "code_hi", None))
