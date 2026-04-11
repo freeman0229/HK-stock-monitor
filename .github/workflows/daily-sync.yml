@@ -28,6 +28,8 @@ on:
           - turnover-build   # rebuild turnover library from scratch
           - short-build      # rebuild short selling library from scratch
           - ccass-universe   # rebuild CCASS universe
+          - sdw-backfill     # manual: backfill a specific month, 6 parallel sub-ranges
+          - sdw-migrate      # one-time: migrate old 7-range SDW files to new 4-range format
           - sdw-backfill     # manual: backfill a specific month across 5 parallel sub-ranges
           - sdw-migrate      # one-time: migrate old 7-range SDW files to new 4-range format
       month:
@@ -505,7 +507,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        range: [0001_3999, 6000_6999, 9600_9999, 7489_7618]
+        range: [0001_0999, 1000_1999, 2000_2999, 3000_3999, 6000_9999]
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -525,6 +527,100 @@ jobs:
           git config --global user.email "bot@github.com"
           for f in ccass_sdw_${{ matrix.range }}_20*.json; do [ -f "$f" ] && git add "$f"; done
           git diff --staged --quiet || git commit -m "SDW backfill ${{ inputs.month }} ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && break
+            echo "Push attempt $i failed — retrying in 10s..."
+            sleep 10
+          done
+
+  # ── SDW migrate old ranges (one-time) ────────────────────────────────────────
+  sdw-migrate:
+    name: SDW migrate old 7-range → new 4-range format
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-migrate'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Migrate old SDW range files to new 4-range format
+        run: python ccass_sdw_library.py --migrate-old
+      - name: Commit migrated files
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in ccass_sdw_0001_3999_*.json ccass_sdw_6000_6999_*.json ccass_sdw_9600_9999_*.json ccass_sdw_7489_7618_*.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          git diff --staged --quiet || \
+            (git commit -m "SDW migrate: old 7-range → new 4-range: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── SDW monthly backfill (manual, 6 parallel sub-ranges) ─────────────────────
+  # Splits 0001_3999 universe into 4 sub-ranges + 6000_6999 + 9600_9999
+  # each running in parallel, all writing to correct 4 range files.
+  # Usage: workflow_dispatch → sdw-backfill, month = YYMM (e.g. 2505)
+  sdw-backfill:
+    name: SDW backfill ${{ inputs.month }} — ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-backfill'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "0001_0999"
+            range: "0001_3999"
+            code_lo: "1"
+            code_hi: "999"
+          - label: "1000_1999"
+            range: "0001_3999"
+            code_lo: "1000"
+            code_hi: "1999"
+          - label: "2000_2999"
+            range: "0001_3999"
+            code_lo: "2000"
+            code_hi: "2999"
+          - label: "3000_3999"
+            range: "0001_3999"
+            code_lo: "3000"
+            code_hi: "3999"
+          - label: "6000_6999"
+            range: "6000_6999"
+            code_lo: "6000"
+            code_hi: "6999"
+          - label: "9600_9999"
+            range: "9600_9999"
+            code_lo: "9600"
+            code_hi: "9999"
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+      - name: Backfill SDW ${{ matrix.label }} for month ${{ inputs.month }}
+        run: |
+          python ccass_sdw_library.py \
+            --range ${{ matrix.range }} \
+            --code-lo ${{ matrix.code_lo }} \
+            --code-hi ${{ matrix.code_hi }} \
+            --month ${{ inputs.month }} \
+            --max-minutes 80
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in ccass_sdw_${{ matrix.range }}_20*.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --staged --quiet || git commit -m "SDW backfill ${{ inputs.month }} ${{ matrix.label }}: $(date +'%Y-%m-%d %H:%M')"
           for i in 1 2 3 4 5; do
             git pull --rebase origin main && git push && break
             echo "Push attempt $i failed — retrying in 10s..."
