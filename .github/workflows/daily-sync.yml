@@ -72,21 +72,6 @@ jobs:
       - name: Update CCASS southbound holdings (today)
         run: python ccass_library.py --update --fix-names
 
-      - name: SDW backfill (0001_3999 on even days; lighter ranges on odd days)
-        run: |
-          DOY=$((10#$(date +%j)))
-          if [ $((DOY % 2)) -eq 0 ]; then
-            RANGES="0001_3999"
-          else
-            RANGES="6000_6999 9600_9999 7489_7618"
-          fi
-          for range in $RANGES; do
-            echo "--- SDW range $range ---"
-            python ccass_sdw_library.py --update --range $range --max-minutes 5
-            echo "Cooling down 90s before next range..."
-            sleep 90
-          done
-
       - name: Run daily analysis
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
