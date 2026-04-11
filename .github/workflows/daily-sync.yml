@@ -4,7 +4,8 @@ on:
   schedule:
     - cron: '0 12 * * 1-5'   # 12:00 UTC / 20:00 HKT (Mon–Fri)
     - cron: '0 14 * * 1-5'   # 14:00 UTC / 22:00 HKT (Mon–Fri) — SFC check
-    - cron: '0 14 * * 4,5'   # 14:00 UTC / 22:00 HKT (Thu+Fri)  — SDW weekly
+    - cron: '0 13 * * 1-5'   # 13:00 UTC / 21:00 HKT (Mon–Fri)  — SDW weekly run 1
+    - cron: '0 15 * * 1-5'   # 15:00 UTC / 23:00 HKT (Mon–Fri)  — SDW weekly run 2
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
   workflow_dispatch:
     inputs:
@@ -27,7 +28,13 @@ on:
           - turnover-build   # rebuild turnover library from scratch
           - short-build      # rebuild short selling library from scratch
           - ccass-universe   # rebuild CCASS universe
+          - sdw-backfill     # manual: backfill a specific month across 5 parallel sub-ranges
           - sdw-migrate      # one-time: migrate old 7-range SDW files to new 4-range format
+      month:
+        description: 'Month to backfill (YYMM) — e.g. 2504 = Apr 2025. Required for sdw-backfill.'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -253,7 +260,7 @@ jobs:
     permissions:
       contents: write
     if: |
-      (github.event_name == 'schedule' && github.event.schedule == '0 14 * * 4,5') ||
+      (github.event_name == 'schedule' && (github.event.schedule == '0 13 * * 1-5' || github.event.schedule == '0 15 * * 1-5')) ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-weekly')
     strategy:
       fail-fast: false
@@ -498,11 +505,48 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "CCASS universe build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
+  # ── SDW monthly backfill (manual, 5 parallel sub-ranges) ─────────────────────
+  # Fetches SDW data for a specific month across 5 parallel sub-ranges.
+  # Usage: workflow_dispatch → sdw-backfill, month = YYMM (e.g. 2504 = Apr 2025)
+  # Run 2-3 times per month until complete (~4 weekly dates × 2,634 stocks).
+  sdw-backfill:
+    name: SDW backfill ${{ inputs.month }} — range ${{ matrix.range }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-backfill'
+    strategy:
+      fail-fast: false
+      matrix:
+        range: [0001_0999, 1000_1999, 2000_2999, 3000_3999, 6000_9999]
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+      - name: Backfill SDW range ${{ matrix.range }} for month ${{ inputs.month }}
+        run: |
+          python ccass_sdw_library.py \
+            --range ${{ matrix.range }} \
+            --month ${{ inputs.month }} \
+            --max-minutes 80
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in ccass_sdw_${{ matrix.range }}_20*.json; do [ -f "$f" ] && git add "$f"; done
+          git diff --staged --quiet || git commit -m "SDW backfill ${{ inputs.month }} ${{ matrix.range }}: $(date +'%Y-%m-%d %H:%M')"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && break
+            echo "Push attempt $i failed — retrying in 10s..."
+            sleep 10
+          done
+
   # ── SDW migrate old ranges (one-time) ────────────────────────────────────────
-  # Merges old 7-range files (0001_1000, 1001_2000, 2001_3000, 3001_4000,
-  # 4001_7000, 7001_9999, 10000plus) into new 4-range format (0001_3999,
-  # 6000_6999, 9600_9999, 7489_7618). Never overwrites existing data.
-  # After confirming migration, manually delete old range files from repo.
   sdw-migrate:
     name: SDW migrate old 7-range → new 4-range format
     runs-on: ubuntu-latest
