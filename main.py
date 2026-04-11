@@ -783,9 +783,20 @@ def run_analysis():
         return out
 
     _years = list(range(2024, trading_day.year + 1))  # last 2 years sufficient for 24-day history
-    _tv_all   = _flat_by_date(tv_load_year,     _years)
-    _sh_all   = _flat_by_date(sl_load_year,     _years)
-    _cc_all   = _flat_by_date(_cc_load_year,    _years)
+
+    def _flat_by_date_recent(load_fn, years, n_days=30):
+        """Like _flat_by_date but keeps only the most recent n_days dates.
+        Sufficient for 24-day rolling history while avoiding loading full multi-year files.
+        """
+        all_dates = {}
+        for y in years:
+            all_dates.update(load_fn(y).get("by_date", {}))
+        recent = sorted(all_dates.keys(), reverse=True)[:n_days]
+        return {ds: all_dates[ds] for ds in recent}
+
+    _tv_all   = _flat_by_date(tv_load_year,  _years)          # turnover: small files, load all
+    _sh_all   = _flat_by_date(sl_load_year,  _years)          # short: small files, load all
+    _cc_all   = _flat_by_date_recent(_cc_load_year, _years, 30)  # CCASS: large files, last 30 days
     log.info("Pre-loaded: %d tv days | %d short days | %d ccass days",
              len(_tv_all), len(_sh_all), len(_cc_all))
 
