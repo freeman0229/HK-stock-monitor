@@ -505,7 +505,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        range: [0001_0999, 1000_1999, 2000_2999, 3000_3999, 6000_9999]
+        range: [0001_3999, 6000_6999, 9600_9999, 7489_7618]
 
     steps:
       - uses: actions/checkout@v4.2.2
