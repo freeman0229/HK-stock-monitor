@@ -2983,7 +2983,11 @@ function sdwSelectCode(code) {
 // ── Render: table + chart for current code + date ──────────────────────────
 function renderSdwPanel() {
   if (!sdwLoaded || !sdwCurCode) return;
-  const ds      = document.getElementById('sdw-date-sel').value || sdwCurDate;
+  const _selDs  = document.getElementById('sdw-date-sel').value || sdwCurDate;
+  // Fall back to most recent date that has data for this stock
+  const ds      = (sdwData[_selDs]||{})[sdwCurCode]
+    ? _selDs
+    : ([...sdwDates].reverse().find(d => (sdwData[d]||{})[sdwCurCode]) || _selDs);
   const topN    = parseInt(document.getElementById('sdw-top-n').value) || 20;
   const raw = (sdwData[ds] || {})[sdwCurCode];
   const holders = raw ? (Array.isArray(raw) ? raw : (raw.p || [])) : [];
