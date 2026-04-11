@@ -1456,6 +1456,8 @@ function renderBshui() {
       sbLabel.innerHTML = `按總成交額排序 ｜ <span style="color:var(--gold)">⏳ 顯示 ${sbDate} 數據（今日數據尚未發布）</span>`;
     } else if (sbDate) {
       sbLabel.textContent = `按總成交額排序 ｜ 北水佔比 = 北水買入及賣出 ÷ 成交金額 ｜ ${sbDate}`;
+    } else if (sbDate) {
+      sbLabel.textContent = `按總成交額排序 ｜ 北水佔比 = 北水買入及賣出 ÷ 成交金額 ｜ ${sbDate}`;
     } else {
       sbLabel.textContent = '按總成交額排序 ｜ 北水佔比 = 北水買入及賣出 ÷ 成交金額';
     }
@@ -2873,8 +2875,20 @@ function sdwComputeSummary() {
   const nameMap = {};
   allStocks.forEach(s => { nameMap[s.code] = s.name_chi; });
 
-  codes.forEach(code => {
-    const rawEntry = latestMap[code];
+  // Only consider stocks in today's trading universe — avoids ETFs/tiny stocks dominating
+  const tradingCodes = new Set(allStocks.filter(s => s.turnover > 0).map(s => s.code));
+
+  // Union of ALL codes across all dates for WoW computation
+  const allSdwCodes = [...new Set(sdwDates.flatMap(d => Object.keys(sdwData[d] || {})))];
+  const codesForSummary = tradingCodes.size > 0
+    ? allSdwCodes.filter(c => tradingCodes.has(c))
+    : allSdwCodes;
+
+  codesForSummary.forEach(code => {
+    // Use most recent date that has data for this stock
+    const latestStockDs = sdwDates.slice().reverse().find(d => (sdwData[d]||{})[code]);
+    if (!latestStockDs) return;
+    const rawEntry = sdwData[latestStockDs][code];
     const holders  = rawEntry ? (Array.isArray(rawEntry) ? rawEntry : (rawEntry.p || [])) : [];
     const totalSh  = rawEntry && !Array.isArray(rawEntry) ? (rawEntry.total_sh || 0) : 0;
     if (!holders.length) return;
@@ -2891,13 +2905,14 @@ function sdwComputeSummary() {
     const conc5  = totalSh > 0 ? top5sh / totalSh * 100 : 0;
     if (conc5 > maxConc) { maxConc = conc5; maxConcCode = code; maxConcName = displayName; }
 
-    // WoW mover: compare top-10 total pct this week vs last week (display sum delta)
-    if (prevMap[code]) {
-      const prevRaw      = prevMap[code];
-      const prevHolders  = Array.isArray(prevRaw) ? prevRaw : (prevRaw.p || []);
-      const nowTop10  = holders.slice(0, 10).reduce((a, h) => a + (h.pct || 0), 0);
-      const prevTop10 = prevHolders.slice(0, 10).reduce((a, h) => a + (h.pct || 0), 0);
-      const inc       = nowTop10 - prevTop10;
+    // WoW mover: find two most recent dates with data for this specific stock
+    const stockDates = sdwDates.filter(d => (sdwData[d]||{})[code]).reverse(); // newest first
+    if (stockDates.length >= 2) {
+      const prevRaw     = sdwData[stockDates[1]][code];
+      const prevHolders = Array.isArray(prevRaw) ? prevRaw : (prevRaw.p || []);
+      const nowTop10    = holders.slice(0, 10).reduce((a, h) => a + (h.pct || 0), 0);
+      const prevTop10   = prevHolders.slice(0, 10).reduce((a, h) => a + (h.pct || 0), 0);
+      const inc         = nowTop10 - prevTop10;
       if (inc > maxInc) { maxInc = inc; maxIncCode = code; maxIncName = displayName; }
       if (inc < minInc) { minInc = inc; minIncCode = code; minIncName = displayName; }
     }
@@ -2906,9 +2921,9 @@ function sdwComputeSummary() {
   const el = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
   el('sdw-max-name', maxPctName || '--');
   el('sdw-max-pct',  maxPctCode ? `${cleanName(maxPctHolder).slice(0,18)} ${maxPct.toFixed(2)}%` : '--');
-  el('sdw-inc-name', maxIncName || (prevDs ? '--' : '（需兩期數據）'));
+  el('sdw-inc-name', maxIncName || '--');
   el('sdw-inc-val',  maxIncCode ? `Top10 +${maxInc.toFixed(2)}pp` : '--');
-  el('sdw-dec-name', minIncName || (prevDs ? '--' : '（需兩期數據）'));
+  el('sdw-dec-name', minIncName || '--');
   el('sdw-dec-val',  minIncCode ? `Top10 ${minInc.toFixed(2)}pp` : '--');
   el('sdw-conc-name', maxConcName || '--');
   el('sdw-conc-val',  maxConcCode ? `前5大 ${maxConc.toFixed(1)}%` : '--');
