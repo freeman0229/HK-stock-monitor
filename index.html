@@ -974,8 +974,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="sdw-nodata-sub">
       請先部署所有文件，然後執行：<br><br>
       <code>python ccass_sdw_library.py</code><br><br>
-      程式將從今日報價單篩選成交額 ≥ 66,600,000 HKD 的股票，<br>
-      逐週抓取 HKEX CCASS 參與者持倉數據並存入 <code>ccass_sdw_YYYY.json</code>
+      程式將逐週抓取 HKEX CCASS 參與者持倉數據並存入 <code>ccass_sdw_{range}_{YYYY}.json</code>
     </div>
   </div>
 
@@ -3008,7 +3007,7 @@ function renderSdwPanel() {
       `${sdwCurCode} 暫無大戶持倉數據`;
     document.getElementById('sdw-nodata').querySelector('.sdw-nodata-sub').innerHTML =
       `所選股票在 ${ds} 暫無 CCASS SDW 數據。<br>
-       確認已運行 <code>python ccass_sdw_library.py</code> 且該股票成交額 ≥ 66,600,000 HKD。`;
+       確認已運行 <code>python ccass_sdw_library.py</code> 且 SDW 回填已包含此股票。`;
     return;
   }
 
