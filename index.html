@@ -2922,7 +2922,8 @@ function sdwBuildDropdown(query) {
 
   // Union of data.json stocks + any code seen in SDW data (for pre-data.json runs)
   const latestDs  = sdwDates[sdwDates.length - 1] || '';
-  const sdwCodes  = latestDs ? Object.keys(sdwData[latestDs] || {}) : [];
+  // Union of ALL codes across all dates — latestDs may only have partial backfill
+  const sdwCodes  = new Set(sdwDates.flatMap(ds => Object.keys(sdwData[ds] || {})));
   const nameMap   = {};
   allStocks.forEach(s => { nameMap[s.code] = { chi: s.name_chi, eng: s.name }; });
 
@@ -2930,7 +2931,7 @@ function sdwBuildDropdown(query) {
   const allCodes  = [...new Set([...allStocks.map(s => s.code), ...sdwCodes])];
 
   let matches = allCodes.filter(code => {
-    if (!q) return sdwCodes.includes(code);   // if empty, only show SDW-tracked
+    if (!q) return sdwCodes.has(code);   // if empty, only show SDW-tracked
     const info = nameMap[code] || {};
     return code.includes(q)
         || (info.chi||'').includes(q)
@@ -2943,7 +2944,7 @@ function sdwBuildDropdown(query) {
 
   dd.innerHTML = matches.map(code => {
     const info  = nameMap[code] || {};
-    const inSdw = sdwCodes.includes(code);
+    const inSdw = sdwCodes.has(code);
     const sub   = inSdw ? `${(sdwData[latestDs]||{})[code]?.length||0}個機構` : '無數據';
     return `<div class="sdw-dd-item" data-code="${code}">
       <span class="dd-code">${code}</span>
