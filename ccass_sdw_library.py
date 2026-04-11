@@ -69,6 +69,7 @@ BLOCK_PATTERNS = [
 _PROXY = os.getenv("SDW_PROXY", "").strip() or None
 
 START_DATE            = date(2025, 4, 5)
+HKEX_WINDOW_MONTHS    = 12   # HKEX SDW rolling window — dates older than this are unavailable
 SCHEMA_VERSION        = 2
 SLEEP_MIN             = 2.0    # base delay between stocks
 SLEEP_MAX             = 5.0
@@ -162,10 +163,17 @@ def _fetch_date_for_friday(friday: date) -> date | None:
 
 
 def all_fetch_dates(up_to: date = None) -> list[date]:
-    """Return all scheduled fetch dates from START_DATE up to *up_to* (inclusive)."""
-    up_to  = up_to or date.today()
-    result = []
-    d = START_DATE
+    """Return all scheduled fetch dates from START_DATE up to *up_to* (inclusive).
+    Automatically skips dates older than HKEX_WINDOW_MONTHS — HKEX no longer
+    returns data for those dates so fetching them wastes time.
+    """
+    up_to    = up_to or date.today()
+    # HKEX rolling window: skip dates more than HKEX_WINDOW_MONTHS ago
+    earliest = date.today().replace(year=date.today().year - 1) if HKEX_WINDOW_MONTHS == 12 \
+               else date.today() - timedelta(days=HKEX_WINDOW_MONTHS * 30)
+    start    = max(START_DATE, earliest)
+    result   = []
+    d        = start
     while d.weekday() != 4:  # 4 = Friday
         d += timedelta(days=1)
     while d <= up_to:
@@ -627,7 +635,8 @@ def _parse_response(html: str, code5: str, date_str: str) -> dict:
 # ── Build / update ────────────────────────────────────────────────────────────
 
 def build(update_only: bool = False, specific_date: date = None,
-          max_minutes: float = 0, range_label: str = None):
+          max_minutes: float = 0, range_label: str = None,
+          month: str = None):
     deadline = (time.monotonic() + max_minutes * 60) if max_minutes > 0 else None
 
     if range_label:
@@ -678,6 +687,14 @@ def build(update_only: bool = False, specific_date: date = None,
         else:
             stored_all     = all_stored_dates()
             dates_to_fetch = [d for d in all_dates if d.isoformat() not in stored_all]
+
+        # --month filter: restrict to a specific YYMM or YYYYMM period
+        if month:
+            if len(month) == 4:   # YYMM → 20YYMM
+                month = f"20{month}"
+            yyyy, mm = int(month[:4]), int(month[4:6])
+            dates_to_fetch = [d for d in dates_to_fetch if d.year == yyyy and d.month == mm]
+            log.info("Month filter %s-%02d: %d dates", yyyy, mm, len(dates_to_fetch))
 
         log.info("%s: %d dates to fetch (%d in schedule)",
                  "Update" if update_only else "Build",
@@ -1060,6 +1077,8 @@ if __name__ == "__main__":
     ap.add_argument("--query",       metavar="CODE")
     ap.add_argument("--top",         type=int, default=20)
     ap.add_argument("--range",       metavar="LABEL")
+    ap.add_argument("--month",       metavar="YYMM",
+                    help="Restrict to a specific month e.g. 2504 = Apr 2025")
     ap.add_argument("--migrate",     action="store_true",
                     help="Migrate old single-file ccass_sdw_{YYYY}.json to 4-range format")
     ap.add_argument("--migrate-old", action="store_true",
@@ -1076,4 +1095,5 @@ if __name__ == "__main__":
         build(update_only=args.update,
               specific_date=date.fromisoformat(args.date) if args.date else None,
               max_minutes=args.max_minutes,
-              range_label=getattr(args, "range", None))
+              range_label=getattr(args, "range", None),
+              month=getattr(args, "month", None))
