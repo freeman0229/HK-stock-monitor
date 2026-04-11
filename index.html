@@ -2945,7 +2945,15 @@ function sdwBuildDropdown(query) {
   dd.innerHTML = matches.map(code => {
     const info  = nameMap[code] || {};
     const inSdw = sdwCodes.has(code);
-    const sub   = inSdw ? `${(sdwData[latestDs]||{})[code]?.length||0}個機構` : '無數據';
+    // sdwData[ds][code] = {p:[...holders], total_sh, issued_sh} or legacy array
+  const _sdwRec  = inSdw ? (() => {
+    for (const ds of [...sdwDates].reverse()) {
+      const r = (sdwData[ds]||{})[code];
+      if (r) return Array.isArray(r) ? r : (r.p || []);
+    }
+    return null;
+  })() : null;
+  const sub = _sdwRec ? `${_sdwRec.length}個機構` : '無數據';
     return `<div class="sdw-dd-item" data-code="${code}">
       <span class="dd-code">${code}</span>
       <span class="dd-name">${cleanName(info.chi || code)}</span>
