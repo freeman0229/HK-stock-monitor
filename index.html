@@ -4241,11 +4241,20 @@ function renderHsiPanel() {
 }
 
 async function initHsiPanel() {
+  // Wait for Chart.js to load if not yet available
+  if (typeof Chart === 'undefined') {
+    await new Promise(resolve => {
+      const script = document.querySelector('script[src*="chart.umd.js"]');
+      if (script) { script.addEventListener('load', resolve); }
+      else { setTimeout(resolve, 500); }
+    });
+  }
   if (hsiData) { renderHsiPanel(); return; }
   const ok = await loadHsiData();
   if (ok) renderHsiPanel();
 }
 
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 </body>
 </html>
