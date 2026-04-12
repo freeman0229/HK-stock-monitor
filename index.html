@@ -632,6 +632,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn" data-tab="short">累積沽空</button>
   <button class="tab-btn" data-tab="ccass">大戶持倉</button>
   <button class="tab-btn" data-tab="cai">波動率</button>
+    <button class="tab-btn" data-tab="hsi">恒生指數</button>
 </div>
 
 <!-- ═══ Panel 1: 北水追蹤 ════════════════════════════════════════════════════ -->
@@ -1018,6 +1019,30 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   </div>
 </div>
 
+<div class="panel" id="panel-hsi">
+  <div id="hsi-loading" class="hsi-loading">載入恒生指數數據中…</div>
+  <div id="hsi-content" style="display:none">
+    <div class="hsi-metric-row">
+      <div class="hsi-metric"><div class="lbl">最新收市</div><div class="val" id="hsi-close">--</div></div>
+      <div class="hsi-metric"><div class="lbl">σ 上行</div><div class="val" id="hsi-su">--</div></div>
+      <div class="hsi-metric"><div class="lbl">σ 下行</div><div class="val" id="hsi-sd">--</div></div>
+      <div class="hsi-metric"><div class="lbl">成交倍數</div><div class="val" id="hsi-vr">--</div></div>
+    </div>
+    <div class="hsi-metric-row">
+      <div class="hsi-metric"><div class="lbl">預測下週高位</div><div class="val up-txt" id="hsi-ph">--</div></div>
+      <div class="hsi-metric"><div class="lbl">預測下週低位</div><div class="val dn-txt" id="hsi-pl">--</div></div>
+      <div class="hsi-metric"><div class="lbl">數據更新</div><div class="val" style="font-size:14px" id="hsi-updated">--</div></div>
+      <div class="hsi-metric"><div class="lbl">週數</div><div class="val" id="hsi-weeks">--</div></div>
+    </div>
+    <div class="sec-sub" style="margin-bottom:8px">
+      預測高 = 收市 + σ_上行 × 成交倍數 &nbsp;｜&nbsp; 預測低 = 收市 − σ_下行 × 成交倍數 &nbsp;｜&nbsp; 成交倍數 = 本週成交量 ÷ 24週均量
+    </div>
+    <div class="hsi-chart-wrap"><canvas id="hsiCanvas" role="img" aria-label="HSI weekly price channel">HSI weekly channel chart.</canvas></div>
+    <div class="hsi-vol-wrap"><canvas id="hsiVolCanvas" role="img" aria-label="HSI volume ratio">HSI volume ratio.</canvas></div>
+  </div>
+</div>
+
+
 <div id="footer">
   <span>Email: <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="196d786b7d707e6b787d7c78777875606d707a6a597e74787075377a7674">[email&#160;protected]</a></span>
   <span>港股策略板 ｜ 數據來源：HKEX · SFC ｜ 僅供參考，不構成投資建議</span>
@@ -1038,6 +1063,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'hsi') initHsiPanel();
     if (btn.dataset.tab === 'cai' && allStocks.length) { drawCai(); updateCaiCards(); }
     if (btn.dataset.tab === 'bshui' && allStocks.length) renderBshui();
     if (btn.dataset.tab === 'ccass') initSdwPanel();
@@ -4009,11 +4035,168 @@ setInterval(loadData, 5 * 60 * 1000);
 window.addEventListener('resize', () => {
   setTimeout(() => {
     if (document.querySelector('.tab-btn[data-tab="cai"]').classList.contains('active')) drawCai();
+  if (document.querySelector('.tab-btn[data-tab="hsi"]')?.classList.contains('active')) initHsiPanel();
     if (document.querySelector('.tab-btn[data-tab="bshui"]').classList.contains('active')) renderBshui();
     if (document.querySelector('.tab-btn[data-tab="short"]').classList.contains('active')) { drawShortRiskMap(allStocks); drawSfcChart(); renderSqueezeTop10(allStocks); }
     if (document.querySelector('.tab-btn[data-tab="ccass"]').classList.contains('active')) renderSdwPanel();
   }, 200);
 });
+
+// ══ HSI 週線預測通道 ══════════════════════════════════════════════════════════
+let hsiData = null;
+let hsiChartInst = null;
+let hsiVolInst   = null;
+
+async function loadHsiData() {
+  try {
+    const r = await fetch('hsi_weekly.json', { cache: 'no-cache' });
+    if (!r.ok) throw new Error('hsi_weekly.json not found');
+    hsiData = await r.json();
+    return true;
+  } catch(e) {
+    document.getElementById('hsi-loading').textContent = '數據尚未生成 — 請先執行 hsi-build';
+    return false;
+  }
+}
+
+function computeHsiChannel(hsiData) {
+  const weekly  = hsiData.weekly;
+  const dates   = Object.keys(weekly).sort();
+
+  // Full history σ_up and σ_down
+  const upMoves = [], dnMoves = [];
+  for (let i = 1; i < dates.length; i++) {
+    const pc = weekly[dates[i-1]].c;
+    const h  = weekly[dates[i]].h;
+    const l  = weekly[dates[i]].l;
+    const up = h - pc, dn = pc - l;
+    if (up > 0) upMoves.push(up);
+    if (dn > 0) dnMoves.push(dn);
+  }
+  const mean = arr => arr.reduce((a,b) => a+b, 0) / arr.length;
+  const std  = arr => { const m = mean(arr); return Math.sqrt(arr.reduce((a,b) => a+(b-m)**2, 0) / arr.length); };
+  const sigmaUp   = std(upMoves);
+  const sigmaDown = std(dnMoves);
+
+  // Compute channel for each week (need vol for ratio)
+  const channel = {};
+  for (let i = 1; i < dates.length; i++) {
+    const ds  = dates[i];
+    const rec = weekly[ds];
+    const vol = rec.v || 0;
+
+    // 24-week rolling avg vol (non-zero only)
+    const windowVols = [];
+    for (let j = Math.max(0, i-24); j < i; j++) {
+      if (weekly[dates[j]].v > 0) windowVols.push(weekly[dates[j]].v);
+    }
+    const avgVol   = windowVols.length > 0 ? mean(windowVols) : 0;
+    const volRatio = (vol > 0 && avgVol > 0) ? vol / avgVol : 1.0;
+
+    channel[ds] = {
+      su: sigmaUp,
+      sd: sigmaDown,
+      vr: volRatio,
+      ph: rec.c + sigmaUp   * volRatio,
+      pl: rec.c - sigmaDown * volRatio,
+    };
+  }
+  return { sigmaUp, sigmaDown, channel, dates };
+}
+
+function renderHsiPanel() {
+  if (!hsiData) return;
+  const weekly  = hsiData.weekly;
+  const { sigmaUp, sigmaDown, channel, dates } = computeHsiChannel(hsiData);
+
+  // Update metric cards
+  const lastDs  = dates[dates.length - 1];
+  const lastRec = weekly[lastDs];
+  const lastCh  = channel[lastDs];
+
+  document.getElementById('hsi-close').textContent   = lastRec.c.toFixed(0);
+  document.getElementById('hsi-su').textContent      = sigmaUp.toFixed(0);
+  document.getElementById('hsi-sd').textContent      = sigmaDown.toFixed(0);
+  document.getElementById('hsi-vr').textContent      = (lastCh?.vr || 1).toFixed(2) + 'x';
+  document.getElementById('hsi-ph').textContent      = (lastCh?.ph || 0).toFixed(0);
+  document.getElementById('hsi-pl').textContent      = (lastCh?.pl || 0).toFixed(0);
+  document.getElementById('hsi-updated').textContent = hsiData.meta?.last_updated || '--';
+  document.getElementById('hsi-weeks').textContent   = dates.length + ' 週';
+
+  // Last 156 weeks (3 years) for chart
+  const n      = Math.min(156, dates.length);
+  const ds156  = dates.slice(-n);
+  const labels = ds156;
+  const close  = ds156.map(d => weekly[d].c);
+  const high   = ds156.map(d => weekly[d].h);
+  const low    = ds156.map(d => weekly[d].l);
+  const ph     = ds156.map(d => channel[d]?.ph || null);
+  const pl     = ds156.map(d => channel[d]?.pl || null);
+  const vr     = ds156.map(d => channel[d]?.vr || 1);
+
+  const isDark = matchMedia('(prefers-color-scheme:dark)').matches;
+
+  // Destroy old charts
+  if (hsiChartInst) { hsiChartInst.destroy(); hsiChartInst = null; }
+  if (hsiVolInst)   { hsiVolInst.destroy();   hsiVolInst   = null; }
+
+  hsiChartInst = new Chart(document.getElementById('hsiCanvas'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: '預測高位', data: ph, borderColor: 'rgba(99,153,34,0.9)', backgroundColor: 'rgba(99,153,34,0.08)', borderWidth: 1.5, borderDash: [5,3], pointRadius: 0, fill: '+1', tension: 0.2 },
+        { label: '實際高位', data: high, borderColor: 'rgba(226,75,74,0.45)', borderWidth: 1, pointRadius: 0, fill: false, tension: 0.2, borderDash: [2,2] },
+        { label: '收市價',   data: close, borderColor: '#378ADD', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.2 },
+        { label: '實際低位', data: low,  borderColor: 'rgba(226,75,74,0.45)', borderWidth: 1, pointRadius: 0, fill: false, tension: 0.2, borderDash: [2,2] },
+        { label: '預測低位', data: pl,  borderColor: 'rgba(99,153,34,0.9)', backgroundColor: 'rgba(99,153,34,0.08)', borderWidth: 1.5, borderDash: [5,3], pointRadius: 0, fill: false, tension: 0.2 },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}` } }
+      },
+      scales: {
+        x: { ticks: { callback: (v,i) => i % 13 === 0 ? labels[i].slice(0,7) : '', maxRotation: 0, font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } },
+        y: { ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } }
+      }
+    }
+  });
+
+  hsiVolInst = new Chart(document.getElementById('hsiVolCanvas'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: '成交倍數',
+        data: vr,
+        backgroundColor: vr.map(v => v > 1.3 ? 'rgba(226,75,74,0.6)' : v < 0.7 ? 'rgba(99,153,34,0.6)' : 'rgba(55,138,221,0.4)'),
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: i => `成交倍數: ${i.parsed.y.toFixed(2)}x` } } },
+      scales: {
+        x: { ticks: { display: false }, grid: { display: false } },
+        y: { ticks: { callback: v => v.toFixed(1) + 'x', font: { size: 10 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } }
+      }
+    }
+  });
+
+  document.getElementById('hsi-loading').style.display  = 'none';
+  document.getElementById('hsi-content').style.display  = 'block';
+}
+
+async function initHsiPanel() {
+  if (hsiData) { renderHsiPanel(); return; }
+  const ok = await loadHsiData();
+  if (ok) renderHsiPanel();
+}
+
 </script>
 </body>
 </html>
