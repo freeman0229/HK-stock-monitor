@@ -29,10 +29,7 @@ on:
           - turnover-build   # rebuild turnover library from scratch
           - short-build      # rebuild short selling library from scratch
           - ccass-universe   # rebuild CCASS universe
-          - sdw-backfill     # manual: backfill a specific month, 6 parallel sub-ranges
-          - sdw-migrate      # one-time: migrate old 7-range SDW files to new 4-range format
-          - hsi-build        # manual: rebuild full HSI weekly history from scratch
-          - sdw-backfill     # manual: backfill a specific month across 5 parallel sub-ranges
+          - sdw-backfill     # manual: backfill a specific month, sequential sub-ranges
           - sdw-migrate      # one-time: migrate old 7-range SDW files to new 4-range format
           - hsi-build        # manual: rebuild full HSI weekly history from scratch
       month:
