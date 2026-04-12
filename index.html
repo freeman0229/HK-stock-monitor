@@ -1045,10 +1045,10 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <option value="104">2年</option>
         <option value="156">3年</option>
         <option value="260">5年</option>
-        <option value="all">全部 (1987至今)</option>
+        <option value="from2002">2002至今</option>
       </select>
       <label style="font-size:13px;color:var(--muted)">自</label>
-      <input type="date" id="hsi-from" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)" value="2021-09-01" min="1987-01-01">
+      <input type="date" id="hsi-from" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)" value="2002-01-01" min="2002-01-01">
       <label style="font-size:13px;color:var(--muted)">至</label>
       <input type="date" id="hsi-to" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
       <button id="hsi-apply" style="font-size:13px;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer">套用</button>
@@ -4146,7 +4146,7 @@ function renderHsiPanel() {
 
   // Apply date range from controls
   const fromEl = document.getElementById('hsi-from');
-  const from   = (fromEl?.value) || '2021-09-01';
+  const from   = (fromEl?.value) || '2002-01-01';
   const to     = (toEl?.value)   || lastDs;
   const filtered = dates.filter(d => d >= from && d <= to);
   const view     = filtered.length >= 4 ? filtered : dates.slice(-52);
@@ -4170,11 +4170,13 @@ function renderHsiPanel() {
     data: {
       labels,
       datasets: [
-        { label: '預測高位', data: ph, borderColor: 'rgba(99,153,34,0.9)', backgroundColor: 'rgba(99,153,34,0.08)', borderWidth: 1.5, borderDash: [5,3], pointRadius: 0, fill: '+1', tension: 0.2 },
-        { label: '實際高位', data: high, borderColor: 'rgba(226,75,74,0.45)', borderWidth: 1, pointRadius: 0, fill: false, tension: 0.2, borderDash: [2,2] },
+        { label: '3σ高',    data: view.map(d=>+(weekly[d].c+sigmaUp  *channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(83,74,183,0.7)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
+        { label: '2.5σ高',  data: view.map(d=>+(weekly[d].c+sigmaUp  *channel[d].vr*2.5).toFixed(0)), borderColor:'rgba(186,117,23,0.85)',borderWidth:1.5, borderDash:[4,3], pointRadius:0, fill:false, tension:0.2 },
+        { label: '實際高位', data: high, borderColor: 'rgba(226,75,74,0.5)', borderWidth: 1, pointRadius: 0, fill: false, tension: 0.2, borderDash: [2,2] },
         { label: '收市價',   data: close, borderColor: '#378ADD', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.2 },
-        { label: '實際低位', data: low,  borderColor: 'rgba(226,75,74,0.45)', borderWidth: 1, pointRadius: 0, fill: false, tension: 0.2, borderDash: [2,2] },
-        { label: '預測低位', data: pl,  borderColor: 'rgba(99,153,34,0.9)', backgroundColor: 'rgba(99,153,34,0.08)', borderWidth: 1.5, borderDash: [5,3], pointRadius: 0, fill: false, tension: 0.2 },
+        { label: '實際低位', data: low,  borderColor: 'rgba(226,75,74,0.5)', borderWidth: 1, pointRadius: 0, fill: false, tension: 0.2, borderDash: [2,2] },
+        { label: '2.5σ低',  data: view.map(d=>+(weekly[d].c-sigmaDown*channel[d].vr*2.5).toFixed(0)), borderColor:'rgba(186,117,23,0.85)',borderWidth:1.5, borderDash:[4,3], pointRadius:0, fill:false, tension:0.2 },
+        { label: '3σ低',    data: view.map(d=>+(weekly[d].c-sigmaDown*channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(83,74,183,0.7)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
       ]
     },
     options: {
@@ -4214,6 +4216,11 @@ function renderHsiPanel() {
 
   document.getElementById('hsi-loading').style.display  = 'none';
   document.getElementById('hsi-content').style.display  = 'block';
+  // Force chart resize after panel becomes visible
+  setTimeout(() => {
+    if (hsiChartInst) hsiChartInst.resize();
+    if (hsiVolInst)   hsiVolInst.resize();
+  }, 50);
 
   // Wire up range selector
   const rangeEl  = document.getElementById('hsi-range');
@@ -4223,11 +4230,11 @@ function renderHsiPanel() {
     rangeEl._hsiWired = true;
     rangeEl.addEventListener('change', () => {
       const v = rangeEl.value;
-      if (v === 'all') {
-        document.getElementById('hsi-from').value = dates[0];
+      if (v === 'from2002') {
+        document.getElementById('hsi-from').value = '2002-01-01';
       } else {
         const nw = parseInt(v);
-        const fromDate = dates.length > nw ? dates[dates.length - nw] : dates[0];
+        const fromDate = dates.length > nw ? dates[dates.length - nw] : '2002-01-01';
         document.getElementById('hsi-from').value = fromDate;
       }
       document.getElementById('hsi-to').value = lastDs;
