@@ -1028,10 +1028,6 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div class="sum-card"><div class="sum-label">預測下週低位 (均值3σ)</div><div class="sum-val dn" id="hsi-pl30">--</div><div class="sum-sub" id="hsi-pl30-sub">&nbsp;</div></div>
     </div>
 
-    <div class="sec-sub" style="margin-bottom:8px">
-      預測高/低 = 均值(收市3σ + 開市3σ) × 成交倍數 &nbsp;｜&nbsp; 覆蓋率 94.7% &nbsp;｜&nbsp; 保守 = 均值2.5σ (90.5%) &nbsp;｜&nbsp; 下方圖: 週高/低 − 4週均價
-    </div>
-
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
       <label style="font-size:13px;color:var(--muted)">顯示範圍</label>
       <select id="hsi-range" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
@@ -1050,6 +1046,12 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
     <div class="hsi-chart-wrap"><canvas id="hsiCanvas" role="img" aria-label="HSI weekly price channel">HSI weekly channel chart.</canvas></div>
     <div class="hsi-vol-wrap"><canvas id="hsiVolCanvas" role="img" aria-label="HSI weekly oscillation vs 4-week MA">HSI weekly high/low vs 4-week MA.</canvas></div>
+
+    <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.8">
+      <span style="display:inline-block;width:20px;height:2px;background:rgba(83,74,183,0.85);border-top:2px dashed rgba(83,74,183,0.85);vertical-align:middle;margin-right:4px"></span>預測高/低 = 均值(收市3σ + 開市3σ) × 成交倍數 &nbsp;｜&nbsp;
+      <span style="display:inline-block;width:20px;height:1px;background:rgba(226,75,74,0.5);border-top:1px dashed rgba(226,75,74,0.5);vertical-align:middle;margin-right:4px"></span>實際高/低 &nbsp;｜&nbsp;
+      覆蓋率 94.7% &nbsp;｜&nbsp; 保守(2.5σ) 90.5% &nbsp;｜&nbsp; 下方圖: 週高/低 − 4週均價
+    </div>
   </div>
 </div>
 
@@ -4211,7 +4213,16 @@ function renderHsiPanel() {
         tooltip: {
           mode: 'index',
           intersect: false,
-          callbacks: { label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}` }
+          callbacks: {
+            label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}`,
+            afterBody: items => {
+              if (!items.length) return [];
+              const i = items[0].dataIndex;
+              const h = highVsMa[i] !== undefined ? (highVsMa[i] > 0 ? '+' : '') + highVsMa[i] : '--';
+              const l = lowVsMa[i]  !== undefined ? (lowVsMa[i]  > 0 ? '+' : '') + lowVsMa[i]  : '--';
+              return [`週高−4週均: ${h}`, `週低−4週均: ${l}`];
+            }
+          }
         }
       },
       scales: {
@@ -4244,7 +4255,7 @@ function renderHsiPanel() {
       responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: i => `${i.dataset.label}: ${i.parsed.y > 0 ? '+' : ''}${i.parsed.y}` } }
+        tooltip: { enabled: false }
       },
       scales: {
         x: { ticks: { display: false }, grid: { display: false } },
