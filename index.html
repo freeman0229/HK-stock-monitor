@@ -1029,7 +1029,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     </div>
 
     <div class="sec-sub" style="margin-bottom:8px">
-      預測高 = 收市 + σ × 成交倍數 &nbsp;｜&nbsp; amber=2.5σ(90%) &nbsp;｜&nbsp; purple=3σ(94%) &nbsp;｜&nbsp; 下方圖: 週高/低 − 4週均價
+      預測高/低 = 均值(收市3σ + 開市3σ) × 成交倍數 &nbsp;｜&nbsp; 覆蓋率 94.7% &nbsp;｜&nbsp; 保守 = 均值2.5σ (90.5%) &nbsp;｜&nbsp; 下方圖: 週高/低 − 4週均價
     </div>
 
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
@@ -4209,28 +4209,8 @@ function renderHsiPanel() {
       plugins: {
         legend: { display: false },
         tooltip: {
-          external: function(context) {
-            let tooltip = document.getElementById('hsiTooltip');
-            if (!tooltip) {
-              tooltip = document.createElement('div');
-              tooltip.id = 'hsiTooltip';
-              tooltip.style.cssText = 'position:absolute;background:rgba(0,0,0,0.8);color:#fff;padding:8px 10px;border-radius:6px;font-size:11px;pointer-events:none;z-index:100;line-height:1.6;min-width:160px';
-              context.chart.canvas.parentNode.style.position = 'relative';
-              context.chart.canvas.parentNode.appendChild(tooltip);
-            }
-            const model = context.tooltip;
-            if (model.opacity === 0) { tooltip.style.opacity = 0; return; }
-            tooltip.style.opacity = 1;
-            tooltip.innerHTML = `<div style="font-weight:500;margin-bottom:4px">${model.title?.[0] || ''}</div>` +
-              model.body.map((b,i) => {
-                const c = model.labelColors[i];
-                return `<div><span style="display:inline-block;width:8px;height:8px;background:${c.borderColor};margin-right:4px;border-radius:1px"></span>${b.lines[0]}</div>`;
-              }).join('');
-            // Pin to top-right of chart
-            tooltip.style.right = '8px';
-            tooltip.style.top   = '8px';
-            tooltip.style.left  = 'auto';
-          },
+          mode: 'index',
+          intersect: false,
           callbacks: { label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}` }
         }
       },
