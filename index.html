@@ -597,6 +597,13 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
 
 
+
+/* ── HSI panel ─────────────────── */
+#panel-hsi { padding: 0 0 40px; }
+.hsi-chart-wrap { position: relative; width: 100%; height: 560px; margin-bottom: 4px; }
+.hsi-vol-wrap   { position: relative; width: 100%; height: 100px; }
+.hsi-loading    { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
+
 </style>
 </head>
 <body>
@@ -4213,6 +4220,7 @@ function renderHsiPanel() {
         tooltip: {
           mode: 'index',
           intersect: false,
+          caretPadding: 20,
           callbacks: {
             label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}`,
             afterBody: items => {
