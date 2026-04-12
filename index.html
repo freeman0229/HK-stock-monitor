@@ -4153,9 +4153,9 @@ function renderHsiPanel() {
   const ph25avg = (ph25v + ph25o) / 2;
   const pl25avg = (pl25v + pl25o) / 2;
   document.getElementById('hsi-ph30').textContent      = ph30avg.toFixed(0);
-  document.getElementById('hsi-ph30-sub').textContent  = '2.5σ: ' + ph25avg.toFixed(0);
+  document.getElementById('hsi-ph30-sub').textContent  = '保守: ' + ph25avg.toFixed(0);
   document.getElementById('hsi-pl30').textContent      = pl30avg.toFixed(0);
-  document.getElementById('hsi-pl30-sub').textContent  = '2.5σ: ' + pl25avg.toFixed(0);
+  document.getElementById('hsi-pl30-sub').textContent  = '保守: ' + pl25avg.toFixed(0);
 
   // Set default 'to' date to latest
   const toEl = document.getElementById('hsi-to');
@@ -4196,13 +4196,11 @@ function renderHsiPanel() {
     data: {
       labels,
       datasets: [
-        { label: '收市3σ高', data: view.map(d=>+(weekly[d].c+sigmaUp  *channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(83,74,183,0.85)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
-        { label: '開市3σ高', data: view.map(d=>+(weekly[d].o+sigmaUpO *channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(186,117,23,0.85)', borderWidth:1.5, borderDash:[4,3], pointRadius:0, fill:false, tension:0.2 },
-        { label: '實際高位',  data: view.map(d => weekly[d].h), borderColor:'rgba(136,135,128,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2] },
+        { label: '預測高位', data: view.map(d=>+( ((weekly[d].c+sigmaUp  *channel[d].vr*3.0)+(weekly[d].o+sigmaUpO  *channel[d].vr*3.0))/2 ).toFixed(0)), borderColor:'rgba(83,74,183,0.85)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
+        { label: '實際高位',  data: view.map(d => weekly[d].h), borderColor:'rgba(226,75,74,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2] },
         { label: '收市價',    data: view.map(d => weekly[d].c), borderColor:'#378ADD', borderWidth:2, pointRadius:0, fill:false, tension:0.2 },
-        { label: '實際低位',  data: view.map(d => weekly[d].l), borderColor:'rgba(136,135,128,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2] },
-        { label: '開市3σ低', data: view.map(d=>+(weekly[d].o-sigmaDownO*channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(186,117,23,0.85)', borderWidth:1.5, borderDash:[4,3], pointRadius:0, fill:false, tension:0.2 },
-        { label: '收市3σ低', data: view.map(d=>+(weekly[d].c-sigmaDown *channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(83,74,183,0.85)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
+        { label: '實際低位',  data: view.map(d => weekly[d].l), borderColor:'rgba(226,75,74,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2] },
+        { label: '預測低位', data: view.map(d=>+( ((weekly[d].c-sigmaDown*channel[d].vr*3.0)+(weekly[d].o-sigmaDownO*channel[d].vr*3.0))/2 ).toFixed(0)), borderColor:'rgba(83,74,183,0.85)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
       ]
     },
     options: {
