@@ -686,7 +686,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th class="num-r mob-hide" data-col="sb_net">北水淨流入</th>
           <th class="num-r mob-hide" data-col="sb_buy">北水買入</th>
           <th class="num-r mob-hide" data-col="sb_sell">北水賣出</th>
-          <th class="num-r mob-hide" data-col="ccass_consec">連續日數</th>
+          <th class="num-r mob-hide" data-col="ccass_consec">北水持股變動</th>
           <th data-col="insight">信號</th>
         </tr>
       </thead>
@@ -1270,7 +1270,7 @@ function generateMockData() {
       ccass_streak_pct: parseFloat((cc * (Math.random()*0.08 + 0.03) * (cc >= 0 ? 1 : -1)).toFixed(4)),
       pct_listed: 5 + Math.random() * 20,
       pct_delta: parseFloat(((Math.random() - 0.5) * 0.5).toFixed(4)),
-      sb_consec: Math.floor(Math.random()*6),
+      sb_consec: (Math.random() > 0.5 ? 1 : -1) * Math.floor(Math.random()*6),
       sb_net_prev: Math.round(sbn * (0.5 + Math.random())),
       insight: insightPool[Math.floor(Math.random()*insightPool.length)],
       squeeze_score: Math.floor(Math.random() * 15),
@@ -1594,7 +1594,7 @@ function renderBshui() {
       ? Math.min(sbTotal / s.turnover * 100, 100) : 0;
     return `<tr>
       <td class="rank">${i+1}</td>
-      <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
+      <td><span class="name-cell">${s.name_chi}</span>${(() => { const c = s.sb_consec || 0; if (Math.abs(c) < 2) return ''; return c > 0 ? '<span style="color:#c0252d;font-size:11px;font-weight:600"> ' + c + '連買</span>' : '<span style="color:#1a7a3c;font-size:11px;font-weight:600"> ' + Math.abs(c) + '連賣</span>'; })()} <span class="name-zh">${s.code}</span></td>
       <td class="num-r">${fmtM(s.turnover)}</td>
       <td class="num-r">${sbPct > 0 ? sbParticipationBar(sbPct) : '<span class="na-txt">—</span>'}</td>
       <td class="num-r mob-hide ${netClass}">${s.sb_buy > 0 || s.sb_sell > 0 ? sign(s.sb_net)+fmtM(s.sb_net) : '<span class="na-txt">—</span>'}</td>

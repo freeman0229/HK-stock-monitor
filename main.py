@@ -958,7 +958,7 @@ def run_analysis():
 
         # Use pre-computed maps (populated above for all codes in sb_map).
         # Fall back to ccass_consec for stocks not in today's southbound top10.
-        _sb_consec_final = int(sb_consec_map.get(code, ccass_consec_map.get(code, 0)))
+        _sb_consec_final = int(sb_consec_map.get(code, 0))
         _sb_prev_final   = int(sb_prev_map.get(code, 0))
 
         results.append({
