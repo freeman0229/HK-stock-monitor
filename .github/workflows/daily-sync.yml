@@ -7,6 +7,7 @@ on:
     - cron: '0 13 * * 1-5'   # 13:00 UTC / 21:00 HKT (Mon–Fri)  — SDW weekly run 1
     - cron: '0 15 * * 1-5'   # 15:00 UTC / 23:00 HKT (Mon–Fri)  — SDW weekly run 2
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
+    - cron: '0 3 * * 6'       # 03:00 UTC / 11:00 HKT (Saturday)  — HSI weekly update
   workflow_dispatch:
     inputs:
       job:
@@ -30,8 +31,10 @@ on:
           - ccass-universe   # rebuild CCASS universe
           - sdw-backfill     # manual: backfill a specific month, 6 parallel sub-ranges
           - sdw-migrate      # one-time: migrate old 7-range SDW files to new 4-range format
+          - hsi-build        # manual: rebuild full HSI weekly history from scratch
           - sdw-backfill     # manual: backfill a specific month across 5 parallel sub-ranges
           - sdw-migrate      # one-time: migrate old 7-range SDW files to new 4-range format
+          - hsi-build        # manual: rebuild full HSI weekly history from scratch
       month:
         description: 'Month to backfill (YYMM) — e.g. 2504 = Apr 2025. Required for sdw-backfill.'
         required: false
@@ -585,3 +588,34 @@ jobs:
           done
           git diff --staged --quiet || \
             (git commit -m "SDW migrate: old 7-range → new 4-range: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── HSI weekly price history (Saturday 11:00 HKT) ────────────────────────────
+  hsi-weekly:
+    name: HSI weekly update
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 3 * * 6') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'hsi-build')
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: Update HSI weekly history
+        run: |
+          if [ "${{ inputs.job }}" = "hsi-build" ]; then
+            python build_hsi.py --rebuild
+          else
+            python build_hsi.py
+          fi
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          [ -f hsi_weekly.json ] && git add hsi_weekly.json
+          git diff --staged --quiet || git commit -m "HSI weekly: $(date +'%Y-%m-%d %H:%M')"
+          git push
