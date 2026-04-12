@@ -682,13 +682,20 @@ def build(update_only: bool = False, specific_date: date = None,
 
         if range_label:
             threshold = max(1, int(len(universe) * 0.95))
+            # sub-range bounds for filtering (default to full range if no code_lo/hi)
+            _lo = code_lo if code_lo is not None else 0
+            _hi = code_hi if code_hi is not None else 99999
 
             def _range_complete(ds: str) -> bool:
                 p = lib_path(int(ds[:4]), owned_ranges[0][0])
                 if not os.path.exists(p):
                     return False
                 with open(p, encoding="utf-8") as f:
-                    return len(json.load(f).get("by_date", {}).get(ds, {})) >= threshold
+                    day = json.load(f).get("by_date", {}).get(ds, {})
+                # Only count codes within our sub-range to avoid false positives
+                # from other sub-ranges' stocks already present in the same file
+                in_range = sum(1 for c in day if _lo <= int(normalize_code(c)) <= _hi)
+                return in_range >= threshold
 
             dates_to_fetch = [d for d in all_dates if not _range_complete(d.isoformat())]
         else:
@@ -728,7 +735,10 @@ def build(update_only: bool = False, specific_date: date = None,
             range_libs = {label: load_range(year, label) for label, _, _ in owned_ranges}
 
             if range_label:
-                already = set(range_libs[owned_ranges[0][0]]["by_date"].get(ds, {}).keys())
+                _lo = code_lo if code_lo is not None else 0
+                _hi = code_hi if code_hi is not None else 99999
+                already = {c for c in range_libs[owned_ranges[0][0]]["by_date"].get(ds, {}).keys()
+                           if _lo <= int(normalize_code(c)) <= _hi}
             else:
                 already = _stored_codes_for_date(ds)
             todo = [c for c in universe if c not in already]
