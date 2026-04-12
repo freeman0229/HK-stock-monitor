@@ -495,14 +495,14 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "CCASS universe build: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── SDW monthly backfill (manual, 6 parallel sub-ranges) ─────────────────────
-  # Splits 0001_3999 universe into 4 sub-ranges + 6000_6999 + 9600_9999
-  # each running in parallel, all writing to correct 4 range files.
+  # ── SDW monthly backfill (manual, sequential) ───────────────────────────────
+  # Runs 0001_3999 sub-ranges sequentially in one job to avoid git collisions,
+  # then 6000_6999 and 9600_9999 in a separate parallel job (different files).
   # Usage: workflow_dispatch → sdw-backfill, month = YYMM (e.g. 2505)
   sdw-backfill:
     name: SDW backfill ${{ inputs.month }} — ${{ matrix.label }}
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 420
     permissions:
       contents: write
     if: |
@@ -511,22 +511,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: "0001_0999"
+          - label: "0001_3999"
             range: "0001_3999"
-            code_lo: "1"
-            code_hi: "999"
-          - label: "1000_1999"
-            range: "0001_3999"
-            code_lo: "1000"
-            code_hi: "1999"
-          - label: "2000_2999"
-            range: "0001_3999"
-            code_lo: "2000"
-            code_hi: "2999"
-          - label: "3000_3999"
-            range: "0001_3999"
-            code_lo: "3000"
-            code_hi: "3999"
           - label: "6000_6999"
             range: "6000_6999"
             code_lo: "6000"
@@ -544,12 +530,20 @@ jobs:
       - run: playwright install chromium
       - name: Backfill SDW ${{ matrix.label }} for month ${{ inputs.month }}
         run: |
-          python ccass_sdw_library.py \
-            --range ${{ matrix.range }} \
-            --code-lo ${{ matrix.code_lo }} \
-            --code-hi ${{ matrix.code_hi }} \
-            --month ${{ inputs.month }} \
-            --max-minutes 80
+          if [ "${{ matrix.label }}" = "0001_3999" ]; then
+            # Run 4 sub-ranges sequentially — same file, no git conflicts
+            python ccass_sdw_library.py --range 0001_3999 --code-lo 1    --code-hi 999  --month ${{ inputs.month }} --max-minutes 80
+            python ccass_sdw_library.py --range 0001_3999 --code-lo 1000 --code-hi 1999 --month ${{ inputs.month }} --max-minutes 80
+            python ccass_sdw_library.py --range 0001_3999 --code-lo 2000 --code-hi 2999 --month ${{ inputs.month }} --max-minutes 80
+            python ccass_sdw_library.py --range 0001_3999 --code-lo 3000 --code-hi 3999 --month ${{ inputs.month }} --max-minutes 80
+          else
+            python ccass_sdw_library.py \
+              --range ${{ matrix.range }} \
+              --code-lo ${{ matrix.code_lo }} \
+              --code-hi ${{ matrix.code_hi }} \
+              --month ${{ inputs.month }} \
+              --max-minutes 80
+          fi
       - name: Commit
         run: |
           git config --global user.name "Bot"
