@@ -4200,7 +4200,11 @@ function renderHsiPanel() {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}` } }
+        tooltip: {
+          position: 'nearest',
+          yAlign: 'bottom',
+          callbacks: { label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}` }
+        }
       },
       scales: {
         x: { ticks: { callback: (v,i) => i % tickEvery === 0 ? labels[i].slice(0,7) : '', maxRotation: 0, font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } },
