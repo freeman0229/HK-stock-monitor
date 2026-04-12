@@ -1022,24 +1022,12 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <div class="panel" id="panel-hsi">
   <div id="hsi-loading" class="hsi-loading">載入恒生指數預測通道數據中…</div>
   <div id="hsi-content" style="display:none">
-    <div class="hsi-metric-row">
-      <div class="hsi-metric"><div class="lbl">最新收市</div><div class="val" id="hsi-close">--</div></div>
-      <div class="hsi-metric"><div class="lbl">本週高位</div><div class="val up-txt" id="hsi-high">--</div></div>
-      <div class="hsi-metric"><div class="lbl">本週低位</div><div class="val dn-txt" id="hsi-low">--</div></div>
-      <div class="hsi-metric"><div class="lbl">週幅</div><div class="val" id="hsi-range-val">--</div></div>
+    <div class="summary-bar">
+      <div class="sum-card"><div class="sum-label">最新收市</div><div class="sum-val" id="hsi-close">--</div><div class="sum-sub" id="hsi-range-val">--</div></div>
+      <div class="sum-card"><div class="sum-label">預測下週高位</div><div class="sum-val up" id="hsi-ph30">--</div><div class="sum-sub" id="hsi-ph30-sub">&nbsp;</div></div>
+      <div class="sum-card"><div class="sum-label">預測下週低位</div><div class="sum-val dn" id="hsi-pl30">--</div><div class="sum-sub" id="hsi-pl30-sub">&nbsp;</div></div>
     </div>
-    <div class="hsi-metric-row">
-      <div class="hsi-metric"><div class="lbl">預測下週高位</div><div class="val up-txt" id="hsi-ph">--</div></div>
-      <div class="hsi-metric"><div class="lbl">預測下週低位</div><div class="val dn-txt" id="hsi-pl">--</div></div>
-      <div class="hsi-metric"><div class="lbl">預測高位 (3σ)</div><div class="val up-txt" id="hsi-ph30">--</div></div>
-      <div class="hsi-metric"><div class="lbl">預測低位 (3σ)</div><div class="val dn-txt" id="hsi-pl30">--</div></div>
-    </div>
-    <div class="hsi-metric-row">
-      <div class="hsi-metric"><div class="lbl">成交倍數</div><div class="val" id="hsi-vr2">--</div></div>
-      <div class="hsi-metric"><div class="lbl">σ 上行 / 下行</div><div class="val" style="font-size:15px" id="hsi-sigma">--</div></div>
-      <div class="hsi-metric"><div class="lbl">數據更新</div><div class="val" style="font-size:14px" id="hsi-updated">--</div></div>
-      <div class="hsi-metric"><div class="lbl">週數</div><div class="val" id="hsi-weeks">--</div></div>
-    </div>
+
     <div class="sec-sub" style="margin-bottom:8px">
       預測高 = 收市 + σ × 成交倍數 &nbsp;｜&nbsp; amber=2.5σ(90%) &nbsp;｜&nbsp; purple=3σ(94%) &nbsp;｜&nbsp; 下方圖: 週高/低 − 4週均價
     </div>
@@ -1047,11 +1035,11 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
       <label style="font-size:13px;color:var(--muted)">顯示範圍</label>
       <select id="hsi-range" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
-        <option value="52">1年</option>
+        <option value="26">6個月</option>
+        <option value="52" selected>1年</option>
         <option value="104">2年</option>
         <option value="156">3年</option>
-        <option value="260">5年</option>
-        <option value="from2002" selected>2002至今</option>
+        <option value="from2002">2002至今</option>
       </select>
       <label style="font-size:13px;color:var(--muted)">自</label>
       <input type="date" id="hsi-from" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)" value="2002-01-01" min="2002-01-01">
@@ -4086,70 +4074,78 @@ function computeHsiChannel(hsiData) {
   const weekly  = hsiData.weekly;
   const dates   = Object.keys(weekly).sort();
 
-  // Full history σ_up and σ_down
+  // Close-based σ: high - prev_close, prev_close - low
   const upMoves = [], dnMoves = [];
   for (let i = 1; i < dates.length; i++) {
     const pc = weekly[dates[i-1]].c;
-    const h  = weekly[dates[i]].h;
-    const l  = weekly[dates[i]].l;
-    const up = h - pc, dn = pc - l;
+    const up = weekly[dates[i]].h - pc;
+    const dn = pc - weekly[dates[i]].l;
     if (up > 0) upMoves.push(up);
     if (dn > 0) dnMoves.push(dn);
   }
+
+  // Open-based σ: high - open, open - low (same week)
+  const upMovesO = [], dnMovesO = [];
+  for (let i = 0; i < dates.length; i++) {
+    const o  = weekly[dates[i]].o;
+    const up = weekly[dates[i]].h - o;
+    const dn = o - weekly[dates[i]].l;
+    if (up > 0) upMovesO.push(up);
+    if (dn > 0) dnMovesO.push(dn);
+  }
+
   const mean = arr => arr.reduce((a,b) => a+b, 0) / arr.length;
   const std  = arr => { const m = mean(arr); return Math.sqrt(arr.reduce((a,b) => a+(b-m)**2, 0) / arr.length); };
   const sigmaUp   = std(upMoves);
   const sigmaDown = std(dnMoves);
+  const sigmaUpO  = std(upMovesO);
+  const sigmaDownO= std(dnMovesO);
 
-  // Compute channel for each week (need vol for ratio)
+  // Compute channel for each week
   const channel = {};
   for (let i = 1; i < dates.length; i++) {
     const ds  = dates[i];
     const rec = weekly[ds];
     const vol = rec.v || 0;
-
-    // 24-week rolling avg vol (non-zero only)
     const windowVols = [];
     for (let j = Math.max(0, i-24); j < i; j++) {
       if (weekly[dates[j]].v > 0) windowVols.push(weekly[dates[j]].v);
     }
     const avgVol   = windowVols.length > 0 ? mean(windowVols) : 0;
     const volRatio = (vol > 0 && avgVol > 0) ? vol / avgVol : 1.0;
-
     channel[ds] = {
-      su: sigmaUp,
-      sd: sigmaDown,
+      su: sigmaUp, sd: sigmaDown,
+      suo: sigmaUpO, sdo: sigmaDownO,
       vr: volRatio,
       ph: rec.c + sigmaUp   * volRatio,
       pl: rec.c - sigmaDown * volRatio,
     };
   }
-  return { sigmaUp, sigmaDown, channel, dates };
+  return { sigmaUp, sigmaDown, sigmaUpO, sigmaDownO, channel, dates };
 }
 
 function renderHsiPanel() {
   if (!hsiData) return;
   const weekly  = hsiData.weekly;
-  const { sigmaUp, sigmaDown, channel, dates } = computeHsiChannel(hsiData);
+  const { sigmaUp, sigmaDown, sigmaUpO, sigmaDownO, channel, dates } = computeHsiChannel(hsiData);
 
   // Update metric cards (always from latest)
   const lastDs  = dates[dates.length - 1];
   const lastRec = weekly[lastDs];
   const lastCh  = channel[lastDs];
 
-  const vr = lastCh?.vr || 1;
+  const vrLast = lastCh?.vr || 1;
   document.getElementById('hsi-close').textContent    = lastRec.c.toLocaleString();
-  document.getElementById('hsi-high').textContent     = lastRec.h.toLocaleString();
-  document.getElementById('hsi-low').textContent      = lastRec.l.toLocaleString();
-  document.getElementById('hsi-range-val').textContent= (lastRec.h - lastRec.l).toFixed(0) + ' pts';
-  document.getElementById('hsi-ph').textContent       = (lastRec.c + sigmaUp   * vr * 2.5).toFixed(0);
-  document.getElementById('hsi-pl').textContent       = (lastRec.c - sigmaDown * vr * 2.5).toFixed(0);
-  document.getElementById('hsi-ph30').textContent     = (lastRec.c + sigmaUp   * vr * 3.0).toFixed(0);
-  document.getElementById('hsi-pl30').textContent     = (lastRec.c - sigmaDown * vr * 3.0).toFixed(0);
-  document.getElementById('hsi-vr2').textContent      = vr.toFixed(2) + 'x';
-  document.getElementById('hsi-sigma').textContent    = sigmaUp.toFixed(0) + ' / ' + sigmaDown.toFixed(0);
-  document.getElementById('hsi-updated').textContent  = hsiData.meta?.last_updated || '--';
-  document.getElementById('hsi-weeks').textContent    = dates.length + ' 週';
+
+  document.getElementById('hsi-range-val').textContent = 'H ' + lastRec.h.toLocaleString() + '  L ' + lastRec.l.toLocaleString() + '  週幅 ' + (lastRec.h - lastRec.l).toFixed(0);
+  const ph30v = lastRec.c + sigmaUp   * vrLast * 3.0;
+  const pl30v = lastRec.c - sigmaDown * vrLast * 3.0;
+  const ph25v = lastRec.c + sigmaUp   * vrLast * 2.5;
+  const pl25v = lastRec.c - sigmaDown * vrLast * 2.5;
+  document.getElementById('hsi-ph30').textContent      = ph30v.toFixed(0);
+  document.getElementById('hsi-ph30-sub').textContent  = '2.5σ: ' + ph25v.toFixed(0);
+  document.getElementById('hsi-pl30').textContent      = pl30v.toFixed(0);
+  document.getElementById('hsi-pl30-sub').textContent  = '2.5σ: ' + pl25v.toFixed(0);
 
   // Set default 'to' date to latest
   const toEl = document.getElementById('hsi-to');
@@ -4190,13 +4186,13 @@ function renderHsiPanel() {
     data: {
       labels,
       datasets: [
-        { label: '3σ高',    data: view.map(d=>+(weekly[d].c+sigmaUp  *channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(83,74,183,0.7)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
-        { label: '2.5σ高',  data: view.map(d=>+(weekly[d].c+sigmaUp  *channel[d].vr*2.5).toFixed(0)), borderColor:'rgba(186,117,23,0.85)',borderWidth:1.5, borderDash:[4,3], pointRadius:0, fill:false, tension:0.2 },
-        { label: '實際高位', data: high, borderColor: 'rgba(226,75,74,0.5)', borderWidth: 1, pointRadius: 0, fill: false, tension: 0.2, borderDash: [2,2] },
-        { label: '收市價',   data: close, borderColor: '#378ADD', borderWidth: 2, pointRadius: 0, fill: false, tension: 0.2 },
-        { label: '實際低位', data: low,  borderColor: 'rgba(226,75,74,0.5)', borderWidth: 1, pointRadius: 0, fill: false, tension: 0.2, borderDash: [2,2] },
-        { label: '2.5σ低',  data: view.map(d=>+(weekly[d].c-sigmaDown*channel[d].vr*2.5).toFixed(0)), borderColor:'rgba(186,117,23,0.85)',borderWidth:1.5, borderDash:[4,3], pointRadius:0, fill:false, tension:0.2 },
-        { label: '3σ低',    data: view.map(d=>+(weekly[d].c-sigmaDown*channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(83,74,183,0.7)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
+        { label: '收市3σ高', data: view.map(d=>+(weekly[d].c+sigmaUp  *channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(83,74,183,0.85)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
+        { label: '開市3σ高', data: view.map(d=>+(weekly[d].o+sigmaUpO *channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(186,117,23,0.85)', borderWidth:1.5, borderDash:[4,3], pointRadius:0, fill:false, tension:0.2 },
+        { label: '實際高位',  data: view.map(d => weekly[d].h), borderColor:'rgba(136,135,128,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2] },
+        { label: '收市價',    data: view.map(d => weekly[d].c), borderColor:'#378ADD', borderWidth:2, pointRadius:0, fill:false, tension:0.2 },
+        { label: '實際低位',  data: view.map(d => weekly[d].l), borderColor:'rgba(136,135,128,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2] },
+        { label: '開市3σ低', data: view.map(d=>+(weekly[d].o-sigmaDownO*channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(186,117,23,0.85)', borderWidth:1.5, borderDash:[4,3], pointRadius:0, fill:false, tension:0.2 },
+        { label: '收市3σ低', data: view.map(d=>+(weekly[d].c-sigmaDown *channel[d].vr*3.0).toFixed(0)), borderColor:'rgba(83,74,183,0.85)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
       ]
     },
     options: {
@@ -4290,9 +4286,27 @@ async function initHsiPanel() {
       else { setTimeout(resolve, 500); }
     });
   }
-  if (hsiData) { renderHsiPanel(); return; }
-  const ok = await loadHsiData();
-  if (ok) renderHsiPanel();
+  if (!hsiData) {
+    const ok = await loadHsiData();
+    if (!ok) return;
+  }
+  // Set from date based on selected dropdown before first render
+  const rangeEl = document.getElementById('hsi-range');
+  const fromEl  = document.getElementById('hsi-from');
+  const toEl    = document.getElementById('hsi-to');
+  if (rangeEl && fromEl) {
+    const v = rangeEl.value;
+    const dates = Object.keys(hsiData.weekly).sort();
+    const lastDs = dates[dates.length - 1];
+    if (toEl && !toEl.value) toEl.value = lastDs;
+    if (v === 'from2002') {
+      fromEl.value = '2002-01-01';
+    } else {
+      const nw = parseInt(v);
+      fromEl.value = dates.length > nw ? dates[dates.length - nw] : '2002-01-01';
+    }
+  }
+  renderHsiPanel();
 }
 
 </script>
