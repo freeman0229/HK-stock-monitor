@@ -4209,8 +4209,28 @@ function renderHsiPanel() {
       plugins: {
         legend: { display: false },
         tooltip: {
-          position: 'nearest',
-          yAlign: 'bottom',
+          external: function(context) {
+            let tooltip = document.getElementById('hsiTooltip');
+            if (!tooltip) {
+              tooltip = document.createElement('div');
+              tooltip.id = 'hsiTooltip';
+              tooltip.style.cssText = 'position:absolute;background:rgba(0,0,0,0.8);color:#fff;padding:8px 10px;border-radius:6px;font-size:11px;pointer-events:none;z-index:100;line-height:1.6;min-width:160px';
+              context.chart.canvas.parentNode.style.position = 'relative';
+              context.chart.canvas.parentNode.appendChild(tooltip);
+            }
+            const model = context.tooltip;
+            if (model.opacity === 0) { tooltip.style.opacity = 0; return; }
+            tooltip.style.opacity = 1;
+            tooltip.innerHTML = `<div style="font-weight:500;margin-bottom:4px">${model.title?.[0] || ''}</div>` +
+              model.body.map((b,i) => {
+                const c = model.labelColors[i];
+                return `<div><span style="display:inline-block;width:8px;height:8px;background:${c.borderColor};margin-right:4px;border-radius:1px"></span>${b.lines[0]}</div>`;
+              }).join('');
+            // Pin to top-right of chart
+            tooltip.style.right = '8px';
+            tooltip.style.top   = '8px';
+            tooltip.style.left  = 'auto';
+          },
           callbacks: { label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}` }
         }
       },
