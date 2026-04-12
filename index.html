@@ -1037,6 +1037,23 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="sec-sub" style="margin-bottom:8px">
       預測高 = 收市 + σ_上行 × 成交倍數 &nbsp;｜&nbsp; 預測低 = 收市 − σ_下行 × 成交倍數 &nbsp;｜&nbsp; 成交倍數 = 本週成交量 ÷ 24週均量
     </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+      <label style="font-size:13px;color:var(--muted)">顯示範圍</label>
+      <select id="hsi-range" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
+        <option value="52">1年</option>
+        <option value="104">2年</option>
+        <option value="156">3年</option>
+        <option value="260">5年</option>
+        <option value="all">全部 (1987至今)</option>
+      </select>
+      <label style="font-size:13px;color:var(--muted)">自</label>
+      <input type="date" id="hsi-from" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)" value="2021-09-01" min="1987-01-01">
+      <label style="font-size:13px;color:var(--muted)">至</label>
+      <input type="date" id="hsi-to" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
+      <button id="hsi-apply" style="font-size:13px;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer">套用</button>
+    </div>
+
     <div class="hsi-chart-wrap"><canvas id="hsiCanvas" role="img" aria-label="HSI weekly price channel">HSI weekly channel chart.</canvas></div>
     <div class="hsi-vol-wrap"><canvas id="hsiVolCanvas" role="img" aria-label="HSI volume ratio">HSI volume ratio.</canvas></div>
   </div>
@@ -4109,7 +4126,7 @@ function renderHsiPanel() {
   const weekly  = hsiData.weekly;
   const { sigmaUp, sigmaDown, channel, dates } = computeHsiChannel(hsiData);
 
-  // Update metric cards
+  // Update metric cards (always from latest)
   const lastDs  = dates[dates.length - 1];
   const lastRec = weekly[lastDs];
   const lastCh  = channel[lastDs];
@@ -4123,20 +4140,28 @@ function renderHsiPanel() {
   document.getElementById('hsi-updated').textContent = hsiData.meta?.last_updated || '--';
   document.getElementById('hsi-weeks').textContent   = dates.length + ' 週';
 
-  // Last 156 weeks (3 years) for chart
-  const n      = Math.min(156, dates.length);
-  const ds156  = dates.slice(-n);
-  const labels = ds156;
-  const close  = ds156.map(d => weekly[d].c);
-  const high   = ds156.map(d => weekly[d].h);
-  const low    = ds156.map(d => weekly[d].l);
-  const ph     = ds156.map(d => channel[d]?.ph || null);
-  const pl     = ds156.map(d => channel[d]?.pl || null);
-  const vr     = ds156.map(d => channel[d]?.vr || 1);
+  // Set default 'to' date to latest
+  const toEl = document.getElementById('hsi-to');
+  if (toEl && !toEl.value) toEl.value = lastDs;
 
-  const isDark = matchMedia('(prefers-color-scheme:dark)').matches;
+  // Apply date range from controls
+  const fromEl = document.getElementById('hsi-from');
+  const from   = (fromEl?.value) || '2021-09-01';
+  const to     = (toEl?.value)   || lastDs;
+  const filtered = dates.filter(d => d >= from && d <= to);
+  const view     = filtered.length >= 4 ? filtered : dates.slice(-52);
 
-  // Destroy old charts
+  const labels = view;
+  const close  = view.map(d => weekly[d].c);
+  const high   = view.map(d => weekly[d].h);
+  const low    = view.map(d => weekly[d].l);
+  const ph     = view.map(d => channel[d]?.ph || null);
+  const pl     = view.map(d => channel[d]?.pl || null);
+  const vr     = view.map(d => channel[d]?.vr || 1);
+
+  const isDark    = matchMedia('(prefers-color-scheme:dark)').matches;
+  const tickEvery = view.length > 260 ? 52 : view.length > 104 ? 26 : view.length > 52 ? 13 : 4;
+
   if (hsiChartInst) { hsiChartInst.destroy(); hsiChartInst = null; }
   if (hsiVolInst)   { hsiVolInst.destroy();   hsiVolInst   = null; }
 
@@ -4160,7 +4185,7 @@ function renderHsiPanel() {
         tooltip: { callbacks: { label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}` } }
       },
       scales: {
-        x: { ticks: { callback: (v,i) => i % 13 === 0 ? labels[i].slice(0,7) : '', maxRotation: 0, font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } },
+        x: { ticks: { callback: (v,i) => i % tickEvery === 0 ? labels[i].slice(0,7) : '', maxRotation: 0, font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } },
         y: { ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } }
       }
     }
@@ -4189,6 +4214,30 @@ function renderHsiPanel() {
 
   document.getElementById('hsi-loading').style.display  = 'none';
   document.getElementById('hsi-content').style.display  = 'block';
+
+  // Wire up range selector
+  const rangeEl  = document.getElementById('hsi-range');
+  const applyBtn = document.getElementById('hsi-apply');
+
+  if (rangeEl && !rangeEl._hsiWired) {
+    rangeEl._hsiWired = true;
+    rangeEl.addEventListener('change', () => {
+      const v = rangeEl.value;
+      if (v === 'all') {
+        document.getElementById('hsi-from').value = dates[0];
+      } else {
+        const nw = parseInt(v);
+        const fromDate = dates.length > nw ? dates[dates.length - nw] : dates[0];
+        document.getElementById('hsi-from').value = fromDate;
+      }
+      document.getElementById('hsi-to').value = lastDs;
+      renderHsiPanel();
+    });
+  }
+  if (applyBtn && !applyBtn._hsiWired) {
+    applyBtn._hsiWired = true;
+    applyBtn.addEventListener('click', () => renderHsiPanel());
+  }
 }
 
 async function initHsiPanel() {
