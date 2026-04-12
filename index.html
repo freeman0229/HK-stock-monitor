@@ -1024,8 +1024,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <div id="hsi-content" style="display:none">
     <div class="summary-bar">
       <div class="sum-card"><div class="sum-label">最新收市</div><div class="sum-val" id="hsi-close">--</div><div class="sum-sub" id="hsi-range-val">--</div></div>
-      <div class="sum-card"><div class="sum-label">預測下週高位</div><div class="sum-val up" id="hsi-ph30">--</div><div class="sum-sub" id="hsi-ph30-sub">&nbsp;</div></div>
-      <div class="sum-card"><div class="sum-label">預測下週低位</div><div class="sum-val dn" id="hsi-pl30">--</div><div class="sum-sub" id="hsi-pl30-sub">&nbsp;</div></div>
+      <div class="sum-card"><div class="sum-label">預測下週高位 (均值3σ)</div><div class="sum-val up" id="hsi-ph30">--</div><div class="sum-sub" id="hsi-ph30-sub">&nbsp;</div></div>
+      <div class="sum-card"><div class="sum-label">預測下週低位 (均值3σ)</div><div class="sum-val dn" id="hsi-pl30">--</div><div class="sum-sub" id="hsi-pl30-sub">&nbsp;</div></div>
     </div>
 
     <div class="sec-sub" style="margin-bottom:8px">
@@ -4142,10 +4142,20 @@ function renderHsiPanel() {
   const pl30v = lastRec.c - sigmaDown * vrLast * 3.0;
   const ph25v = lastRec.c + sigmaUp   * vrLast * 2.5;
   const pl25v = lastRec.c - sigmaDown * vrLast * 2.5;
-  document.getElementById('hsi-ph30').textContent      = ph30v.toFixed(0);
-  document.getElementById('hsi-ph30-sub').textContent  = '2.5σ: ' + ph25v.toFixed(0);
-  document.getElementById('hsi-pl30').textContent      = pl30v.toFixed(0);
-  document.getElementById('hsi-pl30-sub').textContent  = '2.5σ: ' + pl25v.toFixed(0);
+  // Open-based predictions
+  const ph30o = lastRec.o + sigmaUpO   * vrLast * 3.0;
+  const pl30o = lastRec.o - sigmaDownO * vrLast * 3.0;
+  const ph25o = lastRec.o + sigmaUpO   * vrLast * 2.5;
+  const pl25o = lastRec.o - sigmaDownO * vrLast * 2.5;
+  // Averaged predictions
+  const ph30avg = (ph30v + ph30o) / 2;
+  const pl30avg = (pl30v + pl30o) / 2;
+  const ph25avg = (ph25v + ph25o) / 2;
+  const pl25avg = (pl25v + pl25o) / 2;
+  document.getElementById('hsi-ph30').textContent      = ph30avg.toFixed(0);
+  document.getElementById('hsi-ph30-sub').textContent  = '2.5σ: ' + ph25avg.toFixed(0);
+  document.getElementById('hsi-pl30').textContent      = pl30avg.toFixed(0);
+  document.getElementById('hsi-pl30-sub').textContent  = '2.5σ: ' + pl25avg.toFixed(0);
 
   // Set default 'to' date to latest
   const toEl = document.getElementById('hsi-to');
