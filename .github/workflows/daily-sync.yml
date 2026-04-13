@@ -87,9 +87,10 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in ccass_20*.json ccass_sdw_*_20*.json ccass_sdw_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
+          for f in ccass_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
+          [ -f "ccass_sdw.db" ] && git add "ccass_sdw.db"
           git diff --staged --quiet || \
             (git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')" && git push)
 
@@ -527,6 +528,7 @@ jobs:
   # ── SDW migrate JSON → SQLite (one-time) ─────────────────────────────────────
   # Place all ccass_sdw_*.json files in the repo root, then run this job.
   # Imports them into ccass_sdw.db and commits the DB.
+  # Note: no Playwright install needed — pure file I/O, no browser required.
   sdw-migrate-json:
     name: SDW migrate ccass_sdw_*.json → ccass_sdw.db
     runs-on: ubuntu-latest
@@ -542,9 +544,23 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Import JSON files into SQLite DB
-        run: python ccass_sdw_library.py --migrate-json
+        run: python ccass_sdw_library.py --migrate-sqlite
       - name: Show DB stats
-        run: python ccass_sdw_library.py --stats
+        run: |
+          python -c "
+          import sqlite3, os
+          if not os.path.exists('ccass_sdw.db'):
+              print('ccass_sdw.db not found')
+          else:
+              conn = sqlite3.connect('ccass_sdw.db')
+              dates    = conn.execute('SELECT COUNT(DISTINCT date) FROM metadata').fetchone()[0]
+              codes    = conn.execute('SELECT COUNT(DISTINCT code) FROM metadata').fetchone()[0]
+              meta     = conn.execute('SELECT COUNT(*) FROM metadata').fetchone()[0]
+              holdings = conn.execute('SELECT COUNT(*) FROM holdings').fetchone()[0]
+              kb       = os.path.getsize('ccass_sdw.db') / 1024
+              print(f'ccass_sdw.db  {dates} dates  {codes} codes  {meta} metadata rows  {holdings} holding rows  {kb:.0f} KB')
+              conn.close()
+          "
       - name: Commit DB
         run: |
           git config --global user.name "Bot"
