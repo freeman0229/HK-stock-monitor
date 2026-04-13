@@ -1334,33 +1334,23 @@ def _export_csv(code: str, path: str = DB_PATH) -> None:
 def _migrate_json(path: str = DB_PATH) -> None:
     """Import legacy JSON range files into the SQLite DB.
 
-    Supports both filename conventions:
-      - ccass_sdw_<range>_<year>.json  (e.g. ccass_sdw_0001_3999_2025.json)
-      - holdings_<range>_<year>.json   (older naming)
-
-    Auto-detects two JSON structure variants:
-
-    Variant A — date-keyed (outer key is a date string):
+    Supports the current file format produced by the old library:
       {
-        "2025-04-05": {
-          "00700": {
-            "participants": [{"pid": "B01234", "name": "...", "sh": 100, "pct": 0.5}],
-            "total_sh": 200,
-            "issued_sh": 1000
+        "meta": { ... },
+        "by_date": {
+          "YYYY-MM-DD": {
+            "00700": {
+              "p": [{"pid": "B01234", "name": "...", "sh": 100, "pct": 0.5}],
+              "total_sh": 200,
+              "issued_sh": 1000
+            }
           }
         }
       }
 
-    Variant B — code-keyed (outer key is a stock code):
-      {
-        "00700": {
-          "2025-04-05": {
-            "participants": [...],
-            "total_sh": 200,
-            "issued_sh": 1000
-          }
-        }
-      }
+    Also handles the legacy flat variant where participants are stored under
+    "participants" with "shares" instead of "p"/"sh", and files that have the
+    date at the top level (no "by_date" wrapper).
 
     Skips any (date, code) pairs already present in the DB.
     """
@@ -1400,22 +1390,35 @@ def _migrate_json(path: str = DB_PATH) -> None:
             log.warning("  ✗ skip %s: top-level is not a dict", fpath)
             continue
 
-        # ── Auto-detect structure variant ─────────────────────────────────
-        # Sample the first key to determine layout.
-        first_key    = next(iter(data))
-        date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-        variant_a    = bool(date_pattern.match(first_key))
+        # ── Unwrap by_date if present ──────────────────────────────────────
+        # Current format: {"meta": {...}, "by_date": {"YYYY-MM-DD": {code: payload}}}
+        if "by_date" in data:
+            by_date: dict = data["by_date"]
+        else:
+            # Flat format: top level is either date-keyed or code-keyed
+            by_date = data
 
-        def iter_records(d: dict, *, date_first: bool):
-            if date_first:
-                # Variant A: { "YYYY-MM-DD": { code: payload } }
+        # ── Determine layout of by_date ────────────────────────────────────
+        # After unwrapping, expect {"YYYY-MM-DD": {code: payload}}
+        # Guard against empty files
+        if not by_date:
+            log.info("  ✗ skip %s: by_date is empty", fpath)
+            continue
+
+        date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+        first_key    = next(iter(by_date))
+
+        if date_pattern.match(first_key):
+            # Standard: date → code → payload
+            def iter_records(d: dict):
                 for ds, codes_dict in d.items():
                     if not isinstance(codes_dict, dict):
                         continue
                     for code, payload in codes_dict.items():
                         yield ds, code, payload
-            else:
-                # Variant B: { code: { "YYYY-MM-DD": payload } }
+        else:
+            # Inverted: code → date → payload
+            def iter_records(d: dict):
                 _dp = re.compile(r"^\d{4}-\d{2}-\d{2}$")
                 for code, dates_dict in d.items():
                     if not isinstance(dates_dict, dict):
@@ -1428,7 +1431,7 @@ def _migrate_json(path: str = DB_PATH) -> None:
         imported = 0
         skipped  = 0
         with get_conn(path) as conn:
-            for ds, code, payload in iter_records(data, date_first=variant_a):
+            for ds, code, payload in iter_records(by_date):
                 try:
                     code5 = normalize_code(code)
                 except Exception:
@@ -1450,16 +1453,21 @@ def _migrate_json(path: str = DB_PATH) -> None:
                        VALUES (?, ?, ?, ?, ?)""",
                     (ds, code5, total_sh, issued_sh, _now_iso()),
                 )
-                for p in payload.get("participants", []):
+
+                # Support both "p" (current) and "participants" (legacy) keys
+                participants = payload.get("p") or payload.get("participants", [])
+                for p in participants:
                     conn.execute(
                         """INSERT OR REPLACE INTO holdings
                            (date, code, pid, name, shares, pct)
                            VALUES (?, ?, ?, ?, ?, ?)""",
-                        (ds, code5,
-                         p.get("pid",  ""),
-                         p.get("name", ""),
-                         p.get("sh", p.get("shares", 0)),
-                         p.get("pct", 0.0)),
+                        (
+                            ds, code5,
+                            p.get("pid",  ""),
+                            p.get("name", ""),
+                            p.get("sh", p.get("shares", 0)),
+                            p.get("pct", 0.0),
+                        ),
                     )
                 imported += 1
 
