@@ -1045,6 +1045,73 @@ def get_holders_history(stock_code: str, n: int, before: str) -> list:
     return result
 
 
+# ── Clear partial dates ──────────────────────────────────────────────────────
+
+def clear_partial_dates(range_label: str = None, code_lo: int = None,
+                        code_hi: int = None, month: str = None):
+    """
+    Remove dates from range files where the sub-range stock count is below
+    95% of the expected universe size. Safe to run before a re-backfill.
+    """
+    if not range_label:
+        log.error("--clear-partial requires --range")
+        return
+
+    owned = [(lbl, lo, hi) for lbl, lo, hi in RANGES if lbl == range_label]
+    if not owned:
+        log.error("Unknown range_label %r", range_label)
+        return
+
+    universe = get_sdw_universe()
+    owned_lo, owned_hi = owned[0][1], owned[0][2]
+    universe = [c for c in universe if owned_lo <= int(normalize_code(c)) <= owned_hi]
+    if code_lo is not None or code_hi is not None:
+        lo = code_lo or 0
+        hi = code_hi or 99999
+        universe = [c for c in universe if lo <= int(normalize_code(c)) <= hi]
+    else:
+        lo, hi = 0, 99999
+
+    threshold = max(1, int(len(universe) * 0.95))
+    log.info("clear-partial: range=%s sub=%d-%d universe=%d threshold=%d",
+             range_label, lo, hi, len(universe), threshold)
+
+    # Optional month filter
+    if month:
+        if len(month) == 4:
+            month = f"20{month}"
+        yyyy, mm = int(month[:4]), int(month[4:6])
+
+    cleared = 0
+    for year in range(START_DATE.year, date.today().year + 1):
+        p = lib_path(year, range_label)
+        if not os.path.exists(p):
+            continue
+        lib = load_range(year, range_label)
+        by_date = lib["by_date"]
+        to_clear = []
+        for ds, day in by_date.items():
+            if month and not (int(ds[:4]) == yyyy and int(ds[5:7]) == mm):
+                continue
+            in_range = sum(1 for c in day if lo <= int(normalize_code(c)) <= hi)
+            if in_range < threshold:
+                to_clear.append((ds, in_range))
+        for ds, n in to_clear:
+            # Remove only keys within our sub-range, preserve other sub-ranges
+            keys_to_del = [c for c in by_date[ds] if lo <= int(normalize_code(c)) <= hi]
+            for c in keys_to_del:
+                del by_date[ds][c]
+            # If date is now completely empty, remove the date entry entirely
+            if not by_date[ds]:
+                del by_date[ds]
+            cleared += 1
+            log.info("  Cleared %s (%d/%d stocks in sub-range)", ds, n, len(universe))
+        if to_clear:
+            save_range(year, range_label, lib)
+
+    log.info("clear-partial: %d dates cleared", cleared)
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _query(code: str, top: int, ds: str = None):
@@ -1100,16 +1167,24 @@ if __name__ == "__main__":
                     help="Lower bound for stock code sub-range filter (inclusive)")
     ap.add_argument("--code-hi",     type=int, metavar="N",
                     help="Upper bound for stock code sub-range filter (inclusive)")
-    ap.add_argument("--migrate",     action="store_true",
+    ap.add_argument("--migrate",       action="store_true",
                     help="Migrate old single-file ccass_sdw_{YYYY}.json to 4-range format")
-    ap.add_argument("--migrate-old", action="store_true",
+    ap.add_argument("--migrate-old",   action="store_true",
                     help="Migrate old 7-range files to new 4-range format (run after backfill)")
+    ap.add_argument("--clear-partial", action="store_true",
+                    help="Remove dates below 95%% threshold from range file before backfill")
     args = ap.parse_args()
 
     if args.migrate:
         migrate_to_range_split()
     elif getattr(args, "migrate_old", False):
         migrate_from_old_ranges()
+    elif getattr(args, "clear_partial", False):
+        clear_partial_dates(
+            range_label=getattr(args, "range", None),
+            code_lo=getattr(args, "code_lo", None),
+            code_hi=getattr(args, "code_hi", None),
+            month=getattr(args, "month", None))
     elif args.query:
         _query(args.query, args.top, args.date)
     else:
