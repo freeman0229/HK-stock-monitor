@@ -467,7 +467,7 @@ def verify_db(path: str = DB_PATH) -> bool:
 
 # ── Stock universe ────────────────────────────────────────────────────────────
 
-def get_sdw_universe() -> list[str]:
+def get_sdw_universe(path: str = DB_PATH) -> list[str]:
     """Return the stock universe to fetch.
 
     Primary source: ccass_universe.get_universe_codes() — single source of truth.
@@ -484,7 +484,7 @@ def get_sdw_universe() -> list[str]:
         )
 
     try:
-        with get_conn() as conn:
+        with get_conn(path) as conn:
             rows = conn.execute("SELECT DISTINCT code FROM metadata").fetchall()
         codes = sorted({r[0] for r in rows}, key=lambda x: int(normalize_code(x)))
         if codes:
@@ -881,7 +881,6 @@ def _worker(
     codes        : list[str],
     d            : date,
     blocked_codes: dict[str, int],
-    active_workers: list[int],
     block_lock   : threading.Lock,
 ) -> tuple[list[tuple[str, HoldingEntry]], WorkerStats]:
     """Fetch a chunk of stock codes for date *d* using a dedicated browser.
@@ -894,10 +893,8 @@ def _worker(
 
     Persistent block memory: codes whose block count exceeds
     BLOCK_SKIP_THRESHOLD are skipped entirely for the remainder of this date.
-    The orchestrator reads active_workers[0] (a shared mutable int) to check
-    whether the worker cap has been reduced mid-run.
 
-    Per-worker circuit breaker still fires on too many consecutive errors.
+    Per-worker circuit breaker fires on too many consecutive errors.
     Adaptive sleep backs off when the overall error rate climbs above
     ERROR_RATE_THRESHOLD.
 
@@ -1077,18 +1074,19 @@ def build_clean(
 ) -> None:
     """Main orchestration loop: fetch all codes for each date in *dates*.
 
-    Distributes codes across up to active_workers[0] parallel SDWBrowser
-    workers. Two adaptive mechanisms span the entire run (across all dates):
+    Distributes codes across up to active_workers parallel SDWBrowser workers.
+    Two adaptive mechanisms span the entire run (across all dates):
 
     1. Persistent block memory  (blocked_codes)
        Each time a code returns "blocked", blocked_codes[code] is incremented
        by the worker. Codes that reach BLOCK_SKIP_THRESHOLD (3) are silently
        skipped by every subsequent worker for the rest of the run.
 
-    2. Adaptive worker count  (active_workers)
-       After each worker completes, if cumulative blocks for that date exceed
-       ADAPTIVE_WORKER_BLOCK_LIMIT (2), the active worker cap is reduced to
-       REDUCED_WORKERS (2). The reduced cap persists across subsequent dates.
+    2. Adaptive worker count
+       - If cumulative blocks for a date exceed ADAPTIVE_WORKER_BLOCK_LIMIT (2),
+         the active worker cap is reduced to REDUCED_WORKERS (2).
+       - After WORKER_RECOVERY_STREAK consecutive clean dates (no blocks, no
+         circuit-breaker trips), the cap recovers by +1, up to MAX_WORKERS.
 
     Global circuit-breaker cooldowns are also applied per-date:
       total_blocked > GLOBAL_BLOCK_THRESHOLD  → 5-minute cooldown
@@ -1103,17 +1101,19 @@ def build_clean(
     GLOBAL_NETWORK_THRESHOLD   : int = 20
     ADAPTIVE_WORKER_BLOCK_LIMIT: int = 2   # blocks in one date before reducing workers
     REDUCED_WORKERS            : int = 2
+    WORKER_RECOVERY_STREAK     : int = 2   # clean dates before stepping workers back up
 
     init_db(path)
-    universe = get_sdw_universe()
+    universe = get_sdw_universe(path)
     if not universe:
         log.error("Empty universe — aborting")
         return
 
     # ── Shared adaptive state (persists across all dates) ─────────────────
     blocked_codes : dict[str, int] = {}          # code → lifetime block count
-    active_workers: list[int]      = [MAX_WORKERS]  # mutable cap; [0] is current value
+    active_workers: int            = MAX_WORKERS  # current worker cap
     block_lock    : threading.Lock = threading.Lock()  # guards blocked_codes mutations
+    clean_streak  : int            = 0            # consecutive dates with no blocks
 
     for d in dates:
         ds      = d.strftime("%Y-%m-%d")
@@ -1133,9 +1133,13 @@ def build_clean(
 
         if update and not pending:
             log.info("  ⏭  %s — all %d codes already present, skipping", ds, len(universe))
+            clean_streak += 1
+            active_workers = _maybe_recover_workers(
+                active_workers, clean_streak, WORKER_RECOVERY_STREAK, MAX_WORKERS
+            )
             continue
 
-        n_workers = active_workers[0]
+        n_workers = active_workers
         log.info(
             "━━━ %s — %d pending / %d total (already=%d skipped=%d workers=%d)",
             ds, len(pending), len(universe), len(already), len(skip_set), n_workers,
@@ -1156,7 +1160,7 @@ def build_clean(
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             futures = {
                 pool.submit(
-                    _worker, wid, chunk, d, blocked_codes, active_workers, block_lock
+                    _worker, wid, chunk, d, blocked_codes, block_lock
                 ): wid
                 for wid, chunk in enumerate(chunks, 1)
             }
@@ -1178,21 +1182,26 @@ def build_clean(
                 total_blocked += w_stats.blocked
                 total_network += w_stats.network
 
-                # ── Adaptive worker count ─────────────────────────────────
-                if (
-                    total_blocked > ADAPTIVE_WORKER_BLOCK_LIMIT
-                    and active_workers[0] > REDUCED_WORKERS
-                ):
-                    active_workers[0] = REDUCED_WORKERS
-                    log.warning(
-                        "🔻 %d blocks detected this date — reducing active "
-                        "workers to %d for remainder of run",
-                        total_blocked, REDUCED_WORKERS,
-                    )
-
                 # Persist this worker's results immediately
                 if w_results:
                     _save_results(w_results, ds, path)
+
+        # ── Adaptive worker count ──────────────────────────────────────────
+        if total_blocked > ADAPTIVE_WORKER_BLOCK_LIMIT and active_workers > REDUCED_WORKERS:
+            active_workers = REDUCED_WORKERS
+            clean_streak   = 0
+            log.warning(
+                "🔻 %d blocks detected this date — reducing active "
+                "workers to %d for remainder of run",
+                total_blocked, REDUCED_WORKERS,
+            )
+        elif total_blocked == 0 and summary.errors == 0:
+            clean_streak  += 1
+            active_workers = _maybe_recover_workers(
+                active_workers, clean_streak, WORKER_RECOVERY_STREAK, MAX_WORKERS
+            )
+        else:
+            clean_streak = 0
 
         # ── Global circuit breakers ────────────────────────────────────────
         if total_blocked > GLOBAL_BLOCK_THRESHOLD:
@@ -1212,6 +1221,20 @@ def build_clean(
         if d != dates[-1]:
             log.debug("Sleeping %.0fs between dates …", INTER_DATE_SLEEP_SEC)
             time.sleep(INTER_DATE_SLEEP_SEC)
+
+
+def _maybe_recover_workers(
+    current: int, streak: int, threshold: int, cap: int
+) -> int:
+    """Step worker count up by 1 after *threshold* consecutive clean dates."""
+    if streak > 0 and streak % threshold == 0 and current < cap:
+        new = current + 1
+        log.info(
+            "⬆️  %d clean date(s) — recovering workers %d → %d",
+            streak, current, new,
+        )
+        return new
+    return current
 
 # ── CLI helpers ───────────────────────────────────────────────────────────────
 
