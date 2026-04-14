@@ -57,6 +57,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from queue import Queue, Empty as QueueEmpty
 from typing import Generator
 from urllib.parse import urlparse
 
@@ -100,7 +101,15 @@ START_DATE         : date = date(2025, 4, 5)
 HKEX_WINDOW_MONTHS : int  = 12     # rolling availability window on HKEX SDW
 SCHEMA_VERSION     : int  = 3
 
+# Known-empty cache
+EMPTY_SKIP_WEEKS   : int  = 4      # skip a code after this many consecutive empty weeks
+EMPTY_RECHECK_WEEKS: int  = 8      # re-check a skipped code every N weeks regardless
+
 _PROXY: str | None = os.getenv("SDW_PROXY", "").strip() or None
+if _PROXY:
+    log.info("SDW proxy configured: %s…", _PROXY[:40])
+else:
+    log.info("SDW proxy not set — running in direct mode")
 
 _USER_AGENTS: list[str] = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -367,6 +376,13 @@ def init_db(path: str = DB_PATH) -> None:
                 value TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS known_empty (
+                code            TEXT PRIMARY KEY,
+                consecutive     INTEGER NOT NULL DEFAULT 0,
+                last_empty_date TEXT,
+                last_check_date TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_meta_date
                 ON metadata(date);
             CREATE INDEX IF NOT EXISTS idx_meta_code
@@ -521,6 +537,8 @@ class SDWBrowser:
         self._req_count      : int         = 0
         self._on_sdw         : bool        = False
         self._proxy_failures : int         = 0
+        self._direct_failures: int         = 0   # consecutive failures after proxy fallback
+        self.dead            : bool        = False  # set True when both proxy+direct fail
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -574,7 +592,6 @@ class SDWBrowser:
         self._proxy_failures = 0
         self._launch_browser(force_direct=True)
         self._new_context()
-
     def _new_context(self) -> None:
         """Close the current context and open a fresh one.
 
@@ -703,7 +720,7 @@ class SDWBrowser:
 
                 content = page.content()
 
-                # ── Block detection ───────────────────────────────────────────
+                # ── Block detection: string patterns ──────────────────────────
                 if any(pat in content for pat in BLOCK_PATTERNS):
                     log.warning(
                         "⚠️ Block detected for %s %s (attempt %d/%d)",
@@ -711,6 +728,19 @@ class SDWBrowser:
                     )
                     self._on_sdw = False
                     return FetchResult("blocked", None, "block page")
+
+                # ── Block detection: structural validation ────────────────────
+                # Akamai often returns HTTP 200 with a JS challenge, blank table,
+                # or partial HTML that has no SDW form at all. Catch these silent
+                # blocks by requiring the SDW search form marker to be present.
+                if not _is_valid_sdw_page(content):
+                    log.warning(
+                        "⚠️ Invalid SDW structure for %s %s (attempt %d/%d) — "
+                        "silent block or page not loaded",
+                        code5, date_str, attempt, MAX_FETCH_ATTEMPTS,
+                    )
+                    self._on_sdw = False
+                    return FetchResult("blocked", None, "invalid structure")
 
                 # ── Parse and classify success/empty ─────────────────────────
                 entry = _parse_response(content, code5, date_str)
@@ -721,11 +751,17 @@ class SDWBrowser:
                 return FetchResult("ok", entry)
 
             except Exception as exc:
-                err_str      = str(exc)
-                is_proxy_err = any(p in err_str for p in [
+                err_str = str(exc)
+                # Only classify as proxy error if we're actually using a proxy.
+                # ERR_TUNNEL_CONNECTION_FAILED looks like a proxy error but also
+                # fires on direct connections when the host is unreachable —
+                # checking _using_proxy prevents misclassification after fallback.
+                # "proxy"/"Proxy" removed — too broad, matches unrelated messages.
+                is_proxy_err = self._using_proxy and any(p in err_str for p in [
                     "ProxyError", "RemoteDisconnected", "Unable to connect to proxy",
-                    "proxy", "Proxy", "ERR_CONNECTION_CLOSED", "ERR_SSL_PROTOCOL_ERROR",
+                    "ERR_CONNECTION_CLOSED", "ERR_SSL_PROTOCOL_ERROR",
                     "ERR_TUNNEL_CONNECTION_FAILED", "ERR_CONNECTION_RESET",
+                    "ERR_PROXY_CONNECTION_FAILED", "net::ERR_SOCKS_CONNECTION_FAILED",
                 ])
 
                 if is_proxy_err:
@@ -736,12 +772,29 @@ class SDWBrowser:
                         code5, date_str, attempt, MAX_FETCH_ATTEMPTS,
                         self._proxy_failures, err_str[:200],
                     )
-                    if self._proxy_cfg and self._proxy_failures >= PROXY_FAIL_THRESHOLD:
+                    # Use _using_proxy (live flag) not _proxy_cfg (original config)
+                    # to avoid triggering fallback twice if already on direct
+                    if self._using_proxy and self._proxy_failures >= PROXY_FAIL_THRESHOLD:
                         self._fallback_to_direct()
                     else:
                         self._new_context()
                     page = self._page
                 else:
+                    # Non-proxy error — if we're already on direct and keep
+                    # failing, track it and mark browser dead after threshold
+                    if not self._using_proxy:
+                        self._direct_failures += 1
+                        if self._direct_failures >= PROXY_FAIL_THRESHOLD:
+                            log.error(
+                                "💀 Direct connection also failed %d times — "
+                                "marking browser dead (host unreachable from this runner)",
+                                self._direct_failures,
+                            )
+                            self.dead = True
+                            self._on_sdw = False
+                            return FetchResult("network", None, err_str)
+                    else:
+                        self._direct_failures = 0
                     self._proxy_failures = 0
                     log.warning(
                         "fetch (%s %s) attempt %d/%d failed: %s",
@@ -769,6 +822,27 @@ class SDWBrowser:
 
         # Should not be reached, but satisfies type checker
         return FetchResult("network", None, "exhausted retries")
+
+
+# ── SDW page structural validator ────────────────────────────────────────────
+
+def _is_valid_sdw_page(html: str) -> bool:
+    """Return True if the page looks like a real SDW search result page.
+
+    Catches silent Akamai blocks that return HTTP 200 with a JS challenge,
+    blank body, or partial HTML that has no SDW form or results table.
+    We require at least one of the known SDW structural markers to be present.
+    """
+    STRUCTURAL_MARKERS = (
+        "txtShareholdingDate",   # date input field
+        "txtStockCode",          # stock code input field
+        "btnSearch",             # search button
+        "Participant ID",        # English column header
+        "參與者編號",              # Chinese column header
+        "已發行股份",              # Issued shares label
+        "Issued Shares",         # English issued shares label
+    )
+    return any(marker in html for marker in STRUCTURAL_MARKERS)
 
 
 # ── HTML response parser ──────────────────────────────────────────────────────
@@ -878,150 +952,163 @@ def _parse_response(html: str, code5: str, date_str: str) -> HoldingEntry:
 
 def _worker(
     worker_id    : int,
-    codes        : list[str],
+    work_queue   : Queue,
     d            : date,
     blocked_codes: dict[str, int],
     block_lock   : threading.Lock,
+    global_state : dict,
+    state_lock   : threading.Lock,
 ) -> tuple[list[tuple[str, HoldingEntry]], WorkerStats]:
-    """Fetch a chunk of stock codes for date *d* using a dedicated browser.
+    """Pull codes from *work_queue* and fetch them for date *d*.
 
-    Uses FetchResult status classification to apply the right retry strategy:
-      "ok" / "empty"  — accept immediately, no retry
-      "network"       — fast retry (short sleep, up to MAX_FETCH_ATTEMPTS)
-      "blocked"       — rotate context + longer cooldown, don't retry same code;
-                        increments blocked_codes[code] for persistent memory
+    Uses a shared Queue instead of a static chunk, so workers naturally
+    load-balance — fast workers pull more codes, slow/blocked ones pull fewer.
 
-    Persistent block memory: codes whose block count exceeds
-    BLOCK_SKIP_THRESHOLD are skipped entirely for the remainder of this date.
+    global_state holds cross-worker counters:
+      total_errors  — total network errors across all workers this date
+      total_blocks  — total block hits across all workers this date
+    Used by the global rate limiter: if global block rate rises, all workers
+    increase their sleep multiplier via state_lock.
 
-    Per-worker circuit breaker fires on too many consecutive errors.
-    Adaptive sleep backs off when the overall error rate climbs above
-    ERROR_RATE_THRESHOLD.
-
-    Returns (results, stats) where results is a list of (code, HoldingEntry).
+    Dead browser exits immediately. Circuit breaker exits on consecutive errors.
     """
-    BLOCK_SKIP_THRESHOLD: int = 3   # skip a code after this many lifetime blocks
+    BLOCK_SKIP_THRESHOLD: int = 3
 
     stats         = WorkerStats(worker_id=worker_id)
     results       : list[tuple[str, HoldingEntry]] = []
     consec_errors = 0
     t0            = time.monotonic()
-    sleep_mult    = 1.0   # adaptive backoff multiplier
+    sleep_mult    = 1.0
 
     with SDWBrowser(proxy=_PROXY) as browser:
-        for ci, code in enumerate(codes, 1):
+        while True:
+
+            # ── Pull next code from queue ─────────────────────────────────
+            try:
+                code = work_queue.get_nowait()
+            except QueueEmpty:
+                break
+
+            # ── Dead browser check ────────────────────────────────────────
+            if browser.dead:
+                log.error(
+                    "  [W%d] 💀 Browser dead — returning remaining queue items",
+                    worker_id,
+                )
+                work_queue.put(code)   # put back so another worker can retry
+                stats.errors += 1
+                break
 
             # ── Persistent block skip ─────────────────────────────────────
             with block_lock:
                 current_blocks = blocked_codes.get(code, 0)
             if current_blocks >= BLOCK_SKIP_THRESHOLD:
                 log.info(
-                    "  [W%d %d/%d] ⏭  %s skipped — blocked %d times previously",
-                    worker_id, ci, len(codes), code, current_blocks,
+                    "  [W%d] ⏭  %s skipped (blocked %d times)",
+                    worker_id, code, current_blocks,
                 )
                 stats.skipped += 1
+                work_queue.task_done()
                 continue
+
+            # ── Global rate limiter: slow down if block rate is high ───────
+            with state_lock:
+                g_errors = global_state["total_errors"]
+                g_blocks = global_state["total_blocks"]
+                g_total  = global_state["total_fetched"] or 1
+                g_block_rate = g_blocks / g_total
+            if g_block_rate > 0.10 and sleep_mult < 3.0:
+                sleep_mult = min(sleep_mult * 1.5, 3.0)
+                log.info(
+                    "  [W%d] 🌐 Global block rate %.1f%% — "
+                    "increasing sleep to %.1fx",
+                    worker_id, g_block_rate * 100, sleep_mult,
+                )
+            elif g_block_rate <= 0.05 and sleep_mult > 1.0:
+                sleep_mult = max(sleep_mult / 1.5, 1.0)
 
             human_sleep(PRE_SLEEP_MIN * sleep_mult, PRE_SLEEP_MAX * sleep_mult)
 
-            res: FetchResult | None = None
+            res = browser.fetch_with_status(code, d)
 
-            for attempt in range(MAX_FETCH_ATTEMPTS):
-                res = browser.fetch_with_status(code, d)
+            with state_lock:
+                global_state["total_fetched"] += 1
 
-                if res.status == "ok":
-                    stats.saved  += 1
-                    consec_errors = 0
-                    if attempt > 0:
-                        stats.retried += 1
-                    log.debug(
-                        "  [W%d %d/%d] ✓ %s (%d participants)",
-                        worker_id, ci, len(codes), code,
-                        len(res.data.participants),  # type: ignore[union-attr]
-                    )
-                    results.append((code, res.data))  # type: ignore[arg-type]
-                    break
+            if res.status == "ok":
+                stats.saved  += 1
+                consec_errors = 0
+                log.debug("  [W%d] ✓ %s (%d participants)",
+                          worker_id, code, len(res.data.participants))  # type: ignore
+                results.append((code, res.data))  # type: ignore[arg-type]
 
-                elif res.status == "empty":
-                    stats.skipped += 1
+            elif res.status == "empty":
+                stats.skipped += 1
+                consec_errors  = 0
+                log.debug("  [W%d] — %s no CCASS data", worker_id, code)
+                results.append((code, res.data))  # type: ignore[arg-type]
+
+            elif res.status == "network":
+                stats.errors  += 1
+                stats.network += 1
+                consec_errors += 1
+                with state_lock:
+                    global_state["total_errors"] += 1
+                log.warning("  [W%d] ✗ %s network — retrying once: %s",
+                            worker_id, code, res.error[:120])
+                time.sleep(5)
+                retry = browser.fetch_with_status(code, d)
+                with state_lock:
+                    global_state["total_fetched"] += 1
+                if retry.status in ("ok", "empty"):
+                    stats.retried += 1
                     consec_errors  = 0
-                    log.debug(
-                        "  [W%d %d/%d] — %s no CCASS data",
-                        worker_id, ci, len(codes), code,
-                    )
-                    results.append((code, res.data))  # type: ignore[arg-type]
-                    break
+                    stats.errors  -= 1
+                    if retry.status == "ok":
+                        stats.saved += 1
+                    else:
+                        stats.skipped += 1
+                    results.append((code, retry.data))  # type: ignore[arg-type]
+                else:
+                    log.error("  [W%d] ✗✗ %s failed on retry", worker_id, code)
+                    if browser.dead:
+                        work_queue.put(code)
+                        break
 
-                elif res.status == "network":
-                    stats.errors  += 1
-                    stats.network += 1
-                    consec_errors += 1
-                    wait = 2 * (attempt + 1)   # fast retry: 2 s, 4 s, 6 s …
-                    log.warning(
-                        "  [W%d %d/%d] ✗ %s network error attempt %d/%d "
-                        "— retry in %ds: %s",
-                        worker_id, ci, len(codes), code,
-                        attempt + 1, MAX_FETCH_ATTEMPTS, wait,
-                        res.error[:120],
-                    )
-                    time.sleep(wait)
-                    continue   # retry same code
-
-                elif res.status == "blocked":
-                    stats.errors  += 1
-                    stats.blocked += 1
-                    consec_errors += 1
-
-                    # ── Persistent block memory ───────────────────────────
-                    with block_lock:
-                        blocked_codes[code] = blocked_codes.get(code, 0) + 1
-                        new_count = blocked_codes[code]
-                    skip_after = BLOCK_SKIP_THRESHOLD
-                    log.warning(
-                        "  [W%d %d/%d] 🚫 %s blocked "
-                        "(lifetime blocks=%d/%d) — rotating context, cooling down",
-                        worker_id, ci, len(codes), code,
-                        new_count, skip_after,
-                    )
-                    if new_count >= skip_after:
-                        log.warning(
-                            "  [W%d] ⛔ %s will be skipped for remainder of run "
-                            "(blocked %d times)",
-                            worker_id, code, new_count,
-                        )
-
-                    # Immediate mitigation: fresh identity
-                    browser._new_context()
-                    cooldown = 30 + random.uniform(10, 30)
-                    time.sleep(cooldown)
-                    break   # don't retry the same code immediately after a block
-
-            # Circuit breaker: too many consecutive failures of any kind
-            if consec_errors >= CIRCUIT_BREAKER_LIMIT:
-                log.error(
-                    "  [W%d] 🚫 Circuit breaker tripped at %d consecutive errors",
-                    worker_id, consec_errors,
+            elif res.status == "blocked":
+                stats.errors  += 1
+                stats.blocked += 1
+                consec_errors += 1
+                with state_lock:
+                    global_state["total_blocks"] += 1
+                with block_lock:
+                    blocked_codes[code] = blocked_codes.get(code, 0) + 1
+                    new_count = blocked_codes[code]
+                log.warning(
+                    "  [W%d] 🚫 %s blocked (lifetime=%d/%d)",
+                    worker_id, code, new_count, BLOCK_SKIP_THRESHOLD,
                 )
+                if new_count >= BLOCK_SKIP_THRESHOLD:
+                    log.warning("  [W%d] ⛔ %s skip-listed", worker_id, code)
+                browser._new_context()
+                time.sleep(30 + random.uniform(10, 30))
+
+            # Circuit breaker
+            if consec_errors >= CIRCUIT_BREAKER_LIMIT:
+                log.error("  [W%d] 🚫 Circuit breaker — %d consecutive errors",
+                          worker_id, consec_errors)
                 break
 
-            # Adaptive sleep: back off when error rate is high, recover when it drops
+            # Adaptive per-worker sleep
             if stats.total >= 10:
                 if stats.error_rate > ERROR_RATE_THRESHOLD and sleep_mult < 4.0:
                     sleep_mult = min(sleep_mult * BACKOFF_MULTIPLIER, 4.0)
-                    log.info(
-                        "  [W%d] ⚠️ Error rate %.1f%% — backing off "
-                        "(sleep_mult=%.1fx)",
-                        worker_id, stats.error_rate * 100, sleep_mult,
-                    )
+                    log.info("  [W%d] ⚠️ Error rate %.1f%% — sleep_mult=%.1fx",
+                             worker_id, stats.error_rate * 100, sleep_mult)
                 elif stats.error_rate <= ERROR_RATE_THRESHOLD and sleep_mult > 1.0:
                     sleep_mult = max(sleep_mult / BACKOFF_MULTIPLIER, 1.0)
-                    log.debug(
-                        "  [W%d] ✅ Error rate %.1f%% — recovering "
-                        "(sleep_mult=%.1fx)",
-                        worker_id, stats.error_rate * 100, sleep_mult,
-                    )
 
             human_sleep(SLEEP_MIN * sleep_mult, SLEEP_MAX * sleep_mult)
+            work_queue.task_done()
 
     stats.elapsed_sec = time.monotonic() - t0
     return results, stats
@@ -1067,6 +1154,75 @@ def _already_fetched(codes: list[str], ds: str, path: str = DB_PATH) -> set[str]
     return {r[0] for r in rows} & set(codes)
 
 
+def _get_known_empty_skip_set(
+    universe: list[str], ds: str, path: str = DB_PATH
+) -> set[str]:
+    """Return codes that should be skipped this date due to known-empty history.
+
+    A code is skipped if it has been empty for EMPTY_SKIP_WEEKS consecutive
+    weeks AND it has been checked within the last EMPTY_RECHECK_WEEKS weeks.
+    Once EMPTY_RECHECK_WEEKS passes since last_check_date, the code is
+    included again for a re-check regardless of consecutive count.
+    """
+    skip: set[str] = set()
+    today = ds  # ISO string comparison is fine for YYYY-MM-DD
+    with get_conn(path) as conn:
+        rows = conn.execute(
+            "SELECT code, consecutive, last_check_date FROM known_empty"
+        ).fetchall()
+    code_set = set(universe)
+    for row in rows:
+        code, consecutive, last_check = row[0], row[1], row[2]
+        if code not in code_set:
+            continue
+        if consecutive < EMPTY_SKIP_WEEKS:
+            continue
+        if last_check:
+            weeks_since = (
+                date.fromisoformat(today) - date.fromisoformat(last_check)
+            ).days / 7
+            if weeks_since >= EMPTY_RECHECK_WEEKS:
+                continue   # time for a re-check
+        skip.add(code)
+    return skip
+
+
+def _update_known_empty(
+    results: list[tuple[str, HoldingEntry]],
+    ds     : str,
+    path   : str = DB_PATH,
+) -> None:
+    """Update known_empty table after a fetch round.
+
+    - Codes with empty HoldingEntry → increment consecutive count
+    - Codes with participants → reset consecutive count to 0
+    """
+    with get_conn(path) as conn:
+        for code, entry in results:
+            if entry.participants:
+                # Has data — reset empty streak
+                conn.execute(
+                    """INSERT INTO known_empty (code, consecutive, last_check_date)
+                       VALUES (?, 0, ?)
+                       ON CONFLICT(code) DO UPDATE SET
+                           consecutive     = 0,
+                           last_check_date = excluded.last_check_date""",
+                    (code, ds),
+                )
+            else:
+                # Empty — increment streak
+                conn.execute(
+                    """INSERT INTO known_empty
+                           (code, consecutive, last_empty_date, last_check_date)
+                       VALUES (?, 1, ?, ?)
+                       ON CONFLICT(code) DO UPDATE SET
+                           consecutive     = consecutive + 1,
+                           last_empty_date = excluded.last_empty_date,
+                           last_check_date = excluded.last_check_date""",
+                    (code, ds, ds),
+                )
+
+
 def build_clean(
     dates : list[date],
     path  : str  = DB_PATH,
@@ -1074,34 +1230,20 @@ def build_clean(
 ) -> None:
     """Main orchestration loop: fetch all codes for each date in *dates*.
 
-    Distributes codes across up to active_workers parallel SDWBrowser workers.
-    Two adaptive mechanisms span the entire run (across all dates):
-
-    1. Persistent block memory  (blocked_codes)
-       Each time a code returns "blocked", blocked_codes[code] is incremented
-       by the worker. Codes that reach BLOCK_SKIP_THRESHOLD (3) are silently
-       skipped by every subsequent worker for the rest of the run.
-
-    2. Adaptive worker count
-       - If cumulative blocks for a date exceed ADAPTIVE_WORKER_BLOCK_LIMIT (2),
-         the active worker cap is reduced to REDUCED_WORKERS (2).
-       - After WORKER_RECOVERY_STREAK consecutive clean dates (no blocks, no
-         circuit-breaker trips), the cap recovers by +1, up to MAX_WORKERS.
-
-    Global circuit-breaker cooldowns are also applied per-date:
-      total_blocked > GLOBAL_BLOCK_THRESHOLD  → 5-minute cooldown
-      total_network > GLOBAL_NETWORK_THRESHOLD → 30-second cooldown
-
-    Args:
-        dates:  List of fetch dates (from all_fetch_dates()).
-        path:   SQLite DB path.
-        update: When True, skip dates where all codes are already present.
+    Improvements over the static-chunk approach:
+      - Dynamic work queue: workers pull from a shared Queue for natural
+        load balancing — no idle workers while others are blocked.
+      - Known-empty cache: codes with EMPTY_SKIP_WEEKS consecutive empty
+        results are skipped until EMPTY_RECHECK_WEEKS passes.
+      - Global rate limiter: shared block/error counters let all workers
+        back off together when the global block rate exceeds 10%.
+      - Adaptive worker recovery: clean dates step the worker cap back up.
     """
     GLOBAL_BLOCK_THRESHOLD     : int = 5
     GLOBAL_NETWORK_THRESHOLD   : int = 20
-    ADAPTIVE_WORKER_BLOCK_LIMIT: int = 2   # blocks in one date before reducing workers
+    ADAPTIVE_WORKER_BLOCK_LIMIT: int = 2
     REDUCED_WORKERS            : int = 2
-    WORKER_RECOVERY_STREAK     : int = 2   # clean dates before stepping workers back up
+    WORKER_RECOVERY_STREAK     : int = 2
 
     init_db(path)
     universe = get_sdw_universe(path)
@@ -1109,31 +1251,38 @@ def build_clean(
         log.error("Empty universe — aborting")
         return
 
-    # ── Shared adaptive state (persists across all dates) ─────────────────
-    blocked_codes : dict[str, int] = {}          # code → lifetime block count
-    active_workers: int            = MAX_WORKERS  # current worker cap
-    block_lock    : threading.Lock = threading.Lock()  # guards blocked_codes mutations
-    clean_streak  : int            = 0            # consecutive dates with no blocks
+    blocked_codes : dict[str, int] = {}
+    active_workers: int            = MAX_WORKERS
+    block_lock    : threading.Lock = threading.Lock()
+    state_lock    : threading.Lock = threading.Lock()
+    clean_streak  : int            = 0
 
     for d in dates:
         ds      = d.strftime("%Y-%m-%d")
         already = _already_fetched(universe, ds, path)
 
-        # Filter out permanently skip-listed codes before building pending list
-        skip_set = {c for c, n in blocked_codes.items() if n >= 3}
-        pending  = [c for c in universe if c not in already and c not in skip_set]
+        # Known-empty skip set
+        empty_skip = _get_known_empty_skip_set(universe, ds, path)
 
-        if skip_set:
+        # Persistent block skip set
+        skip_set = {c for c, n in blocked_codes.items() if n >= 3}
+
+        pending = [
+            c for c in universe
+            if c not in already
+            and c not in skip_set
+            and c not in empty_skip
+        ]
+
+        if skip_set or empty_skip:
             log.info(
-                "  ⛔ %d code(s) excluded due to persistent blocks: %s%s",
-                len(skip_set),
-                ", ".join(sorted(skip_set)[:10]),
-                " …" if len(skip_set) > 10 else "",
+                "  ⛔ skipped: %d blocked + %d known-empty = %d total",
+                len(skip_set), len(empty_skip), len(skip_set) + len(empty_skip),
             )
 
         if update and not pending:
-            log.info("  ⏭  %s — all %d codes already present, skipping", ds, len(universe))
-            clean_streak += 1
+            log.info("  ⏭  %s — all codes already present or skipped", ds)
+            clean_streak  += 1
             active_workers = _maybe_recover_workers(
                 active_workers, clean_streak, WORKER_RECOVERY_STREAK, MAX_WORKERS
             )
@@ -1141,28 +1290,37 @@ def build_clean(
 
         n_workers = active_workers
         log.info(
-            "━━━ %s — %d pending / %d total (already=%d skipped=%d workers=%d)",
-            ds, len(pending), len(universe), len(already), len(skip_set), n_workers,
+            "━━━ %s — %d pending / %d total "
+            "(already=%d blocked=%d empty_skip=%d workers=%d)",
+            ds, len(pending), len(universe),
+            len(already), len(skip_set), len(empty_skip), n_workers,
         )
 
+        # ── Build dynamic work queue ──────────────────────────────────────
+        work_queue   = Queue()
+        for code in pending:
+            work_queue.put(code)
+
+        global_state = {"total_fetched": 0, "total_errors": 0, "total_blocks": 0}
+
         t0      = time.monotonic()
-        chunks  = _chunkify(pending, n_workers)
         summary = DateSummary(
             ds          = ds,
             universe_sz = len(universe),
             already     = len(already),
         )
 
-        # ── Parallel fetch ─────────────────────────────────────────────────
         total_blocked = 0
         total_network = 0
+        all_results   : list[tuple[str, HoldingEntry]] = []
 
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             futures = {
                 pool.submit(
-                    _worker, wid, chunk, d, blocked_codes, block_lock
+                    _worker, wid, work_queue, d,
+                    blocked_codes, block_lock, global_state, state_lock,
                 ): wid
-                for wid, chunk in enumerate(chunks, 1)
+                for wid in range(1, n_workers + 1)
             }
             for fut in as_completed(futures):
                 wid = futures[fut]
@@ -1172,7 +1330,6 @@ def build_clean(
                     log.error("Worker %d raised: %s", wid, exc)
                     continue
 
-                # Accumulate per-worker stats into summary
                 summary.saved   += w_stats.saved
                 summary.errors  += w_stats.errors
                 summary.skipped += w_stats.skipped
@@ -1181,18 +1338,21 @@ def build_clean(
 
                 total_blocked += w_stats.blocked
                 total_network += w_stats.network
+                all_results.extend(w_results)
 
-                # Persist this worker's results immediately
                 if w_results:
                     _save_results(w_results, ds, path)
 
-        # ── Adaptive worker count ──────────────────────────────────────────
+        # Update known-empty cache after all workers finish
+        if all_results:
+            _update_known_empty(all_results, ds, path)
+
+        # Adaptive worker scaling
         if total_blocked > ADAPTIVE_WORKER_BLOCK_LIMIT and active_workers > REDUCED_WORKERS:
             active_workers = REDUCED_WORKERS
             clean_streak   = 0
             log.warning(
-                "🔻 %d blocks detected this date — reducing active "
-                "workers to %d for remainder of run",
+                "🔻 %d blocks — reducing workers to %d",
                 total_blocked, REDUCED_WORKERS,
             )
         elif total_blocked == 0 and summary.errors == 0:
@@ -1203,16 +1363,12 @@ def build_clean(
         else:
             clean_streak = 0
 
-        # ── Global circuit breakers ────────────────────────────────────────
+        # Global circuit breakers
         if total_blocked > GLOBAL_BLOCK_THRESHOLD:
-            log.warning(
-                "🚫 %d blocks across workers — cooling down 5 minutes", total_blocked
-            )
+            log.warning("🚫 %d blocks — cooling down 5 minutes", total_blocked)
             time.sleep(300)
         elif total_network > GLOBAL_NETWORK_THRESHOLD:
-            log.warning(
-                "⚡ %d network errors across workers — short cooldown", total_network
-            )
+            log.warning("⚡ %d network errors — short cooldown", total_network)
             time.sleep(30)
 
         summary.elapsed_sec = time.monotonic() - t0
@@ -1229,10 +1385,7 @@ def _maybe_recover_workers(
     """Step worker count up by 1 after *threshold* consecutive clean dates."""
     if streak > 0 and streak % threshold == 0 and current < cap:
         new = current + 1
-        log.info(
-            "⬆️  %d clean date(s) — recovering workers %d → %d",
-            streak, current, new,
-        )
+        log.info("⬆️  %d clean date(s) — recovering workers %d → %d", streak, current, new)
         return new
     return current
 
@@ -1334,23 +1487,33 @@ def _export_csv(code: str, path: str = DB_PATH) -> None:
 def _migrate_json(path: str = DB_PATH) -> None:
     """Import legacy JSON range files into the SQLite DB.
 
-    Supports the current file format produced by the old library:
+    Supports both filename conventions:
+      - ccass_sdw_<range>_<year>.json  (e.g. ccass_sdw_0001_3999_2025.json)
+      - holdings_<range>_<year>.json   (older naming)
+
+    Auto-detects two JSON structure variants:
+
+    Variant A — date-keyed (outer key is a date string):
       {
-        "meta": { ... },
-        "by_date": {
-          "YYYY-MM-DD": {
-            "00700": {
-              "p": [{"pid": "B01234", "name": "...", "sh": 100, "pct": 0.5}],
-              "total_sh": 200,
-              "issued_sh": 1000
-            }
+        "2025-04-05": {
+          "00700": {
+            "participants": [{"pid": "B01234", "name": "...", "sh": 100, "pct": 0.5}],
+            "total_sh": 200,
+            "issued_sh": 1000
           }
         }
       }
 
-    Also handles the legacy flat variant where participants are stored under
-    "participants" with "shares" instead of "p"/"sh", and files that have the
-    date at the top level (no "by_date" wrapper).
+    Variant B — code-keyed (outer key is a stock code):
+      {
+        "00700": {
+          "2025-04-05": {
+            "participants": [...],
+            "total_sh": 200,
+            "issued_sh": 1000
+          }
+        }
+      }
 
     Skips any (date, code) pairs already present in the DB.
     """
@@ -1390,35 +1553,22 @@ def _migrate_json(path: str = DB_PATH) -> None:
             log.warning("  ✗ skip %s: top-level is not a dict", fpath)
             continue
 
-        # ── Unwrap by_date if present ──────────────────────────────────────
-        # Current format: {"meta": {...}, "by_date": {"YYYY-MM-DD": {code: payload}}}
-        if "by_date" in data:
-            by_date: dict = data["by_date"]
-        else:
-            # Flat format: top level is either date-keyed or code-keyed
-            by_date = data
-
-        # ── Determine layout of by_date ────────────────────────────────────
-        # After unwrapping, expect {"YYYY-MM-DD": {code: payload}}
-        # Guard against empty files
-        if not by_date:
-            log.info("  ✗ skip %s: by_date is empty", fpath)
-            continue
-
+        # ── Auto-detect structure variant ─────────────────────────────────
+        # Sample the first key to determine layout.
+        first_key    = next(iter(data))
         date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-        first_key    = next(iter(by_date))
+        variant_a    = bool(date_pattern.match(first_key))
 
-        if date_pattern.match(first_key):
-            # Standard: date → code → payload
-            def iter_records(d: dict):
+        def iter_records(d: dict, *, date_first: bool):
+            if date_first:
+                # Variant A: { "YYYY-MM-DD": { code: payload } }
                 for ds, codes_dict in d.items():
                     if not isinstance(codes_dict, dict):
                         continue
                     for code, payload in codes_dict.items():
                         yield ds, code, payload
-        else:
-            # Inverted: code → date → payload
-            def iter_records(d: dict):
+            else:
+                # Variant B: { code: { "YYYY-MM-DD": payload } }
                 _dp = re.compile(r"^\d{4}-\d{2}-\d{2}$")
                 for code, dates_dict in d.items():
                     if not isinstance(dates_dict, dict):
@@ -1431,7 +1581,7 @@ def _migrate_json(path: str = DB_PATH) -> None:
         imported = 0
         skipped  = 0
         with get_conn(path) as conn:
-            for ds, code, payload in iter_records(by_date):
+            for ds, code, payload in iter_records(data, date_first=variant_a):
                 try:
                     code5 = normalize_code(code)
                 except Exception:
@@ -1453,21 +1603,16 @@ def _migrate_json(path: str = DB_PATH) -> None:
                        VALUES (?, ?, ?, ?, ?)""",
                     (ds, code5, total_sh, issued_sh, _now_iso()),
                 )
-
-                # Support both "p" (current) and "participants" (legacy) keys
-                participants = payload.get("p") or payload.get("participants", [])
-                for p in participants:
+                for p in payload.get("participants", []):
                     conn.execute(
                         """INSERT OR REPLACE INTO holdings
                            (date, code, pid, name, shares, pct)
                            VALUES (?, ?, ?, ?, ?, ?)""",
-                        (
-                            ds, code5,
-                            p.get("pid",  ""),
-                            p.get("name", ""),
-                            p.get("sh", p.get("shares", 0)),
-                            p.get("pct", 0.0),
-                        ),
+                        (ds, code5,
+                         p.get("pid",  ""),
+                         p.get("name", ""),
+                         p.get("sh", p.get("shares", 0)),
+                         p.get("pct", 0.0)),
                     )
                 imported += 1
 
