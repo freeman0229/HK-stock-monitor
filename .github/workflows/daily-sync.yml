@@ -90,7 +90,6 @@ jobs:
           for f in ccass_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
-          [ -f "ccass_sdw.db" ] && git add "ccass_sdw.db"
           git diff --staged --quiet || \
             (git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')" && git push)
 
@@ -208,29 +207,28 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - run: playwright install chromium
-      - name: Restore SDW database cache
-        uses: actions/cache@v4
-        with:
-          path: ccass_sdw.db
-          key: sdw-db-${{ github.run_id }}
-          restore-keys: sdw-db-
+      - name: Download DB from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "No existing DB found — starting fresh"
       - name: Full SDW backfill → ccass_sdw.db
         env:
           SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: python ccass_sdw_library.py
-      - name: Save SDW database cache
-        uses: actions/cache/save@v4
+      - name: Upload DB to R2
         if: always()
-        with:
-          path: ccass_sdw.db
-          key: sdw-db-${{ github.run_id }}
-      - name: Commit DB
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
         run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          [ -f "ccass_sdw.db" ] && git add "ccass_sdw.db"
-          git diff --staged --quiet || \
-            (git commit -m "SDW build: $(date +'%Y-%m-%d %H:%M')" && git push)
+          [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
 
   # ── SDW weekly (Mon–Fri 21:00 + 23:00 HKT) ──────────────────────────────────
   # Runs --update: fetches only the latest Friday not yet in the DB.
@@ -250,29 +248,28 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - run: playwright install chromium
-      - name: Restore SDW database cache
-        uses: actions/cache@v4
-        with:
-          path: ccass_sdw.db
-          key: sdw-db-${{ github.run_id }}
-          restore-keys: sdw-db-
+      - name: Download DB from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "No existing DB found — starting fresh"
       - name: Fetch latest Friday SDW data
         env:
           SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: python ccass_sdw_library.py --update
-      - name: Save SDW database cache
-        uses: actions/cache/save@v4
+      - name: Upload DB to R2
         if: always()
-        with:
-          path: ccass_sdw.db
-          key: sdw-db-${{ github.run_id }}
-      - name: Commit DB
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
         run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          [ -f "ccass_sdw.db" ] && git add "ccass_sdw.db"
-          git diff --staged --quiet || \
-            (git commit -m "SDW weekly: $(date +'%Y-%m-%d %H:%M')" && git push)
+          [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
 
   # ── SFC weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
   sfc-weekly:
@@ -501,29 +498,28 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - run: playwright install chromium
-      - name: Restore SDW database cache
-        uses: actions/cache@v4
-        with:
-          path: ccass_sdw.db
-          key: sdw-db-${{ github.run_id }}
-          restore-keys: sdw-db-
+      - name: Download DB from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "No existing DB found — starting fresh"
       - name: Backfill SDW for date ${{ inputs.month }}
         env:
           SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: python ccass_sdw_library.py --date ${{ inputs.month }}
-      - name: Save SDW database cache
-        uses: actions/cache/save@v4
+      - name: Upload DB to R2
         if: always()
-        with:
-          path: ccass_sdw.db
-          key: sdw-db-${{ github.run_id }}
-      - name: Commit DB
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
         run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          [ -f "ccass_sdw.db" ] && git add "ccass_sdw.db"
-          git diff --staged --quiet || \
-            (git commit -m "SDW backfill ${{ inputs.month }}: $(date +'%Y-%m-%d %H:%M')" && git push)
+          [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
 
   # ── SDW migrate JSON → SQLite (one-time) ─────────────────────────────────────
   # Place all ccass_sdw_*.json files in the repo root, then run this job.
@@ -546,13 +542,14 @@ jobs:
         run: python ccass_sdw_library.py --migrate-json
       - name: Show DB stats
         run: python ccass_sdw_library.py --stats
-      - name: Commit DB
+      - name: Upload DB to R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
         run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          [ -f "ccass_sdw.db" ] && git add "ccass_sdw.db"
-          git diff --staged --quiet || \
-            (git commit -m "SDW migrate JSON→DB: $(date +'%Y-%m-%d %H:%M')" && git push)
+          [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
 
   # ── HSI weekly price history (Saturday 11:00 HKT) ────────────────────────────
   hsi-weekly:
