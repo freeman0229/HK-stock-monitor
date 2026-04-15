@@ -16,8 +16,7 @@ Storage: SQLite database (ccass_sdw.db) with two tables:
 
 Fetch strategy: Playwright Chromium (headless) — fills the search form
 like a real user, bypassing Akamai BotManager detection entirely.
-Proxy is optional (SDW_PROXY env var); falls back to direct after 3
-consecutive proxy failures.
+Always runs direct (no proxy).
 
 Parallel fetch: ThreadPoolExecutor with MAX_WORKERS=3 browsers running
 concurrently — one browser per worker, each handling its own code chunk.
@@ -59,7 +58,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from queue import Queue, Empty as QueueEmpty
 from typing import Generator
-from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -94,7 +92,7 @@ INTER_DATE_SLEEP_SEC : float = 5.0   # cooldown between date iterations
 CIRCUIT_BREAKER_LIMIT: int   = 5     # consecutive errors per worker before giving up
 BLOCKED_COOLDOWN_SEC : int   = 1800  # 30 min global cooldown after circuit trip
 MAX_FETCH_ATTEMPTS   : int   = 3     # retries per individual stock fetch
-PROXY_FAIL_THRESHOLD : int   = 3     # consecutive proxy errors before direct fallback
+DIRECT_FAIL_THRESHOLD: int   = 3     # consecutive per-stock failures before marking browser dead
 
 # Data
 START_DATE         : date = date(2025, 4, 5)
@@ -105,11 +103,6 @@ SCHEMA_VERSION     : int  = 3
 EMPTY_SKIP_WEEKS   : int  = 4      # skip a code after this many consecutive empty weeks
 EMPTY_RECHECK_WEEKS: int  = 8      # re-check a skipped code every N weeks regardless
 
-_PROXY: str | None = os.getenv("SDW_PROXY", "").strip() or None
-if _PROXY:
-    log.info("SDW proxy configured: %s…", _PROXY[:40])
-else:
-    log.info("SDW proxy not set — running in direct mode")
 
 _USER_AGENTS: list[str] = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -233,23 +226,6 @@ def human_sleep(a: float, b: float) -> None:
     """Sleep for a random duration in [a, b] seconds plus a small jitter."""
     time.sleep(random.uniform(a, b) + random.random() * 0.3)
 
-
-def _parse_proxy(proxy_url: str) -> dict | None:
-    """Convert a proxy URL string to a Playwright proxy config dict.
-
-    Handles both full URLs (http://user:pass@host:port) and bare host:port.
-    Returns None if *proxy_url* is empty.
-    """
-    if not proxy_url:
-        return None
-    raw = proxy_url if "://" in proxy_url else f"http://{proxy_url}"
-    p   = urlparse(raw)
-    cfg: dict = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
-    if p.username:
-        cfg["username"] = p.username
-    if p.password:
-        cfg["password"] = p.password
-    return cfg
 
 
 def _chunkify(lst: list, n: int) -> list[list]:
@@ -515,26 +491,22 @@ class SDWBrowser:
     """Manages a Playwright Chromium browser that fills the SDW search form
     like a real user — date field, stock code, then click 搜尋.
 
-    Proxy is optional. After PROXY_FAIL_THRESHOLD consecutive proxy failures
-    the browser automatically relaunches in direct (no-proxy) mode.
-    Context is rotated every CONTEXT_LIFE requests to refresh cookies and
-    simulate a returning zh-HK user to Akamai BotManager.
+    Always runs direct (no proxy). Context is rotated every CONTEXT_LIFE
+    requests to refresh cookies and simulate a returning zh-HK user to
+    Akamai BotManager.
     """
 
     CONTEXT_LIFE: int = 60   # requests per browser context before rotating
 
-    def __init__(self, proxy: str | None = None) -> None:
-        self._proxy_cfg      : dict | None = _parse_proxy(proxy)
-        self._using_proxy    : bool        = self._proxy_cfg is not None
-        self._pw                           = None
-        self._browser                      = None
-        self._context                      = None
-        self._page                         = None
-        self._req_count      : int         = 0
-        self._on_sdw         : bool        = False
-        self._proxy_failures : int         = 0
-        self._direct_failures: int         = 0   # consecutive failures after proxy fallback
-        self.dead            : bool        = False  # set True when both proxy+direct fail
+    def __init__(self) -> None:
+        self._pw             = None
+        self._browser        = None
+        self._context        = None
+        self._page           = None
+        self._req_count      : int  = 0
+        self._on_sdw         : bool = False
+        self._direct_failures: int  = 0
+        self.dead            : bool = False
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -556,14 +528,13 @@ class SDWBrowser:
             except Exception:
                 pass
 
-    def _launch_browser(self, force_direct: bool = False) -> None:
-        """Launch Chromium, optionally through a proxy."""
+    def _launch_browser(self) -> None:
+        """Launch Chromium in direct mode, bypassing any OS-level proxy env vars."""
         if self._browser:
             try:
                 self._browser.close()
             except Exception:
                 pass
-        proxy = self._proxy_cfg if (self._using_proxy and not force_direct) else None
         self._browser = self._pw.chromium.launch(
             headless=True,
             args=[
@@ -572,23 +543,10 @@ class SDWBrowser:
                 "--disable-gpu",
                 "--ignore-certificate-errors",
                 "--disable-blink-features=AutomationControlled",
+                "--no-proxy-server",   # ignore http_proxy / https_proxy env vars
             ],
-            proxy=proxy,
         )
-        mode = "proxy" if proxy else "direct (no proxy)"
-        log.info("🚀 Browser launched (%s)", mode)
-
-    def _fallback_to_direct(self) -> None:
-        """Switch to a direct connection after repeated proxy failures."""
-        log.warning(
-            "🔀 Proxy failed %d times — switching to direct connection",
-            self._proxy_failures,
-        )
-        self._using_proxy    = False
-        self._proxy_failures = 0
-        self._direct_failures = 0
-        self._launch_browser(force_direct=True)
-        self._new_context()
+        log.info("🚀 Browser launched (direct)")
 
     def _new_context(self) -> None:
         """Close the current context and open a fresh one.
@@ -743,7 +701,6 @@ class SDWBrowser:
                 # ── Parse and classify success/empty ─────────────────────────
                 entry = _parse_response(content, code5, date_str)
                 self._on_sdw          = True
-                self._proxy_failures  = 0
                 self._direct_failures = 0
                 if not entry.participants:
                     return FetchResult("empty", entry)
@@ -751,69 +708,34 @@ class SDWBrowser:
 
             except Exception as exc:
                 err_str = str(exc)
-                # Only classify as proxy error if we're actually using a proxy.
-                # ERR_TUNNEL_CONNECTION_FAILED looks like a proxy error but also
-                # fires on direct connections when the host is unreachable —
-                # checking _using_proxy prevents misclassification after fallback.
-                # "proxy"/"Proxy" removed — too broad, matches unrelated messages.
-                is_proxy_err = self._using_proxy and any(p in err_str for p in [
-                    "ProxyError", "RemoteDisconnected", "Unable to connect to proxy",
-                    "ERR_CONNECTION_CLOSED", "ERR_SSL_PROTOCOL_ERROR",
-                    "ERR_TUNNEL_CONNECTION_FAILED", "ERR_CONNECTION_RESET",
-                    "ERR_PROXY_CONNECTION_FAILED", "net::ERR_SOCKS_CONNECTION_FAILED",
-                ])
-
-                if is_proxy_err:
-                    self._proxy_failures += 1
-                    log.warning(
-                        "fetch (%s %s) proxy error attempt %d/%d "
-                        "(failures=%d): %s",
-                        code5, date_str, attempt, MAX_FETCH_ATTEMPTS,
-                        self._proxy_failures, err_str[:200],
+                # Track per-stock failures; only count on final attempt so one
+                # stubborn stock = one failure, not MAX_FETCH_ATTEMPTS failures.
+                if attempt == MAX_FETCH_ATTEMPTS:
+                    self._direct_failures += 1
+                if self._direct_failures >= DIRECT_FAIL_THRESHOLD:
+                    log.error(
+                        "💀 Browser failed %d stocks in a row — "
+                        "marking dead (host unreachable from this runner)",
+                        self._direct_failures,
                     )
-                    # Use _using_proxy (live flag) not _proxy_cfg (original config)
-                    # to avoid triggering fallback twice if already on direct
-                    if self._using_proxy and self._proxy_failures >= PROXY_FAIL_THRESHOLD:
-                        self._fallback_to_direct()
-                    else:
-                        self._new_context()
+                    self.dead = True
+                    self._on_sdw = False
+                    return FetchResult("network", None, err_str)
+
+                log.warning(
+                    "fetch (%s %s) attempt %d/%d failed: %s",
+                    code5, date_str, attempt, MAX_FETCH_ATTEMPTS, err_str[:200],
+                )
+                try:
+                    page.goto(SDW_URL, wait_until="load", timeout=60_000)
+                    self._on_sdw = True
+                except Exception as nav_exc:
+                    log.warning(
+                        "re-nav failed: %s — new context", str(nav_exc)[:100]
+                    )
+                    self._new_context()
                     page = self._page
-                else:
-                    # Non-proxy error — if we're already on direct and keep
-                    # failing, track it and mark browser dead after threshold.
-                    # Only increment on the FINAL attempt so that one stubborn
-                    # stock counts as one failure, not MAX_FETCH_ATTEMPTS.
-                    if not self._using_proxy:
-                        if attempt == MAX_FETCH_ATTEMPTS:
-                            self._direct_failures += 1
-                        if self._direct_failures >= PROXY_FAIL_THRESHOLD:
-                            log.error(
-                                "💀 Direct connection also failed %d times — "
-                                "marking browser dead (host unreachable from this runner)",
-                                self._direct_failures,
-                            )
-                            self.dead = True
-                            self._on_sdw = False
-                            return FetchResult("network", None, err_str)
-                    else:
-                        self._direct_failures = 0
-                    self._proxy_failures = 0
-                    log.warning(
-                        "fetch (%s %s) attempt %d/%d failed: %s",
-                        code5, date_str, attempt, MAX_FETCH_ATTEMPTS,
-                        err_str[:200],
-                    )
-                    try:
-                        page.goto(SDW_URL, wait_until="load", timeout=60_000)
-                        self._on_sdw = True
-                    except Exception as nav_exc:
-                        log.warning(
-                            "re-nav failed: %s — new context", str(nav_exc)[:100]
-                        )
-                        self._new_context()
-                        page = self._page
 
-                # On the final attempt, return a classified FetchResult
                 if attempt == MAX_FETCH_ATTEMPTS:
                     log.error(
                         "fetch (%s %s): all %d attempts failed: %s",
@@ -982,7 +904,7 @@ def _worker(
     t0            = time.monotonic()
     sleep_mult    = 1.0
 
-    with SDWBrowser(proxy=_PROXY) as browser:
+    with SDWBrowser() as browser:
         while True:
 
             # ── Pull next code from queue ─────────────────────────────────
