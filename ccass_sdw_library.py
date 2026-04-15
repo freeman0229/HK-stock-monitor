@@ -324,11 +324,7 @@ def all_fetch_dates(up_to: date | None = None) -> list[date]:
     longer serves data for those dates.
     """
     up_to    = up_to or date.today()
-    earliest = (
-        date.today().replace(year=date.today().year - 1)
-        if HKEX_WINDOW_MONTHS == 12
-        else date.today() - timedelta(days=HKEX_WINDOW_MONTHS * 30)
-    )
+    earliest = date.today() - timedelta(days=HKEX_WINDOW_MONTHS * 30)
     start  = max(START_DATE, earliest)
     result : list[date] = []
     d      = start
@@ -590,8 +586,10 @@ class SDWBrowser:
         )
         self._using_proxy    = False
         self._proxy_failures = 0
+        self._direct_failures = 0
         self._launch_browser(force_direct=True)
         self._new_context()
+
     def _new_context(self) -> None:
         """Close the current context and open a fresh one.
 
@@ -744,8 +742,9 @@ class SDWBrowser:
 
                 # ── Parse and classify success/empty ─────────────────────────
                 entry = _parse_response(content, code5, date_str)
-                self._on_sdw         = True
-                self._proxy_failures = 0
+                self._on_sdw          = True
+                self._proxy_failures  = 0
+                self._direct_failures = 0
                 if not entry.participants:
                     return FetchResult("empty", entry)
                 return FetchResult("ok", entry)
@@ -781,9 +780,12 @@ class SDWBrowser:
                     page = self._page
                 else:
                     # Non-proxy error — if we're already on direct and keep
-                    # failing, track it and mark browser dead after threshold
+                    # failing, track it and mark browser dead after threshold.
+                    # Only increment on the FINAL attempt so that one stubborn
+                    # stock counts as one failure, not MAX_FETCH_ATTEMPTS.
                     if not self._using_proxy:
-                        self._direct_failures += 1
+                        if attempt == MAX_FETCH_ATTEMPTS:
+                            self._direct_failures += 1
                         if self._direct_failures >= PROXY_FAIL_THRESHOLD:
                             log.error(
                                 "💀 Direct connection also failed %d times — "
@@ -995,6 +997,7 @@ def _worker(
                     "  [W%d] 💀 Browser dead — returning remaining queue items",
                     worker_id,
                 )
+                work_queue.task_done()
                 work_queue.put(code)   # put back so another worker can retry
                 stats.errors += 1
                 break
@@ -1013,9 +1016,8 @@ def _worker(
 
             # ── Global rate limiter: slow down if block rate is high ───────
             with state_lock:
-                g_errors = global_state["total_errors"]
-                g_blocks = global_state["total_blocks"]
-                g_total  = global_state["total_fetched"] or 1
+                g_blocks     = global_state["total_blocks"]
+                g_total      = global_state["total_fetched"] or 1
                 g_block_rate = g_blocks / g_total
             if g_block_rate > 0.10 and sleep_mult < 3.0:
                 sleep_mult = min(sleep_mult * 1.5, 3.0)
@@ -1071,6 +1073,7 @@ def _worker(
                 else:
                     log.error("  [W%d] ✗✗ %s failed on retry", worker_id, code)
                     if browser.dead:
+                        work_queue.task_done()
                         work_queue.put(code)
                         break
 
@@ -1096,6 +1099,7 @@ def _worker(
             if consec_errors >= CIRCUIT_BREAKER_LIMIT:
                 log.error("  [W%d] 🚫 Circuit breaker — %d consecutive errors",
                           worker_id, consec_errors)
+                work_queue.task_done()
                 break
 
             # Adaptive per-worker sleep
