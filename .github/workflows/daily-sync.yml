@@ -39,7 +39,7 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.schedule || inputs.job }}
   cancel-in-progress: true
 
 jobs:
@@ -181,6 +181,12 @@ jobs:
         run: python sc_top10_library.py --clear-cache
       - name: Build Stock Connect top10 library
         run: python sc_top10_library.py
+      - name: Save SC top10 cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sc_cache
+          key: sc-top10-cache-${{ github.run_id }}
       - name: Commit progress
         run: |
           git config --global user.name "Bot"
@@ -448,6 +454,12 @@ jobs:
           restore-keys: di-cache-
       - name: Update DI library
         run: python di_library.py --update
+      - name: Save DI cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: di_cache
+          key: di-cache-${{ github.run_id }}
       - name: Commit
         run: |
           git config --global user.name "Bot"
@@ -510,7 +522,7 @@ jobs:
       - name: Backfill SDW for date ${{ inputs.month }}
         env:
           SDW_PROXY: ${{ secrets.SDW_PROXY }}
-        run: python ccass_sdw_library.py --date ${{ inputs.month }}
+        run: python ccass_sdw_library.py --date "${{ inputs.month }}"
       - name: Upload DB to R2
         if: always()
         env:
@@ -579,5 +591,5 @@ jobs:
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
           [ -f hsi_weekly.json ] && git add hsi_weekly.json
-          git diff --staged --quiet || git commit -m "HSI weekly: $(date +'%Y-%m-%d %H:%M')"
-          git push
+          git diff --staged --quiet || \
+            (git commit -m "HSI weekly: $(date +'%Y-%m-%d %H:%M')" && git push)
