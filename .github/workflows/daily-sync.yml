@@ -223,8 +223,6 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
           echo "No existing DB found — starting fresh"
       - name: Full SDW backfill → ccass_sdw.db
-        env:
-          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: python ccass_sdw_library.py
       - name: Upload DB to R2
         if: always()
@@ -264,8 +262,6 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
           echo "No existing DB found — starting fresh"
       - name: Fetch latest Friday SDW data
-        env:
-          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: python ccass_sdw_library.py --update
       - name: Upload DB to R2
         if: always()
@@ -520,8 +516,6 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
           echo "No existing DB found — starting fresh"
       - name: Backfill SDW for date ${{ inputs.month }}
-        env:
-          SDW_PROXY: ${{ secrets.SDW_PROXY }}
         run: python ccass_sdw_library.py --date "${{ inputs.month }}"
       - name: Upload DB to R2
         if: always()
