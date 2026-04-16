@@ -1275,6 +1275,17 @@ function generateMockData() {
       insight: insightPool[Math.floor(Math.random()*insightPool.length)],
       squeeze_score: Math.floor(Math.random() * 15),
       dtc_avg_10d:   parseFloat((Math.random() * 8).toFixed(2)),
+      // Fields added in main.py refactor — needed for SDW panel and tooltips
+      vwap:              parseFloat((0.5 + Math.random() * 20).toFixed(4)),
+      turnover_24d:      parseFloat((Math.random() * 40).toFixed(4)),
+      delta_turnover_24d:parseFloat(((Math.random() - 0.5) * 10).toFixed(4)),
+      pct_dev:           parseFloat(((Math.random() - 0.5) * 2).toFixed(4)),
+      top10_sh:          Math.round(Math.random() * 5e8),
+      top10_pct:         parseFloat((Math.random() * 60).toFixed(2)),
+      top10_pct_delta:   parseFloat(((Math.random() - 0.5) * 5).toFixed(4)),
+      sdw_holders:       [],
+      sdw_total_sh:      0,
+      ccass_trade_date:  new Date(Date.now() - 2*86400000).toISOString().slice(0,10),
     };
   });
 }
