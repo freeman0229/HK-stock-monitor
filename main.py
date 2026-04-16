@@ -359,7 +359,10 @@ def get_prev_ranks(exclude_date: datetime = None) -> dict:
     store = load_store(RANK_HISTORY_FILE)
     if not store:
         return {}
-    today_key = exclude_date.strftime("%Y%m%d") if exclude_date else datetime.now().strftime("%Y%m%d")
+    # Always use exclude_date when provided — datetime.now() is wrong when
+    # the job runs just after midnight or on a non-trading day.
+    today_key = (exclude_date.strftime("%Y%m%d") if exclude_date
+                 else datetime.now().strftime("%Y%m%d"))
     keys = sorted(k for k in store.keys() if k != today_key)
     if not keys:
         return {}
@@ -619,6 +622,71 @@ def run_analysis():
     #   總數 ≤ 已發行股份 since not all issued shares are held in CCASS
     # Used for: 換手率 (N-day vol / 總數 × 100) and 持倉集中度 (top5_sh / 總數 × 100)
     _sdw_total_sh_map = sdw_get_total_sh_bulk(today_ds) if _SDW_AVAILABLE else {}
+
+    # Bulk-load SDW holders for all stocks to avoid one DB open per stock in the loop.
+    # Try today first; fall back to the most recent available SDW date if today
+    # has not been fetched yet (avoids the fragile -8 day hardcoded fallback).
+    _sdw_holders_map: dict[str, list] = {}
+    if _SDW_AVAILABLE:
+        from ccass_sdw_library import DB_PATH as _SDW_DB_PATH, get_conn as _sdw_get_conn
+        import sqlite3 as _sqlite3
+        try:
+            with _sdw_get_conn(_SDW_DB_PATH) as _sc:
+                # Find most recent SDW date on or before today
+                _sdw_best_date = _sc.execute(
+                    "SELECT MAX(date) FROM metadata WHERE date <= ?", (today_ds,)
+                ).fetchone()[0]
+            if _sdw_best_date:
+                if _sdw_best_date != today_ds:
+                    log.info("SDW holders: today not available — using %s", _sdw_best_date)
+                with _sdw_get_conn(_SDW_DB_PATH) as _sc:
+                    _sdw_rows = _sc.execute(
+                        """SELECT code, pid, name, shares, pct
+                           FROM   holdings
+                           WHERE  date = ?
+                           ORDER  BY code, shares DESC""",
+                        (_sdw_best_date,),
+                    ).fetchall()
+                for _row in _sdw_rows:
+                    _c = _row["code"]
+                    _sdw_holders_map.setdefault(_c, []).append({
+                        "pid": _row["pid"], "name": _row["name"],
+                        "sh":  _row["shares"], "pct": _row["pct"],
+                    })
+                log.info("SDW holders: %d stocks loaded from %s",
+                         len(_sdw_holders_map), _sdw_best_date)
+        except Exception as _e:
+            log.warning("SDW bulk holder load failed: %s — falling back to per-stock", _e)
+
+    # Bulk-load previous SDW snapshot for WoW top10 delta calculation.
+    _sdw_prev_holders_map: dict[str, list] = {}
+    if _SDW_AVAILABLE:
+        try:
+            with _sdw_get_conn(_SDW_DB_PATH) as _sc:
+                _sdw_prev_date = _sc.execute(
+                    """SELECT MAX(date) FROM metadata
+                       WHERE date < COALESCE(?, ?)""",
+                    (_sdw_best_date, today_ds),
+                ).fetchone()[0]
+            if _sdw_prev_date:
+                with _sdw_get_conn(_SDW_DB_PATH) as _sc:
+                    _sdw_prev_rows = _sc.execute(
+                        """SELECT code, pid, name, shares, pct
+                           FROM   holdings
+                           WHERE  date = ?
+                           ORDER  BY code, shares DESC""",
+                        (_sdw_prev_date,),
+                    ).fetchall()
+                for _row in _sdw_prev_rows:
+                    _c = _row["code"]
+                    _sdw_prev_holders_map.setdefault(_c, []).append({
+                        "pid": _row["pid"], "name": _row["name"],
+                        "sh":  _row["shares"], "pct": _row["pct"],
+                    })
+                log.info("SDW prev holders: %d stocks loaded from %s",
+                         len(_sdw_prev_holders_map), _sdw_prev_date)
+        except Exception as _e:
+            log.warning("SDW bulk prev holder load failed: %s", _e)
     df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, today_ds,
                                     today_pct_map=ccass_pct_map)
     ccass_delta_map      = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
@@ -878,11 +946,10 @@ def run_analysis():
         # 持倉集中度 — sum(top 5 持股量) / 總數 × 100
         # 總數 = CCASS Grand Total (於中央結算系統的持股量，總數)
         # fallback: sum h.pct directly (each h.pct = holder's 佔已發行股份/權證/單位百分比)
-        _holders = sdw_get_holders(code, today_ds) if _SDW_AVAILABLE else []
-        if not _holders:
-            # Try latest available SDW date if today not yet fetched
-            _holders = sdw_get_holders(code, (trading_day - timedelta(days=8)).strftime('%Y-%m-%d')) \
-                       if _SDW_AVAILABLE else []
+        _holders = _sdw_holders_map.get(code5) or _sdw_holders_map.get(code) or []
+        if not _holders and _SDW_AVAILABLE:
+            # Last resort: per-stock DB call (only hits when bulk load failed)
+            _holders = sdw_get_holders(code, today_ds)
         _total_sh_conc = _sdw_total_sh_map.get(code5, 0)
         if _holders and _total_sh_conc > 0:
             top5_sh = sum(h.get('sh', 0) for h in _holders[:5])
@@ -894,8 +961,12 @@ def run_analysis():
         top10_sh  = sum(h.get('sh', 0) for h in _holders[:10])                          # 1. raw shares
         top10_pct = round(top10_sh / _total_sh_conc * 100, 2) if _total_sh_conc > 0 and top10_sh > 0 else 0.0  # 2. % of 總數
         # 3. WoW delta — compare against previous SDW snapshot
-        _prev_holders    = sdw_get_holders_history(code, 1, today_ds) if _SDW_AVAILABLE else []
-        _prev_top10_sh   = sum(h.get('sh', 0) for h in _prev_holders[:10]) if _prev_holders else 0
+        _prev_holders    = _sdw_prev_holders_map.get(code5) or _sdw_prev_holders_map.get(code) or []
+        if not _prev_holders and _SDW_AVAILABLE:
+            # Last resort: per-stock DB call (only hits when bulk load failed)
+            _prev_snap = sdw_get_holders_history(code, 1, today_ds)
+            _prev_holders = _prev_snap[0] if _prev_snap else []
+        _prev_top10_sh   = sum(h.get('sh', 0) for h in _prev_holders[:10])
         _prev_top10_pct  = round(_prev_top10_sh / _total_sh_conc * 100, 2) if _total_sh_conc > 0 and _prev_top10_sh > 0 else 0.0
         top10_pct_delta  = round(top10_pct - _prev_top10_pct, 4) if _prev_top10_pct > 0 else 0.0
 

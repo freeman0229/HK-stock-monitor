@@ -486,12 +486,32 @@ def verify_db(path: str = DB_PATH) -> bool:
 
 # ── Public API (imported by main.py) ─────────────────────────────────────────
 
+def _ensure_db(path: str = DB_PATH) -> None:
+    """Ensure the DB exists and all tables are present.
+
+    Called at the top of every public read function so main.py can call
+    them safely without first going through build_clean (which calls
+    init_db internally).  The check is a fast sqlite PRAGMA — negligible
+    overhead on the normal path where the DB already exists.
+    """
+    try:
+        with sqlite3.connect(path, timeout=10) as conn:
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+        if not {"metadata", "holdings"}.issubset(tables):
+            init_db(path)
+    except Exception:
+        init_db(path)
+
+
 def get_holders(code: str, ds: str, path: str = DB_PATH) -> list[dict]:
     """Return holders for *code* on date *ds*, sorted by shares desc.
 
     Each entry: {pid, name, sh, pct}.
     Returns [] if no data.
     """
+    _ensure_db(path)
     code5 = normalize_code(code)
     with get_conn(path) as conn:
         rows = conn.execute(
@@ -515,6 +535,7 @@ def get_holders_history(
     Returns a list of snapshots, newest first.  Each snapshot is a list of
     {pid, name, sh, pct} dicts sorted by shares desc.
     """
+    _ensure_db(path)
     code5 = normalize_code(code)
     with get_conn(path) as conn:
         dates = conn.execute(
@@ -542,6 +563,7 @@ def get_latest_total_sh(code: str, before_or_eq: str, path: str = DB_PATH) -> in
 
     Returns 0 if no data.
     """
+    _ensure_db(path)
     code5 = normalize_code(code)
     with get_conn(path) as conn:
         row = conn.execute(
@@ -564,6 +586,7 @@ def get_total_sh_bulk(
     Uses a GROUP BY + self-join instead of a correlated subquery for
     better performance on large metadata tables.
     """
+    _ensure_db(path)
     with get_conn(path) as conn:
         rows = conn.execute(
             """SELECT m.code, m.total_sh
