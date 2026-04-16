@@ -45,7 +45,6 @@ import argparse
 import csv
 import json
 import logging
-import math
 import os
 import random
 import re
@@ -53,7 +52,7 @@ import sqlite3
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -90,19 +89,46 @@ ERROR_RATE_THRESHOLD : float = 0.20  # >20% errors in a worker triggers back-off
 INTER_DATE_SLEEP_SEC : float = 5.0   # cooldown between date iterations
 
 # Resilience
-CIRCUIT_BREAKER_LIMIT: int   = 5     # consecutive errors per worker before giving up
-BLOCKED_COOLDOWN_SEC : int   = 1800  # 30 min global cooldown after circuit trip
-MAX_FETCH_ATTEMPTS   : int   = 3     # retries per individual stock fetch
-DIRECT_FAIL_THRESHOLD: int   = 3     # consecutive per-stock failures before marking browser dead
+CIRCUIT_BREAKER_LIMIT  : int   = 5     # consecutive errors per worker before giving up
+MAX_FETCH_ATTEMPTS     : int   = 3     # retries per individual stock fetch
+DIRECT_FAIL_THRESHOLD  : int   = 3     # consecutive non-transient failures before marking browser dead
+NETWORK_FAIL_THRESHOLD : int   = 8     # consecutive transient failures before marking browser dead
+WORKER_TIMEOUT_SEC     : int   = 3600  # hard wall-clock cap per worker (1 hour)
+MAX_REQUEUE            : int   = 2     # max times a dead-browser code can be requeued
+
+# Error classification for dead-browser logic
+# Transient: environmental blip — browser is fine, runner network hiccuped
+_TRANSIENT_PATTERNS: tuple[str, ...] = (
+    "net::ERR_NAME_NOT_RESOLVED",
+    "net::ERR_CONNECTION_TIMED_OUT",
+    "net::ERR_CONNECTION_RESET",
+    "net::ERR_CONNECTION_REFUSED",
+    "net::ERR_SSL_",
+    "net::ERR_CERT_",
+    "TimeoutError",
+    "Timeout",
+)
+# Dead: Chromium process is gone — no point retrying at all
+_DEAD_PATTERNS: tuple[str, ...] = (
+    "Target closed",
+    "Browser closed",
+    "Connection refused",
+    "Protocol error",
+    "Session closed",
+)
 
 # Data
 START_DATE         : date = date(2025, 4, 5)
 HKEX_WINDOW_MONTHS : int  = 12     # rolling availability window on HKEX SDW
-SCHEMA_VERSION     : int  = 3
+SCHEMA_VERSION     : int  = 4
 
 # Known-empty cache
 EMPTY_SKIP_WEEKS   : int  = 4      # skip a code after this many consecutive empty weeks
 EMPTY_RECHECK_WEEKS: int  = 8      # re-check a skipped code every N weeks regardless
+MAX_SKIP_WEEKS     : int  = 16     # hard cap: force recheck if last_check_date stalled
+
+# Blocked-codes persistence
+BLOCK_EXPIRY_WEEKS : int  = 4      # auto-clear a blocked code after this many weeks with no new block
 
 
 _USER_AGENTS: list[str] = [
@@ -228,15 +254,6 @@ def human_sleep(a: float, b: float) -> None:
     time.sleep(random.uniform(a, b) + random.random() * 0.3)
 
 
-
-def _chunkify(lst: list, n: int) -> list[list]:
-    """Split *lst* into at most *n* roughly equal non-empty chunks."""
-    if not lst:
-        return []
-    k = math.ceil(len(lst) / n)
-    return [lst[i:i + k] for i in range(0, len(lst), k)]
-
-
 def _now_iso() -> str:
     """Return the current UTC datetime as an ISO 8601 string."""
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
@@ -269,7 +286,6 @@ _HK_HOLIDAYS: set[date] = {
     date(2025, 12, 25), date(2025, 12, 26),
     date(2026, 1, 1),  date(2026, 1, 28), date(2026, 1, 29), date(2026, 1, 30),
     date(2026, 2, 2),  date(2026, 2, 3),  date(2026, 2, 4),
-    date(2026, 2, 17), date(2026, 2, 18), date(2026, 2, 19), date(2026, 2, 20),
     date(2026, 4, 3),  date(2026, 4, 4),  date(2026, 4, 5),  date(2026, 4, 6),
     date(2026, 5, 1),  date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 1),
     date(2026, 9, 7),  date(2026, 10, 1), date(2026, 10, 26),
@@ -356,6 +372,13 @@ def init_db(path: str = DB_PATH) -> None:
                 last_check_date TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS blocked_codes (
+                code          TEXT PRIMARY KEY,
+                consecutive   INTEGER NOT NULL DEFAULT 0,
+                last_blocked  TEXT,   -- ISO date of most recent block hit
+                last_cleared  TEXT    -- ISO date of most recent successful fetch
+            );
+
             CREATE INDEX IF NOT EXISTS idx_meta_date
                 ON metadata(date);
             CREATE INDEX IF NOT EXISTS idx_meta_code
@@ -397,12 +420,19 @@ def get_conn(path: str = DB_PATH) -> Generator[sqlite3.Connection, None, None]:
 
 
 def vacuum_db(path: str = DB_PATH) -> None:
-    """Run VACUUM to reclaim disk space and defragment the database."""
+    """Run VACUUM to reclaim disk space and defragment the database.
+
+    VACUUM must run outside a transaction and cannot use WAL mode during
+    the operation, so we open a plain connection rather than get_conn().
+    isolation_level=None gives autocommit, which VACUUM requires.
+    """
     log.info("Running VACUUM on %s …", path)
     t0   = time.monotonic()
-    conn = sqlite3.connect(path)
-    conn.execute("VACUUM")
-    conn.close()
+    conn = sqlite3.connect(path, isolation_level=None)
+    try:
+        conn.execute("VACUUM")
+    finally:
+        conn.close()
     log.info("VACUUM complete in %.1fs", time.monotonic() - t0)
 
 
@@ -531,17 +561,19 @@ def get_total_sh_bulk(
     """Return {code: total_sh} for the most recent date <= *before_or_eq* per code.
 
     Used by main.py to pre-load all total_sh values in one pass.
+    Uses a GROUP BY + self-join instead of a correlated subquery for
+    better performance on large metadata tables.
     """
     with get_conn(path) as conn:
         rows = conn.execute(
-            """SELECT code, total_sh
-               FROM   metadata
-               WHERE  (code, date) IN (
-                   SELECT code, MAX(date)
+            """SELECT m.code, m.total_sh
+               FROM   metadata m
+               INNER JOIN (
+                   SELECT code, MAX(date) AS max_date
                    FROM   metadata
                    WHERE  date <= ?
                    GROUP  BY code
-               )""",
+               ) latest ON m.code = latest.code AND m.date = latest.max_date""",
             (before_or_eq,),
         ).fetchall()
     return {r[0]: int(r[1]) for r in rows if r[1]}
@@ -577,15 +609,12 @@ def export_charts(
     # Cutoff: oldest date to include
     cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
 
-    # Use a single connection for all reads — much faster than re-opening per stock
-    conn = sqlite3.connect(path, timeout=60)
-    conn.row_factory = sqlite3.Row
-    try:
+    written = 0
+    with get_conn(path) as conn:
         codes = [r[0] for r in conn.execute(
             "SELECT DISTINCT code FROM holdings ORDER BY code"
         ).fetchall()]
 
-        written = 0
         for code in codes:
             meta_rows = conn.execute(
                 """SELECT date, total_sh, issued_sh FROM metadata
@@ -621,8 +650,7 @@ def export_charts(
             with open(fpath, "w", encoding="utf-8") as f:
                 json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
             written += 1
-    finally:
-        conn.close()
+
     return written
 
 
@@ -669,17 +697,21 @@ class SDWBrowser:
     Akamai BotManager.
     """
 
-    CONTEXT_LIFE: int = 60   # requests per browser context before rotating
+    CONTEXT_LIFE: int = 200   # base requests per browser context before rotating
 
     def __init__(self) -> None:
         self._pw             = None
         self._browser        = None
         self._context        = None
         self._page           = None
-        self._req_count      : int  = 0
-        self._on_sdw         : bool = False
-        self._direct_failures: int  = 0
-        self.dead            : bool = False
+        self._req_count       : int  = 0
+        self._on_sdw          : bool = False
+        self._direct_failures : int  = 0   # non-transient per-stock failures
+        self._network_failures: int  = 0   # transient DNS/TLS/timeout failures
+        self.dead             : bool = False
+        # Jitter the rotation threshold ±20 requests so multiple workers don't
+        # all rotate simultaneously, avoiding a burst of warm-up traffic.
+        self._context_life: int = self.CONTEXT_LIFE + random.randint(-20, 20)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -803,9 +835,11 @@ class SDWBrowser:
         date_str = d.strftime("%Y/%m/%d")
 
         self._req_count += 1
-        if self._req_count >= self.CONTEXT_LIFE:
+        if self._req_count >= self._context_life:
             log.debug("🔄 Rotating browser context at request %d", self._req_count)
             self._new_context()
+            # Re-jitter threshold for the next context window
+            self._context_life = self.CONTEXT_LIFE + random.randint(-20, 20)
 
         page = self._page
 
@@ -873,42 +907,64 @@ class SDWBrowser:
 
                 # ── Parse and classify success/empty ─────────────────────────
                 entry = _parse_response(content, code5, date_str)
-                self._on_sdw          = True
-                self._direct_failures = 0
+                self._on_sdw           = True
+                self._direct_failures  = 0
+                self._network_failures = 0
                 if not entry.participants:
                     return FetchResult("empty", entry)
                 return FetchResult("ok", entry)
 
             except Exception as exc:
                 err_str = str(exc)
-                # Track per-stock failures; only count on final attempt so one
-                # stubborn stock = one failure, not MAX_FETCH_ATTEMPTS failures.
-                if attempt == MAX_FETCH_ATTEMPTS:
-                    self._direct_failures += 1
-                if self._direct_failures >= DIRECT_FAIL_THRESHOLD:
+
+                # ── Immediate dead: Chromium process is gone ──────────────────
+                if any(p in err_str for p in _DEAD_PATTERNS):
                     log.error(
-                        "💀 Browser failed %d stocks in a row — "
-                        "marking dead (host unreachable from this runner)",
-                        self._direct_failures,
+                        "💀 Browser process gone (%s %s): %s",
+                        code5, date_str, err_str[:200],
                     )
                     self.dead = True
                     self._on_sdw = False
                     return FetchResult("network", None, err_str)
 
-                log.warning(
-                    "fetch (%s %s) attempt %d/%d failed: %s",
-                    code5, date_str, attempt, MAX_FETCH_ATTEMPTS, err_str[:200],
-                )
-                try:
-                    page.goto(SDW_URL, wait_until="load", timeout=60_000)
-                    self._on_sdw = True
-                except Exception as nav_exc:
-                    log.warning(
-                        "re-nav failed: %s — new context", str(nav_exc)[:100]
-                    )
-                    self._new_context()
-                    page = self._page
+                is_transient = any(p in err_str for p in _TRANSIENT_PATTERNS)
 
+                # Only score failures on the final attempt — one stubborn stock
+                # = one failure tick, not MAX_FETCH_ATTEMPTS ticks.
+                if attempt == MAX_FETCH_ATTEMPTS:
+                    if is_transient:
+                        self._network_failures += 1
+                        log.warning(
+                            "fetch (%s %s) transient error #%d: %s",
+                            code5, date_str, self._network_failures, err_str[:200],
+                        )
+                        if self._network_failures >= NETWORK_FAIL_THRESHOLD:
+                            log.error(
+                                "💀 %d consecutive transient errors — "
+                                "runner network degraded, marking dead",
+                                self._network_failures,
+                            )
+                            self.dead = True
+                            self._on_sdw = False
+                            return FetchResult("network", None, err_str)
+                    else:
+                        self._direct_failures += 1
+                        log.warning(
+                            "fetch (%s %s) direct failure #%d: %s",
+                            code5, date_str, self._direct_failures, err_str[:200],
+                        )
+                        if self._direct_failures >= DIRECT_FAIL_THRESHOLD:
+                            log.error(
+                                "💀 %d consecutive non-transient failures — "
+                                "marking browser dead",
+                                self._direct_failures,
+                            )
+                            self.dead = True
+                            self._on_sdw = False
+                            return FetchResult("network", None, err_str)
+
+                # Final attempt: return without re-nav (re-nav could throw and
+                # start a phantom extra attempt via the outer except).
                 if attempt == MAX_FETCH_ATTEMPTS:
                     log.error(
                         "fetch (%s %s): all %d attempts failed: %s",
@@ -917,29 +973,70 @@ class SDWBrowser:
                     self._on_sdw = False
                     return FetchResult("network", None, err_str)
 
+                log.warning(
+                    "fetch (%s %s) attempt %d/%d failed: %s",
+                    code5, date_str, attempt, MAX_FETCH_ATTEMPTS, err_str[:200],
+                )
+
+                # Transient errors: sleep and retry without re-nav — the
+                # connection usually recovers on its own and a re-nav on a
+                # broken network would just eat retry budget.
+                if is_transient:
+                    human_sleep(3.0, 6.0)
+                else:
+                    try:
+                        page.goto(SDW_URL, wait_until="load", timeout=60_000)
+                        self._on_sdw = True
+                    except Exception as nav_exc:
+                        log.warning(
+                            "re-nav failed: %s — new context", str(nav_exc)[:100]
+                        )
+                        self._new_context()
+                        page = self._page
+
         # Should not be reached, but satisfies type checker
         return FetchResult("network", None, "exhausted retries")
 
 
 # ── SDW page structural validator ────────────────────────────────────────────
 
-def _is_valid_sdw_page(html: str) -> bool:
-    """Return True if the page looks like a real SDW search result page.
+# Form markers: ASP.NET control IDs unique to the SDW search page.
+# These will never appear in an Akamai block page or generic error response.
+_SDW_FORM_MARKERS: tuple[str, ...] = (
+    "txtShareholdingDate",   # date input field
+    "txtStockCode",          # stock code input field
+    "btnSearch",             # search button
+)
 
-    Catches silent Akamai blocks that return HTTP 200 with a JS challenge,
-    blank body, or partial HTML that has no SDW form or results table.
-    We require at least one of the known SDW structural markers to be present.
+# Data markers: content present on any valid SDW result — including empty
+# results where no participants are listed (the header/summary row is still
+# rendered).  Could theoretically appear in a block page help snippet, so
+# used as a secondary signal only.
+_SDW_DATA_MARKERS: tuple[str, ...] = (
+    "Participant ID",        # English column header
+    "參與者編號",              # Chinese column header
+    "已發行股份",              # Issued shares label (always present)
+    "Issued Shares",         # English issued shares label
+)
+
+
+def _is_valid_sdw_page(html: str) -> bool:
+    """Return True if *html* looks like a real SDW search result page.
+
+    Requires:
+      • At least one form marker  — ASP.NET control IDs that are impossible
+        to spoof in an Akamai block page or JS challenge response.
+      • At least one data marker  — confirms the page body loaded, not just
+        a bare form shell with no content (e.g. mid-load truncation).
+
+    This is stricter than a flat "any marker" check: a block page quoting
+    "Issued Shares" in help text will always fail the form-marker requirement,
+    and a truncated load that has the form but no rendered table is caught by
+    the data-marker requirement.
     """
-    STRUCTURAL_MARKERS = (
-        "txtShareholdingDate",   # date input field
-        "txtStockCode",          # stock code input field
-        "btnSearch",             # search button
-        "Participant ID",        # English column header
-        "參與者編號",              # Chinese column header
-        "已發行股份",              # Issued shares label
-        "Issued Shares",         # English issued shares label
-    )
-    return any(marker in html for marker in STRUCTURAL_MARKERS)
+    has_form  = any(m in html for m in _SDW_FORM_MARKERS)
+    data_hits = sum(m in html for m in _SDW_DATA_MARKERS)
+    return has_form and data_hits >= 1
 
 
 # ── HTML response parser ──────────────────────────────────────────────────────
@@ -996,11 +1093,19 @@ def _parse_response(html: str, code5: str, date_str: str) -> HoldingEntry:
             continue
         try:
             sh = int(sh_raw)
+            try:
+                pct = float(pct_raw) if pct_raw else 0.0
+            except (ValueError, TypeError):
+                log.debug(
+                    "SDW %s: non-numeric pct %r for pid %s — defaulting to 0.0",
+                    code5, pct_raw, pid_raw,
+                )
+                pct = 0.0
             participants.append(Participant(
                 pid  = pid_raw,
                 name = _clean_cell(tds[1]),
                 sh   = sh,
-                pct  = float(pct_raw) if pct_raw else 0.0,
+                pct  = pct,
             ))
             total_sh_fallback += sh
         except (ValueError, TypeError):
@@ -1080,6 +1185,18 @@ def _worker(
     with SDWBrowser() as browser:
         while True:
 
+            # ── Wall-clock timeout guard ──────────────────────────────────
+            # Catches the "slow but not frozen" case: worker is alive but
+            # spending too long due to backoff, retries, or a sluggish runner.
+            # A truly frozen Playwright process won't reach here — that's
+            # handled by future.result(timeout=) in the orchestrator.
+            if time.monotonic() - t0 > WORKER_TIMEOUT_SEC:
+                log.error(
+                    "  [W%d] ⏰ Wall-clock timeout after %.0fs — exiting",
+                    worker_id, time.monotonic() - t0,
+                )
+                break
+
             # ── Pull next code from queue ─────────────────────────────────
             try:
                 code = work_queue.get_nowait()
@@ -1088,13 +1205,26 @@ def _worker(
 
             # ── Dead browser check ────────────────────────────────────────
             if browser.dead:
-                log.error(
-                    "  [W%d] 💀 Browser dead — returning remaining queue items",
-                    worker_id,
-                )
+                with state_lock:
+                    count = global_state["requeue_counts"].get(code, 0) + 1
+                    global_state["requeue_counts"][code] = count
+
+                if count <= MAX_REQUEUE:
+                    log.error(
+                        "  [W%d] 💀 Browser dead — requeuing %s (attempt %d/%d)",
+                        worker_id, code, count, MAX_REQUEUE,
+                    )
+                    # Put back BEFORE task_done so queue's unfinished count
+                    # never drops to zero prematurely (avoids join() deadlock).
+                    work_queue.put(code)
+                else:
+                    log.error(
+                        "  [W%d] 💀 %s requeued %d times and still failing — dropping",
+                        worker_id, code, MAX_REQUEUE,
+                    )
+                    stats.errors += 1
+
                 work_queue.task_done()
-                work_queue.put(code)   # put back so another worker can retry
-                stats.errors += 1
                 break
 
             # ── Persistent block skip ─────────────────────────────────────
@@ -1159,7 +1289,8 @@ def _worker(
                 if retry.status in ("ok", "empty"):
                     stats.retried += 1
                     consec_errors  = 0
-                    stats.errors  -= 1
+                    if stats.errors > 0:   # guard: never let errors go negative
+                        stats.errors -= 1
                     if retry.status == "ok":
                         stats.saved += 1
                     else:
@@ -1168,8 +1299,24 @@ def _worker(
                 else:
                     log.error("  [W%d] ✗✗ %s failed on retry", worker_id, code)
                     if browser.dead:
+                        with state_lock:
+                            count = global_state["requeue_counts"].get(code, 0) + 1
+                            global_state["requeue_counts"][code] = count
+                        if count <= MAX_REQUEUE:
+                            log.error(
+                                "  [W%d] 💀 Browser dead after retry — "
+                                "requeuing %s (attempt %d/%d)",
+                                worker_id, code, count, MAX_REQUEUE,
+                            )
+                            work_queue.put(code)
+                        else:
+                            log.error(
+                                "  [W%d] 💀 %s requeued %d times and still "
+                                "failing — dropping",
+                                worker_id, code, MAX_REQUEUE,
+                            )
+                            stats.errors += 1
                         work_queue.task_done()
-                        work_queue.put(code)
                         break
 
             elif res.status == "blocked":
@@ -1240,7 +1387,8 @@ def _save_results(
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (ds, code, p.pid, p.name, p.sh, p.pct),
                 )
-            saved += 1
+            if entry.participants:
+                saved += 1
     return saved
 
 
@@ -1259,9 +1407,17 @@ def _get_known_empty_skip_set(
     """Return codes that should be skipped this date due to known-empty history.
 
     A code is skipped if it has been empty for EMPTY_SKIP_WEEKS consecutive
-    weeks AND it has been checked within the last EMPTY_RECHECK_WEEKS weeks.
-    Once EMPTY_RECHECK_WEEKS passes since last_check_date, the code is
-    included again for a re-check regardless of consecutive count.
+    weeks AND fewer than EMPTY_RECHECK_WEEKS weeks have passed since the last
+    check.
+
+    Two escape hatches force a recheck regardless:
+      1. Scheduled recheck: weeks_since >= EMPTY_RECHECK_WEEKS (normal cadence).
+      2. Hard cap: weeks_since >= MAX_SKIP_WEEKS — fires when last_check_date
+         has stalled (e.g. the stock was blocked every time it came up for
+         recheck), preventing indefinite suppression.
+
+    If last_check_date is NULL the code is always included (never skip a stock
+    we have no check record for).
     """
     skip: set[str] = set()
     today = ds  # ISO string comparison is fine for YYYY-MM-DD
@@ -1276,12 +1432,16 @@ def _get_known_empty_skip_set(
             continue
         if consecutive < EMPTY_SKIP_WEEKS:
             continue
-        if last_check:
-            weeks_since = (
-                date.fromisoformat(today) - date.fromisoformat(last_check)
-            ).days / 7
-            if weeks_since >= EMPTY_RECHECK_WEEKS:
-                continue   # time for a re-check
+        if not last_check:
+            # No check record — always include for a fresh check
+            continue
+        weeks_since = (
+            date.fromisoformat(today) - date.fromisoformat(last_check)
+        ).days / 7
+        if weeks_since >= EMPTY_RECHECK_WEEKS:
+            continue   # scheduled recheck due
+        if weeks_since >= MAX_SKIP_WEEKS:
+            continue   # hard cap: last_check_date stalled, force recheck
         skip.add(code)
     return skip
 
@@ -1322,6 +1482,117 @@ def _update_known_empty(
                 )
 
 
+# ── Blocked-codes persistence ─────────────────────────────────────────────────
+
+def _load_blocked_codes(path: str = DB_PATH) -> dict[str, int]:
+    """Load persisted blocked_codes from DB, expiring stale entries.
+
+    A code is expired (reset to 0) if last_blocked is older than
+    BLOCK_EXPIRY_WEEKS — meaning it hasn't been blocked recently and
+    deserves a fresh attempt.  Returns {code: consecutive_count}.
+    """
+    today    = date.today().isoformat()
+    cutoff   = (date.today() - timedelta(weeks=BLOCK_EXPIRY_WEEKS)).isoformat()
+    result   : dict[str, int] = {}
+
+    try:
+        with get_conn(path) as conn:
+            rows = conn.execute(
+                """SELECT code, consecutive, last_blocked
+                   FROM   blocked_codes
+                   WHERE  consecutive > 0"""
+            ).fetchall()
+        for row in rows:
+            code, consecutive, last_blocked = row[0], row[1], row[2]
+            if last_blocked and last_blocked < cutoff:
+                # Expired — skip; will be reset to 0 on next flush
+                continue
+            result[code] = consecutive
+        if result:
+            log.info(
+                "Loaded %d persisted blocked codes from DB", len(result)
+            )
+    except Exception as exc:
+        log.warning("Could not load blocked_codes from DB: %s", exc)
+
+    return result
+
+
+def _flush_blocked_codes(
+    blocked_codes: dict[str, int],
+    ds           : str,
+    path         : str = DB_PATH,
+) -> None:
+    """Persist the current in-memory blocked_codes dict to DB.
+
+    - Codes with consecutive > 0 → upsert with updated last_blocked date.
+    - Codes with consecutive == 0 → record last_cleared date (successful fetch).
+    """
+    if not blocked_codes:
+        return
+    try:
+        with get_conn(path) as conn:
+            for code, consecutive in blocked_codes.items():
+                if consecutive > 0:
+                    conn.execute(
+                        """INSERT INTO blocked_codes
+                               (code, consecutive, last_blocked)
+                           VALUES (?, ?, ?)
+                           ON CONFLICT(code) DO UPDATE SET
+                               consecutive  = excluded.consecutive,
+                               last_blocked = excluded.last_blocked""",
+                        (code, consecutive, ds),
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO blocked_codes
+                               (code, consecutive, last_cleared)
+                           VALUES (?, 0, ?)
+                           ON CONFLICT(code) DO UPDATE SET
+                               consecutive  = 0,
+                               last_cleared = excluded.last_cleared""",
+                        (code, ds),
+                    )
+    except Exception as exc:
+        log.warning("Could not flush blocked_codes to DB: %s", exc)
+
+
+def _clear_blocked_codes(
+    successful_codes: list[str],
+    blocked_codes   : dict[str, int],
+    ds              : str,
+    path            : str = DB_PATH,
+) -> None:
+    """Reset consecutive count to 0 for codes that fetched successfully.
+
+    Updates both the in-memory dict and the DB so a clean fetch clears
+    the block record immediately rather than waiting for expiry.
+    """
+    cleared = []
+    for code in successful_codes:
+        if blocked_codes.get(code, 0) > 0:
+            blocked_codes[code] = 0
+            cleared.append(code)
+    if not cleared:
+        return
+    try:
+        with get_conn(path) as conn:
+            for code in cleared:
+                conn.execute(
+                    """INSERT INTO blocked_codes
+                           (code, consecutive, last_cleared)
+                       VALUES (?, 0, ?)
+                       ON CONFLICT(code) DO UPDATE SET
+                           consecutive  = 0,
+                           last_cleared = excluded.last_cleared""",
+                    (code, ds),
+                )
+        log.debug("Cleared block record for %d code(s): %s", len(cleared), cleared[:5])
+    except Exception as exc:
+        log.warning("Could not clear blocked_codes in DB: %s", exc)
+
+
+
 def build_clean(
     dates : list[date],
     path  : str  = DB_PATH,
@@ -1350,7 +1621,7 @@ def build_clean(
         log.error("Empty universe — aborting")
         return
 
-    blocked_codes : dict[str, int] = {}
+    blocked_codes : dict[str, int] = _load_blocked_codes(path)
     active_workers: int            = MAX_WORKERS
     block_lock    : threading.Lock = threading.Lock()
     state_lock    : threading.Lock = threading.Lock()
@@ -1400,7 +1671,8 @@ def build_clean(
         for code in pending:
             work_queue.put(code)
 
-        global_state = {"total_fetched": 0, "total_errors": 0, "total_blocks": 0}
+        global_state = {"total_fetched": 0, "total_errors": 0, "total_blocks": 0,
+                        "requeue_counts": {}}
 
         t0      = time.monotonic()
         summary = DateSummary(
@@ -1424,7 +1696,18 @@ def build_clean(
             for fut in as_completed(futures):
                 wid = futures[fut]
                 try:
-                    w_results, w_stats = fut.result()
+                    # Allow a small buffer over WORKER_TIMEOUT_SEC so the
+                    # inner wall-clock guard fires first under normal
+                    # circumstances. This outer timeout only catches a truly
+                    # frozen Playwright process that never returns from a call.
+                    w_results, w_stats = fut.result(timeout=WORKER_TIMEOUT_SEC + 120)
+                except FutureTimeoutError:
+                    log.error(
+                        "Worker %d timed out (Playwright frozen?) — "
+                        "abandoning; zombie process will be reaped at job exit",
+                        wid,
+                    )
+                    continue
                 except Exception as exc:
                     log.error("Worker %d raised: %s", wid, exc)
                     continue
@@ -1439,12 +1722,19 @@ def build_clean(
                 total_network += w_stats.network
                 all_results.extend(w_results)
 
-                if w_results:
-                    _save_results(w_results, ds, path)
-
-        # Update known-empty cache after all workers finish
+        # Single batched write after all workers finish — eliminates concurrent
+        # writer contention on SQLite even under WAL mode.
         if all_results:
+            _save_results(all_results, ds, path)
             _update_known_empty(all_results, ds, path)
+
+            # Clear block records for codes that fetched successfully this date
+            successful = [c for c, e in all_results if e.participants]
+            _clear_blocked_codes(successful, blocked_codes, ds, path)
+
+        # Flush updated blocked_codes to DB so next CI run starts with
+        # current state rather than rediscovering blocks from scratch.
+        _flush_blocked_codes(blocked_codes, ds, path)
 
         # Adaptive worker scaling
         if total_blocked > ADAPTIVE_WORKER_BLOCK_LIMIT and active_workers > REDUCED_WORKERS:
@@ -1540,7 +1830,10 @@ def _stats(path: str = DB_PATH) -> None:
         latest = conn.execute(
             "SELECT MAX(date) FROM metadata"
         ).fetchone()[0]
-        db_size = os.path.getsize(path) / 1_048_576
+
+    # getsize after connection is closed — avoids holding the WAL lock
+    # while doing filesystem I/O, and works even if the DB is 0 bytes.
+    db_size = os.path.getsize(path) / 1_048_576 if os.path.exists(path) else 0.0
 
     print(
         f"\n{'═'*60}\n"
