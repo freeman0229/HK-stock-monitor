@@ -4,8 +4,8 @@ on:
   schedule:
     - cron: '0 12 * * 1-5'   # 12:00 UTC / 20:00 HKT (Mon–Fri)
     - cron: '0 14 * * 1-5'   # 14:00 UTC / 22:00 HKT (Mon–Fri) — SFC check
-    - cron: '0 13 * * 1-5'   # 13:00 UTC / 21:00 HKT (Mon–Fri)  — SDW weekly run 1
-    - cron: '0 15 * * 1-5'   # 15:00 UTC / 23:00 HKT (Mon–Fri)  — SDW weekly run 2
+    - cron: '0 13 * * 5'   # 13:00 UTC / 21:00 HKT (Friday)  — SDW weekly run 1
+    - cron: '0 15 * * 5'   # 15:00 UTC / 23:00 HKT (Friday)  — SDW weekly run 2
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
     - cron: '0 3 * * 6'       # 03:00 UTC / 11:00 HKT (Saturday)  — HSI weekly update
   workflow_dispatch:
@@ -32,15 +32,12 @@ on:
           - sdw-backfill     # manual: backfill a specific date range
           - sdw-migrate-json # one-time: import old ccass_sdw_*.json files into SQLite DB
           - hsi-build        # manual: rebuild full HSI weekly history from scratch
-      month:
+      backfill_date:
         description: 'Date to backfill (YYYY-MM-DD) — e.g. 2025-04-11. Required for sdw-backfill.'
         required: false
         default: ''
         type: string
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.schedule || inputs.job }}
-  cancel-in-progress: true
 
 jobs:
 
@@ -49,6 +46,9 @@ jobs:
     name: Daily analysis
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    concurrency:
+      group: daily-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -98,6 +98,9 @@ jobs:
     name: SFC nightly check
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency:
+      group: sfc-check-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -136,6 +139,9 @@ jobs:
     name: CCASS full build (2025-03-23 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
+    concurrency:
+      group: ccass-build-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -161,6 +167,9 @@ jobs:
     name: Stock Connect top10 full build (2025-09-01 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
+    concurrency:
+      group: sc-top10-build-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -202,6 +211,9 @@ jobs:
     name: SDW full backfill (all dates → SQLite DB)
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    concurrency:
+      group: sdw-build-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -223,6 +235,8 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
           echo "No existing DB found — starting fresh"
       - name: Full SDW backfill → ccass_sdw.db
+        env:
+          SDW_WORKERS: "2"
         run: python ccass_sdw_library.py
       - name: Upload DB to R2
         if: always()
@@ -248,11 +262,14 @@ jobs:
   sdw-weekly:
     name: SDW weekly update → ccass_sdw.db
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
+    concurrency:
+      group: sdw-weekly-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     if: |
-      (github.event_name == 'schedule' && (github.event.schedule == '0 13 * * 1-5' || github.event.schedule == '0 15 * * 1-5')) ||
+      (github.event_name == 'schedule' && (github.event.schedule == '0 13 * * 5' || github.event.schedule == '0 15 * * 5')) ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-weekly')
 
     steps:
@@ -271,6 +288,8 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
           echo "No existing DB found — starting fresh"
       - name: Fetch latest Friday SDW data
+        env:
+          SDW_WORKERS: "2"
         run: python ccass_sdw_library.py --update
       - name: Upload DB to R2
         if: always()
@@ -296,6 +315,9 @@ jobs:
     name: SFC short position library
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: sfc-weekly-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -347,6 +369,9 @@ jobs:
     name: Turnover + short full rebuild (2026-02-02 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    concurrency:
+      group: turnover-build-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -381,6 +406,9 @@ jobs:
     name: Short selling library full rebuild (2026-02-02 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    concurrency:
+      group: short-build-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -410,6 +438,9 @@ jobs:
     name: SFC full backfill (2018-01-01 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
+    concurrency:
+      group: sfc-build-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -449,6 +480,9 @@ jobs:
     name: DI substantial shareholder library
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    concurrency:
+      group: di-weekly-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -487,6 +521,9 @@ jobs:
     name: CCASS universe build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: ccass-universe-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -510,9 +547,12 @@ jobs:
   # ── SDW single-date backfill (manual) ──────────────────────────────────────
   # Usage: workflow_dispatch → sdw-backfill, month = YYYY-MM-DD (e.g. 2025-04-11)
   sdw-backfill:
-    name: SDW backfill ${{ inputs.month }}
+    name: SDW backfill ${{ inputs.backfill_date }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    concurrency:
+      group: sdw-backfill-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -533,8 +573,10 @@ jobs:
           aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
           echo "No existing DB found — starting fresh"
-      - name: Backfill SDW for date ${{ inputs.month }}
-        run: python ccass_sdw_library.py --date "${{ inputs.month }}"
+      - name: Backfill SDW for date ${{ inputs.backfill_date }}
+        env:
+          SDW_WORKERS: "2"
+        run: python ccass_sdw_library.py --date "${{ inputs.backfill_date }}"
       - name: Upload DB to R2
         if: always()
         env:
@@ -561,6 +603,9 @@ jobs:
     name: SDW migrate ccass_sdw_*.json → ccass_sdw.db
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: sdw-migrate-json-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
@@ -589,6 +634,9 @@ jobs:
     name: HSI weekly update
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: hsi-weekly-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: write
     if: |
