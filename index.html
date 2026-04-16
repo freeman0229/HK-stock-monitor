@@ -1099,6 +1099,12 @@ const norm5 = c => String(c).replace(/^0+/, '').padStart(5, '0'); // mirrors nor
 const fmtPct = n => (n == null || n === 0) ? '—' : n.toFixed(2)+'%';
 const sign = n => n > 0 ? '+' : '';
 
+// ── Global DOM helpers ────────────────────────────────────────────────────────
+// Defined here so all functions (computeSfcCards, renderShort, renderSdwPanel,
+// etc.) share the same helpers without redefining them in local scope.
+const el     = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+const elHtml = (id, v) => { const e = document.getElementById(id); if (e) e.innerHTML   = v; };
+
 function insightBadge(s) {
   if (!s) return '<span class="na-txt">—</span>';
   const up = ['🔥','🐉','⭐','🎯','📊','🏦'].some(e => s.startsWith(e));
@@ -2512,8 +2518,7 @@ function renderShort() {
   const topDec  = [...sorted].filter(s => s.sfc_hkd_delta < 0)
                              .sort((a,b) => (a.sfc_hkd_delta||0) - (b.sfc_hkd_delta||0))[0];
 
-  const el     = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
-  const elHtml = (id, v) => { const e = document.getElementById(id); if (e) e.innerHTML   = v; };
+  // el/elHtml are global helpers defined at module level
 
   el('sh-vol-top-name',   topVol   ? topVol.name_chi   : '--');
   el('sh-vol-top-val',    topVol   ? fmtM(topVol.short_st) : '--');
@@ -3006,7 +3011,7 @@ function sdwComputeSummary() {
     }
   });
 
-  const el = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
+  // el is the global helper defined at module level
   el('sdw-max-name', maxPctName || '--');
   el('sdw-max-pct',  maxPctCode ? `${cleanName(maxPctHolder).slice(0,18)} ${maxPct.toFixed(2)}%` : '--');
   el('sdw-inc-name', maxIncName || '--');
