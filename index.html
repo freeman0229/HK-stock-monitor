@@ -4250,16 +4250,108 @@ function renderHsiPanel() {
   if (hsiChartInst) { hsiChartInst.destroy(); hsiChartInst = null; }
   if (hsiVolInst)   { hsiVolInst.destroy();   hsiVolInst   = null; }
 
+  // ── Next-week prediction: extend labels and band data by one point ──────────
+  const predLabel  = '下週(預測)';
+  const chartLabels = [...labels, predLabel];
+  const N = chartLabels.length;
+
+  const predPhData = [
+    ...view.map(d => +( ((weekly[d].c+sigmaUp  *channel[d].vr*3.0)+(weekly[d].o+sigmaUpO  *channel[d].vr*3.0))/2 ).toFixed(0)),
+    Math.round(ph30avg)
+  ];
+  const predPlData = [
+    ...view.map(d => +( ((weekly[d].c-sigmaDown*channel[d].vr*3.0)+(weekly[d].o-sigmaDownO*channel[d].vr*3.0))/2 ).toFixed(0)),
+    Math.round(pl30avg)
+  ];
+  const closeData  = [...view.map(d => weekly[d].c), null];
+  const highData   = [...view.map(d => weekly[d].h), null];
+  const lowData    = [...view.map(d => weekly[d].l), null];
+
+  // Fill zone between pred high and low for last two points only
+  const fillPhData = chartLabels.map((l,i) => i >= N-2 ? predPhData[i] : null);
+  const fillPlData = chartLabels.map((l,i) => i >= N-2 ? predPlData[i] : null);
+
+  // Vertical divider + shaded background plugin
+  const predDividerPlugin = {
+    id: 'predDivider',
+    afterDraw(chart) {
+      const {ctx, scales: {x, y}} = chart;
+      if (!x || !y) return;
+      const xPos = x.getPixelForValue(N - 2);
+      const xEnd = x.right;
+      ctx.save();
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(91,141,217,0.05)';
+      ctx.fillRect(xPos, y.top, xEnd - xPos, y.bottom - y.top);
+      ctx.setLineDash([4,4]);
+      ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(100,100,100,0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(xPos, y.top);
+      ctx.lineTo(xPos, y.bottom);
+      ctx.stroke();
+      ctx.restore();
+    }
+  };
+
   hsiChartInst = new Chart(document.getElementById('hsiCanvas'), {
     type: 'line',
+    plugins: [predDividerPlugin],
     data: {
-      labels,
+      labels: chartLabels,
       datasets: [
-        { label: '預測高位', data: view.map(d=>+( ((weekly[d].c+sigmaUp  *channel[d].vr*3.0)+(weekly[d].o+sigmaUpO  *channel[d].vr*3.0))/2 ).toFixed(0)), borderColor:'rgba(83,74,183,0.85)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
-        { label: '實際高位',  data: view.map(d => weekly[d].h), borderColor:'rgba(226,75,74,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2] },
-        { label: '收市價',    data: view.map(d => weekly[d].c), borderColor:'#378ADD', borderWidth:2, pointRadius:0, fill:false, tension:0.2 },
-        { label: '實際低位',  data: view.map(d => weekly[d].l), borderColor:'rgba(226,75,74,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2] },
-        { label: '預測低位', data: view.map(d=>+( ((weekly[d].c-sigmaDown*channel[d].vr*3.0)+(weekly[d].o-sigmaDownO*channel[d].vr*3.0))/2 ).toFixed(0)), borderColor:'rgba(83,74,183,0.85)',  borderWidth:1.5, borderDash:[6,3], pointRadius:0, fill:false, tension:0.2 },
+        // Prediction zone fill (behind bands)
+        {
+          label: '_fillPh', data: fillPhData,
+          borderColor: 'transparent',
+          backgroundColor: isDark ? 'rgba(192,37,45,0.12)' : 'rgba(192,37,45,0.08)',
+          fill: '+1', pointRadius: 0, tension: 0.3, spanGaps: false, order: 10,
+        },
+        {
+          label: '_fillPl', data: fillPlData,
+          borderColor: 'transparent', backgroundColor: 'transparent',
+          fill: false, pointRadius: 0, tension: 0.3, spanGaps: false, order: 11,
+        },
+        // Predicted high band — last segment turns red
+        {
+          label: '預測高位',
+          data: predPhData,
+          borderColor: 'rgba(83,74,183,0.85)',
+          borderWidth: 1.5,
+          borderDash: [6,3],
+          segment: {
+            borderColor: ctx => ctx.p1DataIndex === N-1 ? '#c0252d' : 'rgba(83,74,183,0.85)',
+            borderWidth: ctx => ctx.p1DataIndex === N-1 ? 2.5 : 1.5,
+            borderDash:  ctx => ctx.p1DataIndex === N-1 ? [10,4] : [6,3],
+          },
+          pointRadius: ctx => ctx.dataIndex === N-1 ? 7 : 0,
+          pointBackgroundColor: '#c0252d',
+          pointStyle: ctx => ctx.dataIndex === N-1 ? 'triangle' : 'circle',
+          fill: false, tension: 0.2, spanGaps: false, order: 2,
+        },
+        // Actual high
+        { label: '實際高位', data: highData, borderColor:'rgba(226,75,74,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2], spanGaps:false, order:4 },
+        // Close
+        { label: '收市價', data: closeData, borderColor:'#378ADD', borderWidth:2, pointRadius:0, fill:false, tension:0.2, spanGaps:false, order:1 },
+        // Actual low
+        { label: '實際低位', data: lowData, borderColor:'rgba(226,75,74,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2], spanGaps:false, order:5 },
+        // Predicted low band — last segment turns green
+        {
+          label: '預測低位',
+          data: predPlData,
+          borderColor: 'rgba(83,74,183,0.85)',
+          borderWidth: 1.5,
+          borderDash: [6,3],
+          segment: {
+            borderColor: ctx => ctx.p1DataIndex === N-1 ? '#1a7a3c' : 'rgba(83,74,183,0.85)',
+            borderWidth: ctx => ctx.p1DataIndex === N-1 ? 2.5 : 1.5,
+            borderDash:  ctx => ctx.p1DataIndex === N-1 ? [10,4] : [6,3],
+          },
+          pointRadius: ctx => ctx.dataIndex === N-1 ? 7 : 0,
+          pointBackgroundColor: '#1a7a3c',
+          pointStyle: ctx => ctx.dataIndex === N-1 ? 'triangle' : 'circle',
+          rotation: 180,
+          fill: false, tension: 0.2, spanGaps: false, order: 3,
+        },
       ]
     },
     options: {
@@ -4271,11 +4363,13 @@ function renderHsiPanel() {
           mode: 'index',
           intersect: false,
           caretPadding: 20,
+          filter: item => !item.dataset.label.startsWith('_') && item.parsed.y !== null,
           callbacks: {
             label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}`,
             afterBody: items => {
               if (!items.length) return [];
               const i = items[0].dataIndex;
+              if (i === N-1) return ['← 預測區'];
               const h = highVsMa[i] !== undefined ? (highVsMa[i] > 0 ? '+' : '') + highVsMa[i] : '--';
               const l = lowVsMa[i]  !== undefined ? (lowVsMa[i]  > 0 ? '+' : '') + lowVsMa[i]  : '--';
               return [`週高−4週均: ${h}`, `週低−4週均: ${l}`];
@@ -4284,7 +4378,17 @@ function renderHsiPanel() {
         }
       },
       scales: {
-        x: { ticks: { callback: (v,i) => i % tickEvery === 0 ? labels[i].slice(0,7) : '', maxRotation: 0, font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } },
+        x: {
+          ticks: {
+            callback: (v,i) => {
+              if (i === N-1) return '下週';
+              return i % tickEvery === 0 ? chartLabels[i].slice(0,7) : '';
+            },
+            color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
+            maxRotation: 0, font: { size: 11 }
+          },
+          grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
+        },
         y: { ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } }
       }
     }
@@ -4293,17 +4397,17 @@ function renderHsiPanel() {
   hsiVolInst = new Chart(document.getElementById('hsiVolCanvas'), {
     type: 'bar',
     data: {
-      labels,
+      labels: chartLabels,
       datasets: [
         {
           label: '週高 − 4週均',
-          data: highVsMa,
+          data: [...highVsMa, null],
           backgroundColor: 'rgba(226,75,74,0.55)',
           borderWidth: 0,
         },
         {
           label: '週低 − 4週均',
-          data: lowVsMa,
+          data: [...lowVsMa, null],
           backgroundColor: 'rgba(55,138,221,0.55)',
           borderWidth: 0,
         }
