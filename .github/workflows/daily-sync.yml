@@ -233,6 +233,15 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+      - name: Export SDW chart files
+        run: python ccass_sdw_library.py --export-charts
+      - name: Commit chart files
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          git add sdw_*.json
+          git diff --staged --quiet || \
+            (git commit -m "SDW charts: $(date +'%Y-%m-%d')" && git push)
 
   # ── SDW weekly (Mon–Fri 21:00 + 23:00 HKT) ──────────────────────────────────
   # Runs --update: fetches only the latest Friday not yet in the DB.
@@ -272,6 +281,15 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+      - name: Export SDW chart files
+        run: python ccass_sdw_library.py --export-charts
+      - name: Commit chart files
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          git add sdw_*.json
+          git diff --staged --quiet || \
+            (git commit -m "SDW charts: $(date +'%Y-%m-%d')" && git push)
 
   # ── SFC weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
   sfc-weekly:
@@ -526,6 +544,15 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+      - name: Export SDW chart files
+        run: python ccass_sdw_library.py --export-charts
+      - name: Commit chart files
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          git add sdw_*.json
+          git diff --staged --quiet || \
+            (git commit -m "SDW charts: $(date +'%Y-%m-%d')" && git push)
 
   # ── SDW migrate JSON → SQLite (one-time) ─────────────────────────────────────
   # Place all ccass_sdw_*.json files in the repo root, then run this job.
