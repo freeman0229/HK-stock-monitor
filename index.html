@@ -982,7 +982,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="sdw-nodata-sub">
       請先部署所有文件，然後執行：<br><br>
       <code>python ccass_sdw_library.py</code><br><br>
-      程式將逐週抓取 HKEX CCASS 參與者持倉數據並存入 <code>ccass_sdw_{range}_{YYYY}.json</code>
+      程式將逐週抓取 HKEX CCASS 參與者持倉數據並存入 <code>ccass_sdw.db</code>，再由 <code>--export-charts</code> 輸出各股 <code>sdw_{code}.json</code>
     </div>
   </div>
 
@@ -2839,6 +2839,9 @@ let sdwCurDate    = '';   // currently selected date
 let sdwInitDone   = false;
 let sdwLoaded     = false;
 let sdwTopN       = 5;    // current top-n selection
+let sdwData       = {};   // { ds: { code: {p, total_sh, issued_sh} } }
+let sdwDates      = [];   // sorted ascending list of all known dates
+let sdwCodeCache  = {};   // { code: true } — per-stock files already fetched
 
 function sdwSetTopN(n) {
   sdwTopN = n;
@@ -2857,33 +2860,60 @@ const SDW_COLORS  = [
   '#0891b2','#b45309','#be185d','#64748b','#15803d',
 ];
 
-// ── Load ccass_sdw_{range}_{YYYY}.json (range-split format) ─────────────────
-async function loadSdwData() {
-  const curYear   = new Date().getFullYear();
-  const startYear = 2025;
-  const ranges    = ['0001_3999','6000_6999','9600_9999','7489_7618'];
-  const merged    = {};
-  let   fetched   = 0;
-
-  for (let y = startYear; y <= curYear; y++) {
-    for (const rng of ranges) {
-      try {
-        const r = await fetch(`ccass_sdw_${rng}_${y}.json`, { cache: 'no-cache' });
-        if (!r.ok) continue;
-        const lib = await r.json();
-        for (const [ds, stocks] of Object.entries(lib.by_date || {})) {
-          merged[ds] = Object.assign(merged[ds] || {}, stocks);
-        }
-        fetched++;
-      } catch(e) { /* file absent — normal */ }
-    }
-  }
-
-  if (!fetched) return false;
-  sdwData   = merged;
-  sdwDates  = Object.keys(merged).sort();
+// ── Bootstrap SDW from data.json; lazy-fetch per-stock history on demand ─────
+// ── Seed SDW dates from data.json (allStocks have sdw_holders + sdw_total_sh) ─
+// Called once at init. Populates sdwDates from the latest snapshot embedded in
+// data.json, and marks sdwLoaded so the panel can render summary cards immediately
+// without waiting for any extra fetch.
+function loadSdwFromDataJson() {
+  if (!allStocks.length) return false;
+  const today = allStocks[0].ccass_trade_date ||
+                new Date().toISOString().slice(0, 10);
+  // Seed sdwData with the latest snapshot from data.json
+  allStocks.forEach(s => {
+    if (!s.sdw_holders || !s.sdw_holders.length) return;
+    if (!sdwData[today]) sdwData[today] = {};
+    sdwData[today][norm5(s.code)] = {
+      p:         s.sdw_holders,
+      total_sh:  s.sdw_total_sh  || 0,
+      issued_sh: 0,
+    };
+  });
+  if (!Object.keys(sdwData).length) return false;
+  sdwDates  = Object.keys(sdwData).sort();
   sdwLoaded = true;
   return true;
+}
+
+// ── Lazy-fetch sdw_{code}.json for chart history ──────────────────────────────
+// Fetches the per-stock file the first time a code is selected, then caches it.
+// Merges all dates from the file into the global sdwData / sdwDates.
+async function loadSdwData() {
+  // This variant is called by initSdwPanel for the initial load.
+  // Seed from data.json (instant — no network request).
+  return loadSdwFromDataJson();
+}
+
+async function fetchSdwCodeHistory(code) {
+  const code5 = norm5(code);
+  if (sdwCodeCache[code5]) return;   // already fetched
+  try {
+    const r = await fetch(`sdw_${code5}.json`, { cache: 'no-cache' });
+    if (!r.ok) { sdwCodeCache[code5] = true; return; }
+    const lib = await r.json();
+    // Merge all dates from per-stock file into global sdwData
+    for (const [ds, entry] of Object.entries(lib.by_date || {})) {
+      if (!sdwData[ds]) sdwData[ds] = {};
+      sdwData[ds][code5] = entry;
+    }
+    // Extend sdwDates with any new dates
+    const newDates = (lib.dates || []).filter(d => !sdwDates.includes(d));
+    if (newDates.length) {
+      sdwDates = [...new Set([...sdwDates, ...newDates])].sort();
+      sdwPopulateDates();
+    }
+  } catch(e) { /* file absent — stock has no history yet */ }
+  sdwCodeCache[code5] = true;
 }
 
 // ── Populate date selector ──────────────────────────────────────────────────
@@ -3031,13 +3061,16 @@ function sdwBuildDropdown(query) {
   dd.style.display = 'block';
 }
 
-function sdwSelectCode(code) {
+async function sdwSelectCode(code) {
   sdwCurCode = code;
   const nameMap = {};
   allStocks.forEach(s => { nameMap[s.code] = s.name_chi; });
   const name = nameMap[code] || code;
   document.getElementById('sdw-search').value = `${code}  ${name}`;
   document.getElementById('sdw-dropdown').style.display = 'none';
+  // Render immediately from data.json snapshot, then re-render with history
+  renderSdwPanel();
+  await fetchSdwCodeHistory(code);
   renderSdwPanel();
 }
 

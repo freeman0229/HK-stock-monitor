@@ -986,14 +986,14 @@ def run_analysis():
             "tv_ratio":  tv_ratio,
             "pct_dev":   round(pct_dev, 4),
             "concentration": concentration,
-            "top10_sh":         top10_sh,         # sum(top 10 holders' 持股量)
-            "top10_pct":        top10_pct,         # top10_sh / 總數 × 100
-            "top10_pct_delta":  top10_pct_delta,   # top10_pct WoW change [pp]
-            "vwap":             vwap,               # 成交均價 = 成交金額 / 成交股數
-            "vol":              today_vol,           # 成交股數 (shares)
-            "close":            q.get("close", 0.0), # 收市價
-            "turnover_24d":       turnover_24d,        # 換手率 = (today + prior 23d 成交股數) / 總數 × 100
-            "delta_turnover_24d": delta_turnover_24d,  # current − prev 24d window [pp]
+            "top10_sh":         top10_sh,
+            "top10_pct":        top10_pct,
+            "top10_pct_delta":  top10_pct_delta,
+            "vwap":             vwap,
+            "vol":              today_vol,
+            "close":            q.get("close", 0.0),
+            "turnover_24d":       turnover_24d,
+            "delta_turnover_24d": delta_turnover_24d,
             "lockup_threshold": lockup_threshold(tv_avg24),
             "ccass_trade_date":  t2_date.strftime("%Y-%m-%d"),
             "ccass_delta":       int(ccass_delta),
@@ -1002,8 +1002,14 @@ def run_analysis():
             "pct_listed": round(pct_listed, 4),
             "pct_delta":  round(pct_delta,  4),
             "insight": insight,
-            "squeeze_score": squeeze_score,   # 0–14 挾倉風險評分
-            "dtc_avg_10d":   dtc_avg_10d,     # 10-day average days-to-cover
+            "squeeze_score": squeeze_score,
+            "dtc_avg_10d":   dtc_avg_10d,
+            # SDW latest snapshot — used by the 大戶持倉 panel summary cards and table.
+            # Full history is in sdw_{code}.json (written by --export-charts).
+            "sdw_holders":  [{"pid": h["pid"], "name": h["name"],
+                               "sh":  h["sh"],  "pct":  h["pct"]}
+                             for h in _holders],
+            "sdw_total_sh": int(_total_sh_conc),
         })
 
     # ── 11. Persist ───────────────────────────────────────────────────────────

@@ -27,15 +27,16 @@ Adaptive sleep: inter-request delay backs off automatically when the
 error rate within a worker rises above ERROR_RATE_THRESHOLD.
 
 Usage:
-  python ccass_sdw_library.py                    # full backfill
-  python ccass_sdw_library.py --update           # only new dates
-  python ccass_sdw_library.py --date 2026-03-21  # one specific date
-  python ccass_sdw_library.py --query 00700      # show holdings for a stock
-  python ccass_sdw_library.py --stats            # DB summary statistics
-  python ccass_sdw_library.py --export-csv 00700 # export history to CSV
-  python ccass_sdw_library.py --verify           # check DB integrity
-  python ccass_sdw_library.py --migrate-json     # import old JSON range files
-  python ccass_sdw_library.py --vacuum           # reclaim DB disk space
+  python ccass_sdw_library.py                         # full backfill
+  python ccass_sdw_library.py --update                # only new dates
+  python ccass_sdw_library.py --date 2026-03-21       # one specific date
+  python ccass_sdw_library.py --query 00700           # show holdings for a stock
+  python ccass_sdw_library.py --stats                 # DB summary statistics
+  python ccass_sdw_library.py --export-csv 00700      # export history to CSV
+  python ccass_sdw_library.py --export-charts         # write sdw_{code}.json files
+  python ccass_sdw_library.py --verify                # check DB integrity
+  python ccass_sdw_library.py --migrate-json          # import old JSON range files
+  python ccass_sdw_library.py --vacuum                # reclaim DB disk space
 """
 
 from __future__ import annotations
@@ -451,6 +452,178 @@ def verify_db(path: str = DB_PATH) -> bool:
             n_dates, n_codes, n_meta, n_hold,
         )
     return ok
+
+
+# ── Public API (imported by main.py) ─────────────────────────────────────────
+
+def get_holders(code: str, ds: str, path: str = DB_PATH) -> list[dict]:
+    """Return holders for *code* on date *ds*, sorted by shares desc.
+
+    Each entry: {pid, name, sh, pct}.
+    Returns [] if no data.
+    """
+    code5 = normalize_code(code)
+    with get_conn(path) as conn:
+        rows = conn.execute(
+            """SELECT pid, name, shares AS sh, pct
+               FROM   holdings
+               WHERE  code = ? AND date = ?
+               ORDER  BY shares DESC""",
+            (code5, ds),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_holders_history(
+    code: str,
+    n:    int,
+    before: str,
+    path: str = DB_PATH,
+) -> list[list[dict]]:
+    """Return up to *n* holder snapshots for *code* strictly before *before*.
+
+    Returns a list of snapshots, newest first.  Each snapshot is a list of
+    {pid, name, sh, pct} dicts sorted by shares desc.
+    """
+    code5 = normalize_code(code)
+    with get_conn(path) as conn:
+        dates = conn.execute(
+            """SELECT DISTINCT date FROM metadata
+               WHERE  code = ? AND date < ?
+               ORDER  BY date DESC
+               LIMIT  ?""",
+            (code5, before, n),
+        ).fetchall()
+        result = []
+        for (ds,) in dates:
+            rows = conn.execute(
+                """SELECT pid, name, shares AS sh, pct
+                   FROM   holdings
+                   WHERE  code = ? AND date = ?
+                   ORDER  BY shares DESC""",
+                (code5, ds),
+            ).fetchall()
+            result.append([dict(r) for r in rows])
+    return result
+
+
+def get_latest_total_sh(code: str, before_or_eq: str, path: str = DB_PATH) -> int:
+    """Return the most recent total_sh for *code* on or before *before_or_eq*.
+
+    Returns 0 if no data.
+    """
+    code5 = normalize_code(code)
+    with get_conn(path) as conn:
+        row = conn.execute(
+            """SELECT total_sh FROM metadata
+               WHERE  code = ? AND date <= ?
+               ORDER  BY date DESC
+               LIMIT  1""",
+            (code5, before_or_eq),
+        ).fetchone()
+    return int(row[0]) if row and row[0] else 0
+
+
+def get_total_sh_bulk(
+    before_or_eq: str,
+    path: str = DB_PATH,
+) -> dict[str, int]:
+    """Return {code: total_sh} for the most recent date <= *before_or_eq* per code.
+
+    Used by main.py to pre-load all total_sh values in one pass.
+    """
+    with get_conn(path) as conn:
+        rows = conn.execute(
+            """SELECT code, total_sh
+               FROM   metadata
+               WHERE  (code, date) IN (
+                   SELECT code, MAX(date)
+                   FROM   metadata
+                   WHERE  date <= ?
+                   GROUP  BY code
+               )""",
+            (before_or_eq,),
+        ).fetchall()
+    return {r[0]: int(r[1]) for r in rows if r[1]}
+
+
+# ── Chart export ──────────────────────────────────────────────────────────────
+
+def export_charts(
+    out_dir : str  = ".",
+    weeks   : int  = 52,
+    path    : str  = DB_PATH,
+) -> int:
+    """Write one sdw_{code}.json per active stock for the frontend chart.
+
+    File format (mirrors the old range-file structure the HTML already reads):
+      {
+        "dates":  ["2025-04-05", ...],          // sorted ascending
+        "by_date": {
+          "2025-04-05": {
+            "p":        [{pid, name, sh, pct}, ...],
+            "total_sh":  12345678,
+            "issued_sh": 23456789
+          }
+        }
+      }
+
+    Only stocks that have at least one holdings row are exported.
+    Only the most recent *weeks* Friday dates are included.
+    Returns the number of files written.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Cutoff: oldest date to include
+    cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
+
+    # Use a single connection for all reads — much faster than re-opening per stock
+    conn = sqlite3.connect(path, timeout=60)
+    conn.row_factory = sqlite3.Row
+    try:
+        codes = [r[0] for r in conn.execute(
+            "SELECT DISTINCT code FROM holdings ORDER BY code"
+        ).fetchall()]
+
+        written = 0
+        for code in codes:
+            meta_rows = conn.execute(
+                """SELECT date, total_sh, issued_sh FROM metadata
+                   WHERE  code = ? AND date >= ?
+                   ORDER  BY date""",
+                (code, cutoff),
+            ).fetchall()
+            if not meta_rows:
+                continue
+
+            by_date: dict = {}
+            for row in meta_rows:
+                ds, total_sh, issued_sh = row["date"], row["total_sh"], row["issued_sh"]
+                holders = conn.execute(
+                    """SELECT pid, name, shares AS sh, pct
+                       FROM   holdings
+                       WHERE  code = ? AND date = ?
+                       ORDER  BY shares DESC""",
+                    (code, ds),
+                ).fetchall()
+                by_date[ds] = {
+                    "p":         [{"pid": h["pid"], "name": h["name"],
+                                   "sh": h["sh"],   "pct": h["pct"]} for h in holders],
+                    "total_sh":  int(total_sh  or 0),
+                    "issued_sh": int(issued_sh or 0),
+                }
+
+            out = {
+                "dates":   sorted(by_date.keys()),
+                "by_date": by_date,
+            }
+            fpath = os.path.join(out_dir, f"sdw_{code}.json")
+            with open(fpath, "w", encoding="utf-8") as f:
+                json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+            written += 1
+    finally:
+        conn.close()
+    return written
 
 
 # ── Stock universe ────────────────────────────────────────────────────────────
@@ -1580,6 +1753,12 @@ def _parse_args() -> argparse.Namespace:
                    help="Run DB integrity checks and exit")
     p.add_argument("--migrate-json", action="store_true",
                    help="Import legacy JSON range files into the DB and exit")
+    p.add_argument("--export-charts", action="store_true",
+                   help="Export per-stock sdw_{code}.json chart files and exit")
+    p.add_argument("--charts-dir",   default=".", metavar="DIR",
+                   help="Output directory for --export-charts (default: %(default)s)")
+    p.add_argument("--charts-weeks", default=52, type=int, metavar="N",
+                   help="Weeks of history to include in chart files (default: %(default)s)")
     p.add_argument("--vacuum",      action="store_true",
                    help="Run VACUUM to reclaim DB disk space and exit")
     return p.parse_args()
@@ -1608,6 +1787,10 @@ def main() -> None:
 
     if args.migrate_json:
         _migrate_json(db)
+        return
+
+    if args.export_charts:
+        export_charts(out_dir=args.charts_dir, weeks=args.charts_weeks, path=db)
         return
 
     if args.vacuum:
