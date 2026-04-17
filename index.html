@@ -3088,9 +3088,14 @@ async function sdwSelectCode(code) {
   const name = nameMap[code] || code;
   document.getElementById('sdw-search').value = `${code}  ${name}`;
   document.getElementById('sdw-dropdown').style.display = 'none';
-  // Render immediately from data.json snapshot, then re-render with history
-  renderSdwPanel();
+  // Show loading state immediately
+  document.getElementById('sdw-loading').style.display = 'block';
+  document.getElementById('sdw-content').style.display = 'none';
+  document.getElementById('sdw-nodata').style.display  = 'none';
   await fetchSdwCodeHistory(code);
+  // Mark loaded even if data.json had no sdw_holders — per-stock file is the source of truth
+  if (!sdwLoaded && sdwDates.length) sdwLoaded = true;
+  document.getElementById('sdw-loading').style.display = 'none';
   renderSdwPanel();
 }
 
@@ -3593,6 +3598,10 @@ async function initSdwPanel() {
     renderSdwPanel();
     return;
   }
+  if (sdwInitDone && !sdwLoaded) {
+    // Already initialised but no data yet — just re-wire search
+    return;
+  }
   // Show loading
   document.getElementById('sdw-loading').style.display = 'block';
   document.getElementById('sdw-content').style.display = 'none';
@@ -3601,13 +3610,17 @@ async function initSdwPanel() {
   const ok = await loadSdwData();
   document.getElementById('sdw-loading').style.display = 'none';
 
-  if (!ok) {
+  // Even if data.json has no sdw_holders, still wire up the panel so the
+  // search box works and per-stock files can be lazy-fetched.
+  sdwInitDone = true;
+  if (ok) {
+    sdwPopulateDates();
+    sdwComputeSummary();
+  } else {
+    // No data.json snapshot — show the no-data placeholder but keep the
+    // search box visible so users can still look up individual stocks.
     document.getElementById('sdw-nodata').style.display = 'block';
-    return;
   }
-
-  sdwPopulateDates();
-  sdwComputeSummary();
 
   // Wire up controls
   document.getElementById('sdw-date-sel').onchange = () => { sdwCurDate = document.getElementById('sdw-date-sel').value; renderSdwPanel(); };
@@ -3625,8 +3638,6 @@ async function initSdwPanel() {
   // Prefer a stock in allStocks (has a known name), pick highest turnover
   const firstCode  = allStocks.find(s => sdwCodes.includes(s.code))?.code || sdwCodes[0];
   if (firstCode) sdwSelectCode(firstCode);
-
-  sdwInitDone = true;
 }
 
 // ── Cai Channel ──────────────────────────────────────────────────────────
