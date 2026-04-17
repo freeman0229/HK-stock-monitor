@@ -639,7 +639,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn" data-tab="short">累積沽空</button>
   <button class="tab-btn" data-tab="ccass">大戶持倉</button>
   <button class="tab-btn" data-tab="cai">波動率</button>
-    <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
+  <button class="tab-btn" data-tab="stock">個股綜合分析</button>
+  <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
 </div>
 
 <!-- ═══ Panel 1: 北水追蹤 ════════════════════════════════════════════════════ -->
@@ -1068,6 +1069,54 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 </div>
 
 
+<!-- ═══ Panel: 個股綜合分析 ══════════════════════════════════════════════════ -->
+<div class="panel" id="panel-stock">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <select id="stock-range" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
+        <option value="13">3個月</option>
+        <option value="26">6個月</option>
+        <option value="52" selected>1年</option>
+        <option value="104">2年</option>
+      </select>
+      <label style="font-size:12px;color:var(--muted)">自</label>
+      <input type="date" id="stock-from" style="font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
+      <label style="font-size:12px;color:var(--muted)">至</label>
+      <input type="date" id="stock-to" style="font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
+      <button id="stock-apply" style="font-size:12px;padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer">套用</button>
+    </div>
+    <div style="position:relative;">
+      <input type="text" id="stock-search" placeholder="輸入代號或名稱…" autocomplete="off"
+        style="font-size:13px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);width:200px">
+      <div id="stock-dropdown" style="display:none;position:absolute;right:0;top:100%;margin-top:2px;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);width:260px;max-height:280px;overflow-y:auto;z-index:200;"></div>
+    </div>
+  </div>
+
+  <div id="stock-nodata" style="padding:60px 0;text-align:center;color:var(--muted);font-size:13px;">
+    請在右上角輸入股票代號或名稱
+  </div>
+
+  <div id="stock-content" style="display:none;">
+    <div id="stock-title" style="font-size:14px;font-weight:500;color:var(--text);margin-bottom:10px;"></div>
+    <div style="position:relative;" id="stock-charts-wrap">
+      <div id="stock-tip" style="position:absolute;background:#1a1a1a;color:#eee;font-size:11px;padding:8px 10px;border-radius:6px;pointer-events:none;display:none;white-space:nowrap;z-index:99;line-height:1.9;"></div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:2px;">換手率 (%)</div>
+      <div style="position:relative;width:100%;height:88px;"><canvas id="stkC1" role="img" aria-label="換手率 weekly chart">換手率.</canvas></div>
+      <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">收市價 / VWAP &amp; 成交量</div>
+      <div style="position:relative;width:100%;height:220px;"><canvas id="stkC2" role="img" aria-label="Price VWAP volume weekly chart">Price volume.</canvas></div>
+      <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">Top10持倉 / SFC賣空 (%)</div>
+      <div style="position:relative;width:100%;height:88px;"><canvas id="stkC3" role="img" aria-label="Top10 SFC weekly chart">Top10 SFC.</canvas></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;display:flex;gap:16px;flex-wrap:wrap;">
+        <span><span style="display:inline-block;width:16px;height:2px;background:#378ADD;vertical-align:middle;margin-right:3px"></span>收市價</span>
+        <span><span style="display:inline-block;width:16px;height:2px;border-top:2px dashed rgba(192,37,45,0.7);vertical-align:middle;margin-right:3px"></span>VWAP</span>
+        <span><span style="display:inline-block;width:16px;height:2px;background:#534AB7;vertical-align:middle;margin-right:3px"></span>Top10持倉</span>
+        <span><span style="display:inline-block;width:16px;height:2px;border-top:2px dashed #c0252d;vertical-align:middle;margin-right:3px"></span>SFC賣空</span>
+        <span><span style="display:inline-block;width:16px;height:8px;background:rgba(128,128,128,0.2);vertical-align:middle;margin-right:3px;border-radius:1px"></span>成交量</span>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="footer">
   <span>Email: <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="196d786b7d707e6b787d7c78777875606d707a6a597e74787075377a7674">[email&#160;protected]</a></span>
   <span>港股策略板 ｜ 數據來源：HKEX · SFC ｜ 僅供參考，不構成投資建議</span>
@@ -1093,6 +1142,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'bshui' && allStocks.length) renderBshui();
     if (btn.dataset.tab === 'ccass') initSdwPanel();
     if (btn.dataset.tab === 'short') initSfcChart();
+    if (btn.dataset.tab === 'stock') initStockPanel();
   });
 });
 
@@ -4458,12 +4508,14 @@ function renderHsiPanel() {
           data: [...highVsMa, null],
           backgroundColor: 'rgba(226,75,74,0.55)',
           borderWidth: 0,
+          stack: 'dev',
         },
         {
           label: '週低 − 4週均',
           data: [...lowVsMa, null],
           backgroundColor: 'rgba(55,138,221,0.55)',
           borderWidth: 0,
+          stack: 'dev',
         }
       ]
     },
@@ -4474,9 +4526,10 @@ function renderHsiPanel() {
         tooltip: { enabled: false }
       },
       scales: {
-        x: { ticks: { display: false }, grid: { display: false } },
+        x: { stacked: true, ticks: { display: false }, grid: { display: false } },
         y: {
-          ticks: { callback: v => v > 0 ? '+'+v : v, font: { size: 10 } },
+          stacked: true,
+          ticks: { callback: v => v > 0 ? '+'+v : v, font: { size: 10 }, color: isDark ? 'rgba(255,255,255,0.4)' : '#888' },
           grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
         }
       }
@@ -4579,7 +4632,362 @@ async function initHsiPanel() {
   renderHsiPanel();
 }
 
-</script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+// ══ 個股綜合分析 ══════════════════════════════════════════════════════════════
+let stkCode       = null;
+let stkCharts     = [];
+let stkInitDone   = false;
+let stkRankCache  = null;   // parsed rank_history flat by date
+let stkSfcCache   = {};     // { year: sfc_YYYY.json data }
+let stkSdwCache   = {};     // { code5: sdw_{code}.json data }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function stkFridays(allDates) {
+  return allDates.filter(d => new Date(d).getDay() === 5);
+}
+
+function stkBuildRankFlat() {
+  if (stkRankCache) return stkRankCache;
+  const store = window._rankHistoryData || {};
+  const flat = {};
+  for (const [ds, stocks] of Object.entries(store)) {
+    // ds is YYYYMMDD — convert to YYYY-MM-DD
+    const d = ds.slice(0,4)+'-'+ds.slice(4,6)+'-'+ds.slice(6,8);
+    flat[d] = stocks;
+  }
+  stkRankCache = flat;
+  return flat;
+}
+
+async function stkEnsureRankHistory() {
+  if (window._rankHistoryData) return;
+  try {
+    const r = await fetch('rank_history.json', {cache:'no-cache'});
+    if (!r.ok) return;
+    window._rankHistoryData = await r.json();
+    stkRankCache = null;
+  } catch(e) {}
+}
+
+async function stkEnsureSfc(year) {
+  if (stkSfcCache[year]) return;
+  try {
+    const r = await fetch(`sfc_${year}.json`, {cache:'no-cache'});
+    if (!r.ok) return;
+    stkSfcCache[year] = await r.json();
+  } catch(e) {}
+}
+
+async function stkEnsureSdw(code5) {
+  if (stkSdwCache[code5]) return;
+  try {
+    const r = await fetch(`sdw_${code5}.json`, {cache:'no-cache'});
+    if (!r.ok) return;
+    stkSdwCache[code5] = await r.json();
+  } catch(e) {}
+}
+
+// ── Data assembly ─────────────────────────────────────────────────────────────
+async function stkBuildSeries(code5, fromDs, toDs) {
+  await stkEnsureRankHistory();
+  const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
+    .flatMap(y => [y, y+1]))];
+  for (const y of years) await stkEnsureSfc(y);
+  await stkEnsureSdw(code5);
+
+  const flat    = stkBuildRankFlat();
+  const allDates = Object.keys(flat).filter(d => d >= fromDs && d <= toDs).sort();
+  const fridays  = stkFridays(allDates);
+  if (!fridays.length) return null;
+
+  // SFC flat by date
+  const sfcFlat = {};
+  for (const y of years) {
+    const ydata = stkSfcCache[y];
+    if (!ydata) continue;
+    for (const [ds, stocks] of Object.entries(ydata.by_date || {})) {
+      sfcFlat[ds] = stocks;
+    }
+  }
+
+  // SDW by_date
+  const sdwByDate = (stkSdwCache[code5] || {}).by_date || {};
+
+  const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[];
+
+  for (const ds of fridays) {
+    const rec = flat[ds]?.[code5] || flat[ds]?.[code5.replace(/^0+/,'')];
+    labels.push(ds.slice(0,7));
+    closeArr.push(rec?.close  ?? null);
+    vwapArr .push(rec?.vwap   ?? null);
+    volArr  .push(rec?.vol    ?? null);
+    turnArr .push(rec?.turnover_24d != null ? +rec.turnover_24d.toFixed(2) : null);
+
+    // top10_pct from sdw data — compute client-side
+    const sdwEntry = sdwByDate[ds];
+    if (sdwEntry && sdwEntry.total_sh > 0) {
+      const holders = sdwEntry.p || [];
+      const top10sh = holders.slice(0,10).reduce((s,h)=>s+(h.sh||0),0);
+      top10Arr.push(+(top10sh / sdwEntry.total_sh * 100).toFixed(2));
+    } else {
+      top10Arr.push(null);
+    }
+
+    // sfc_pct
+    const sfcRec = sfcFlat[ds]?.[code5] || sfcFlat[ds]?.[code5.replace(/^0+/,'')];
+    sfcArr.push(sfcRec?.pct != null ? +sfcRec.pct.toFixed(2) : null);
+  }
+
+  return {labels, close:closeArr, vwap:vwapArr, vol:volArr, turn:turnArr, top10:top10Arr, sfc:sfcArr};
+}
+
+// ── Chart rendering ───────────────────────────────────────────────────────────
+function stkDestroyCharts() {
+  stkCharts.forEach(c => { try { c.destroy(); } catch(e){} });
+  stkCharts = [];
+}
+
+function stkDrawCharts(series) {
+  stkDestroyCharts();
+  const gc   = 'rgba(128,128,128,0.08)';
+  const dark = matchMedia('(prefers-color-scheme:dark)').matches;
+  const N    = series.labels.length;
+  const YW   = 52;  // fixed y-axis pixel width for alignment
+
+  const afterFitY = scale => { scale.width = YW; };
+  const xHide = { ticks:{display:false}, grid:{color:gc}, border:{display:false} };
+  const xShow = { ticks:{font:{size:10},color:'#888',maxRotation:0,
+    callback:(v,i) => i % Math.max(1, Math.floor(N/8)) === 0 ? series.labels[i] : '' },
+    grid:{color:gc}, border:{display:false} };
+
+  let activeIdx = null;
+
+  const crossPlugin = {
+    id:'stkCross',
+    afterDraw(chart) {
+      if (activeIdx === null) return;
+      const {ctx,scales:{x,y}} = chart;
+      if (!x||!y) return;
+      const xp = x.getPixelForValue(activeIdx);
+      ctx.save();
+      ctx.setLineDash([4,3]);
+      ctx.strokeStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(80,80,80,0.4)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(xp,chart.chartArea.top); ctx.lineTo(xp,chart.chartArea.bottom); ctx.stroke();
+      ctx.restore();
+    }
+  };
+
+  function getIdx(chart, e) {
+    const rect = chart.canvas.getBoundingClientRect();
+    const xPx  = e.clientX - rect.left;
+    const xs   = chart.scales.x;
+    if (!xs) return null;
+    let best=null, minD=Infinity;
+    for (let i=0;i<N;i++) {
+      const d=Math.abs(xs.getPixelForValue(i)-xPx);
+      if (d<minD){minD=d;best=i;}
+    }
+    return minD<40?best:null;
+  }
+
+  function showTip(e, idx) {
+    const tip  = document.getElementById('stock-tip');
+    const wrap = document.getElementById('stock-charts-wrap');
+    if (!tip || !wrap) return;
+    if (idx === null) { tip.style.display='none'; return; }
+    const ds  = series.labels[idx];
+    const c   = series.close[idx], v = series.vwap[idx];
+    const vol = series.vol[idx];
+    const t   = series.turn[idx], t10 = series.top10[idx], sfc = series.sfc[idx];
+    const row = (lbl, val, col) =>
+      `<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
+    tip.innerHTML =
+      `<b style="color:#ccc">${ds}</b><br>` +
+      row('換手率',  t   != null ? t.toFixed(1)+'%'  : '—', '#b8860b') +
+      row('收市價',  c   != null ? c.toFixed(2)       : '—', '#378ADD') +
+      row('VWAP',    v   != null ? v.toFixed(2)        : '—', 'rgba(192,37,45,0.9)') +
+      row('成交量',  vol != null ? (vol/1e6).toFixed(0)+'M':'—','#888') +
+      row('Top10持倉', t10 != null ? t10.toFixed(1)+'%':'—', '#534AB7') +
+      row('SFC賣空',  sfc != null ? sfc.toFixed(1)+'%' :'—', '#c0252d');
+    tip.style.display = 'block';
+    const wr = wrap.getBoundingClientRect();
+    const tx = Math.min(e.clientX - wr.left + 14, wr.width - 170);
+    const ty = Math.max(e.clientY - wr.top  - 100, 4);
+    tip.style.left = tx+'px';
+    tip.style.top  = ty+'px';
+  }
+
+  function bindHover(chart) {
+    chart.canvas.addEventListener('mousemove', e => {
+      const idx = getIdx(chart, e);
+      activeIdx = idx;
+      stkCharts.forEach(c => c.update('none'));
+      showTip(e, idx);
+    });
+    chart.canvas.addEventListener('mouseleave', () => {
+      activeIdx = null;
+      stkCharts.forEach(c => c.update('none'));
+      const tip = document.getElementById('stock-tip');
+      if (tip) tip.style.display = 'none';
+    });
+  }
+
+  // Panel 1 — 換手率
+  const c1 = new Chart(document.getElementById('stkC1'), {
+    type:'line', plugins:[crossPlugin],
+    data:{labels:series.labels,datasets:[{
+      label:'換手率',data:series.turn,
+      borderColor:'#b8860b',borderWidth:1.5,
+      backgroundColor:'rgba(184,134,11,0.07)',
+      fill:true,pointRadius:0,tension:0.3,spanGaps:false,
+    }]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:xHide,y:{afterFit:afterFitY,
+        ticks:{callback:v=>v+'%',font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}}}}
+  });
+
+  // Panel 2 — Price + VWAP + Volume
+  const maxVol = Math.max(...series.vol.filter(v=>v!=null));
+  const c2 = new Chart(document.getElementById('stkC2'), {
+    type:'bar', plugins:[crossPlugin],
+    data:{labels:series.labels,datasets:[
+      {type:'bar',   label:'成交量', data:series.vol,  backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yV',order:3,spanGaps:false},
+      {type:'line',  label:'收市價', data:series.close, borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3,fill:false,yAxisID:'yP',order:1,spanGaps:false},
+      {type:'line',  label:'VWAP',   data:series.vwap,  borderColor:'rgba(192,37,45,0.7)',borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:0.3,fill:false,yAxisID:'yP',order:2,spanGaps:false},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{
+        x:xHide,
+        yP:{position:'left', afterFit:afterFitY, ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
+        yV:{position:'right',max:maxVol*4,ticks:{display:false},grid:{display:false},border:{display:false}},
+      }}
+  });
+
+  // Panel 3 — Top10 + SFC
+  const c3 = new Chart(document.getElementById('stkC3'), {
+    type:'line', plugins:[crossPlugin],
+    data:{labels:series.labels,datasets:[
+      {label:'Top10持倉',data:series.top10,borderColor:'#534AB7',borderWidth:1.5,pointRadius:0,tension:0.3,fill:false,spanGaps:false},
+      {label:'SFC賣空',  data:series.sfc,  borderColor:'#c0252d',borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:0.3,fill:false,spanGaps:false},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:xShow,y:{afterFit:afterFitY,
+        ticks:{callback:v=>v+'%',font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}}}}
+  });
+
+  stkCharts = [c1, c2, c3];
+  bindHover(c1); bindHover(c2); bindHover(c3);
+}
+
+// ── Date range helpers ────────────────────────────────────────────────────────
+function stkGetRange() {
+  const toEl   = document.getElementById('stock-to');
+  const fromEl = document.getElementById('stock-from');
+  const toDs   = toEl?.value   || new Date().toISOString().slice(0,10);
+  const fromDs = fromEl?.value || (() => {
+    const d = new Date(toDs);
+    d.setFullYear(d.getFullYear() - 1);
+    return d.toISOString().slice(0,10);
+  })();
+  return {fromDs, toDs};
+}
+
+function stkApplyRange() {
+  const weeks = parseInt(document.getElementById('stock-range')?.value || '52');
+  const toEl  = document.getElementById('stock-to');
+  const today = new Date().toISOString().slice(0,10);
+  if (toEl && !toEl.value) toEl.value = today;
+  const toDs  = toEl?.value || today;
+  const from  = new Date(toDs);
+  from.setDate(from.getDate() - weeks * 7);
+  const fromEl = document.getElementById('stock-from');
+  if (fromEl) fromEl.value = from.toISOString().slice(0,10);
+}
+
+// ── Search dropdown ───────────────────────────────────────────────────────────
+function stkBuildDropdown(q) {
+  const dd = document.getElementById('stock-dropdown');
+  if (!dd) return;
+  if (!q || q.length < 1) { dd.style.display='none'; return; }
+  const ql = q.toLowerCase();
+  const matches = allStocks.filter(s =>
+    s.code.includes(q) || norm5(s.code).includes(q) ||
+    (s.name||'').toLowerCase().includes(ql) ||
+    (s.name_chi||'').includes(q)
+  ).slice(0,12);
+  if (!matches.length) { dd.style.display='none'; return; }
+  dd.innerHTML = matches.map(s =>
+    `<div class="sdw-dd-item" data-code="${s.code}" style="padding:8px 12px;cursor:pointer;border-bottom:0.5px solid var(--border);display:flex;gap:8px;align-items:baseline;">
+      <span style="font-family:monospace;font-size:11px;color:var(--muted)">${norm5(s.code)}</span>
+      <span style="font-size:13px;color:var(--text)">${s.name_chi||s.name||''}</span>
+    </div>`
+  ).join('');
+  dd.querySelectorAll('.sdw-dd-item').forEach(item => {
+    item.addEventListener('mousedown', e => {
+      e.preventDefault();
+      stkSelectCode(item.dataset.code);
+      dd.style.display = 'none';
+    });
+  });
+  dd.style.display = 'block';
+}
+
+async function stkSelectCode(code) {
+  stkCode = norm5(code);
+  const s = allStocks.find(s => norm5(s.code) === stkCode);
+  const name = s ? (s.name_chi || s.name || '') : '';
+  const inp = document.getElementById('stock-search');
+  if (inp) inp.value = `${stkCode}  ${name}`;
+  document.getElementById('stock-title').textContent = `${stkCode}  ${name}`;
+  document.getElementById('stock-nodata').style.display  = 'none';
+  document.getElementById('stock-content').style.display = 'block';
+  await stkRenderCharts();
+}
+
+async function stkRenderCharts() {
+  if (!stkCode) return;
+  const {fromDs, toDs} = stkGetRange();
+  const series = await stkBuildSeries(stkCode, fromDs, toDs);
+  if (!series || !series.labels.length) {
+    document.getElementById('stock-nodata').textContent = '此股票暫無數據';
+    document.getElementById('stock-nodata').style.display  = 'block';
+    document.getElementById('stock-content').style.display = 'none';
+    return;
+  }
+  stkDrawCharts(series);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+function initStockPanel() {
+  if (stkInitDone) {
+    if (stkCode) stkRenderCharts();
+    return;
+  }
+  stkInitDone = true;
+  stkApplyRange();
+
+  const toEl = document.getElementById('stock-to');
+  if (toEl && !toEl.value) toEl.value = new Date().toISOString().slice(0,10);
+
+  const inp = document.getElementById('stock-search');
+  inp?.addEventListener('input',  () => stkBuildDropdown(inp.value));
+  inp?.addEventListener('focus',  () => stkBuildDropdown(inp.value));
+  inp?.addEventListener('blur',   () => setTimeout(() => {
+    document.getElementById('stock-dropdown').style.display = 'none';
+  }, 150));
+
+  document.getElementById('stock-range')?.addEventListener('change', () => {
+    stkApplyRange();
+    if (stkCode) stkRenderCharts();
+  });
+  document.getElementById('stock-apply')?.addEventListener('click', () => {
+    if (stkCode) stkRenderCharts();
+  });
+}
+
+
 </body>
 </html>
