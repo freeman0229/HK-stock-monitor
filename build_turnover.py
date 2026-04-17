@@ -171,15 +171,15 @@ _PAT = re.compile(
     r"((?:(?![\u4e00-\u9fff\u25c6]).)*)"   # g2  NAME OF STOCK — greedy, stops at first CJK or ◆
     r"([\u4e00-\u9fff\u25c6].*?)\s*"       # g3  股票名稱 — from first CJK/◆ to currency (lazy)
     r"(?:HKD|USD|CNY|RMB|EUR|GBP|AUD|JPY|SGD)\s+"  # CUR (skip)
-    r"([\d,.]+)\s+"                        # g4  前收市 / PRV
+    r"[\d,.NA-]+\s+"                       # 前收市 / PRV  (skip; may be '-' for some ETFs)
     r"[\d,.NA-]+\s+"                       # BID  (skip)
     r"[\d,.NA-]+\s+"                       # ASK  (skip)
     r"(?:[\d,.NA-]+\s+)?"                  # optional extra col (some ETF/warrant rows have 9 numeric fields)
-    r"([\d,.NA-]+)\s+"                     # g5  最高 / HIGH
-    r"([\d,.NA-]+)\s+"                     # g6  最低 / LOW
-    r"([\d,.]+)\s+"                        # g7  收市 / CLOSING
-    r"([\d,]+)\s+"                         # g8  成交股數 → vol
-    r"([\d,]+)\s*$"                        # g9  成交金額 → tv
+    r"[\d,.NA-]+\s+"                       # 最高 / HIGH  (skip)
+    r"[\d,.NA-]+\s+"                       # 最低 / LOW   (skip)
+    r"([\d,.NA-]+)\s+"                     # g4  收市 / CLOSING  (may be '-' when no trading)
+    r"([\d,]+)\s+"                         # g5  成交股數 → vol
+    r"([\d,]+)\s*$"                        # g6  成交金額 → tv
 )
 
 def _num(s: str) -> float:
@@ -230,12 +230,9 @@ def parse(body: str) -> dict:
         # Strip ◆ bullet markers used in some ETF names (Big5 encoding artifact)
         name_zh_raw = re.sub(r"^◆+|◆+$", "", name_zh_raw).strip()
         name_zh     = name_zh_raw if _has_cjk(name_zh_raw) else name_en
-        prev_close  = _num(m.group(4))
-        high        = _num(m.group(5))
-        low         = _num(m.group(6))
-        close       = _num(m.group(7))
-        vol         = int(m.group(8).replace(",", ""))
-        tv          = int(m.group(9).replace(",", ""))
+        close       = _num(m.group(4))
+        vol         = int(m.group(5).replace(",", ""))
+        tv          = int(m.group(6).replace(",", ""))
         if vol <= 0:
             continue
         # Keep higher-vol record if code appears twice
@@ -243,13 +240,13 @@ def parse(body: str) -> dict:
             out[code] = {
                 "name_en":    name_en,
                 "name_zh":    name_zh,
-                "prev_close": prev_close,
-                "high":       high,
-                "low":        low,
+                "prev_close": 0.0,
+                "high":       0.0,
+                "low":        0.0,
                 "close":      close,
                 "vol":        vol,
                 "tv":         tv,
-                "vwap":       round(tv / vol, 4),
+                "vwap":       round(tv / vol, 4) if vol > 0 else 0.0,
             }
     return out
 
