@@ -1016,11 +1016,11 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div id="cai-charts-wrap" style="position:relative;">
       <div id="cai-tip" style="position:absolute;background:#1a1a1a;color:#eee;font-size:11px;padding:8px 10px;border-radius:6px;pointer-events:none;display:none;white-space:nowrap;z-index:99;line-height:1.9;"></div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:2px;" id="cai-title">保力加通道 &amp; 成交量</div>
-      <div class="cai-chart-area" style="height:300px;"><canvas id="caiCanvas" role="img" aria-label="保力加通道 chart">保力加通道.</canvas></div>
+      <div class="cai-chart-area" style="height:300px;min-height:300px;"><canvas id="caiCanvas" role="img" aria-label="保力加通道 chart">保力加通道.</canvas></div>
       <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">RSI (14)</div>
-      <div style="position:relative;width:100%;height:90px;"><canvas id="caiRsi" role="img" aria-label="RSI 14">RSI.</canvas></div>
+      <div style="position:relative;width:100%;height:90px;min-height:90px;"><canvas id="caiRsi" role="img" aria-label="RSI 14">RSI.</canvas></div>
       <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">MACD (12, 26, 9)</div>
-      <div style="position:relative;width:100%;height:90px;"><canvas id="caiMacd" role="img" aria-label="MACD">MACD.</canvas></div>
+      <div style="position:relative;width:100%;height:90px;min-height:90px;"><canvas id="caiMacd" role="img" aria-label="MACD">MACD.</canvas></div>
     </div>
 
     <div class="cai-legend">
@@ -1110,11 +1110,11 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div style="position:relative;" id="stock-charts-wrap">
       <div id="stock-tip" style="position:absolute;background:#1a1a1a;color:#eee;font-size:11px;padding:8px 10px;border-radius:6px;pointer-events:none;display:none;white-space:nowrap;z-index:99;line-height:1.9;"></div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:2px;">換手率 (%)</div>
-      <div style="position:relative;width:100%;height:88px;"><canvas id="stkC1" role="img" aria-label="換手率 weekly chart">換手率.</canvas></div>
+      <div style="position:relative;width:100%;height:88px;min-height:88px;"><canvas id="stkC1" role="img" aria-label="換手率 weekly chart">換手率.</canvas></div>
       <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">收市價 / VWAP &amp; 成交量</div>
-      <div style="position:relative;width:100%;height:220px;"><canvas id="stkC2" role="img" aria-label="Price VWAP volume weekly chart">Price volume.</canvas></div>
+      <div style="position:relative;width:100%;height:220px;min-height:220px;"><canvas id="stkC2" role="img" aria-label="Price VWAP volume weekly chart">Price volume.</canvas></div>
       <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">Top10持倉 / SFC賣空 (%)</div>
-      <div style="position:relative;width:100%;height:88px;"><canvas id="stkC3" role="img" aria-label="Top10 SFC weekly chart">Top10 SFC.</canvas></div>
+      <div style="position:relative;width:100%;height:88px;min-height:88px;"><canvas id="stkC3" role="img" aria-label="Top10 SFC weekly chart">Top10 SFC.</canvas></div>
       <div style="font-size:11px;color:var(--muted);margin-top:6px;display:flex;gap:16px;flex-wrap:wrap;">
         <span><span style="display:inline-block;width:16px;height:2px;background:#378ADD;vertical-align:middle;margin-right:3px"></span>收市價</span>
         <span><span style="display:inline-block;width:16px;height:2px;border-top:2px dashed rgba(192,37,45,0.7);vertical-align:middle;margin-right:3px"></span>VWAP</span>
@@ -1147,7 +1147,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'hsi') initHsiPanel();
-    if (btn.dataset.tab === 'cai' && allStocks.length) { drawCai(); updateCaiCards(); }
+    if (btn.dataset.tab === 'cai' && allStocks.length) {
+      drawCai();
+      updateCaiCards();
+      setTimeout(() => caiCharts.forEach(c => c?.resize()), 50);
+    }
     if (btn.dataset.tab === 'bshui' && allStocks.length) renderBshui();
     if (btn.dataset.tab === 'ccass') initSdwPanel();
     if (btn.dataset.tab === 'short') initSfcChart();
@@ -3803,9 +3807,13 @@ function renderCaiStockSelect() {
     sel.appendChild(opt);
   });
   if (allStocks.length) {
-    const preferred = allStocks.find(s => s.code === '02800' || s.code === '2800');
-    sel.value = preferred ? preferred.code : allStocks[0].code;
-    drawCai();
+    // Prefer 02800 / 2800 regardless of zero-padding format in allStocks
+    const preferred = allStocks.find(s => s.code === '02800' || s.code === '2800' || s.code === '00700' || String(parseInt(s.code)) === '2800');
+    const target = preferred ? preferred.code : allStocks[0].code;
+    sel.value = target;
+    // Only draw if the cai tab is currently active — otherwise drawCai on tab click
+    const caiActive = document.querySelector('.tab-btn[data-tab="cai"]')?.classList.contains('active');
+    if (caiActive) drawCai();
   }
   sel.onchange = drawCai;
   document.getElementById('cai-period').onchange = () => { drawCai(); updateCaiCards(); };
@@ -4061,83 +4069,6 @@ async function drawCai() {
   );
   void atrHistory;
 }
-
-  // Squeeze background plugin
-  const sqzPlugin = {
-    id:'caiSqz',
-    beforeDraw(chart) {
-      const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
-      let inSq=false, startX=0;
-      bwArr.forEach((v,i) => {
-        const inZ = v!=null && v<bwThresh;
-        if (inZ&&!inSq) { startX=x.getPixelForValue(i); inSq=true; }
-        if (!inZ&&inSq) { ctx.save(); ctx.fillStyle='rgba(255,200,0,0.1)'; ctx.fillRect(startX,y.top,x.getPixelForValue(i)-startX,y.bottom-y.top); ctx.restore(); inSq=false; }
-      });
-      if (inSq) { ctx.save(); ctx.fillStyle='rgba(255,200,0,0.1)'; ctx.fillRect(startX,y.top,x.right-startX,y.bottom-y.top); ctx.restore(); }
-    }
-  };
-
-  const crossPlugin = {
-    id:'caiCross',
-    afterDraw(chart) {
-      if (caiActiveIdx===null) return;
-      const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
-      const xp = x.getPixelForValue(caiActiveIdx);
-      ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle='rgba(150,150,150,0.45)'; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(xp,chart.chartArea.top); ctx.lineTo(xp,chart.chartArea.bottom); ctx.stroke(); ctx.restore();
-    }
-  };
-
-  const refPlugin = {
-    id:'caiRef',
-    afterDraw(chart) {
-      const refs = chart.config._refs||[]; if(!refs.length) return;
-      const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
-      refs.forEach(({v,color,dash}) => {
-        const yp=y.getPixelForValue(v); if(yp<y.top||yp>y.bottom) return;
-        ctx.save(); ctx.setLineDash(dash||[3,3]); ctx.strokeStyle=color||'rgba(128,128,128,0.35)'; ctx.lineWidth=1;
-        ctx.beginPath(); ctx.moveTo(x.left,yp); ctx.lineTo(x.right,yp); ctx.stroke(); ctx.restore();
-      });
-    }
-  };
-
-  function getIdxCai(chart, e) {
-    const rect=chart.canvas.getBoundingClientRect(), xPx=e.clientX-rect.left;
-    const xs=chart.scales.x; if(!xs) return null;
-    let best=null, minD=Infinity;
-    for (let i=0;i<chartDates.length;i++) { const d=Math.abs(xs.getPixelForValue(i)-xPx); if(d<minD){minD=d;best=i;} }
-    return minD<40?best:null;
-  }
-
-  function showCaiTip(e, idx) {
-    const tip=document.getElementById('cai-tip'), wrap=document.getElementById('cai-charts-wrap');
-    if(!tip||!wrap){return;}
-    if(idx===null){tip.style.display='none';return;}
-    const c=closeArr[idx], u=upper[idx], l=lower[idx], r=rsiArr[idx], m=macdLine[idx], s=sigLine[idx], h=histArr[idx];
-    const hc=h!=null?(h>=0?'#1a7a3c':'#c0252d'):'#888';
-    const row=(lbl,val,col)=>`<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
-    tip.innerHTML =
-      `<b style="color:#bbb">${chartDates[idx]}</b><br>`+
-      row('收市', c?.toFixed(2), mid[idx]!=null&&c>=mid[idx]?'#378ADD':'#c0252d')+
-      row('上軌', u?.toFixed(2), '#c0252d')+row('下軌', l?.toFixed(2), '#1a7a3c')+
-      row('RSI',  r?.toFixed(1), '#534AB7')+
-      row('MACD', m?.toFixed(3), '#378ADD')+row('Signal', s?.toFixed(3), '#c0252d')+
-      `<span style="color:${hc}">柱狀</span>　${h?.toFixed(3)??'—'}`;
-    tip.style.display='block';
-    const wr=wrap.getBoundingClientRect();
-    tip.style.left=Math.min(e.clientX-wr.left+14, wr.width-170)+'px';
-    tip.style.top =Math.max(e.clientY-wr.top-120, 4)+'px';
-  }
-
-  function bindCaiHover(chart) {
-    chart.canvas.addEventListener('mousemove', e => {
-      caiActiveIdx=getIdxCai(chart,e); caiCharts.forEach(c=>c.update('none')); showCaiTip(e,caiActiveIdx);
-    });
-    chart.canvas.addEventListener('mouseleave', () => {
-      caiActiveIdx=null; caiCharts.forEach(c=>c.update('none'));
-      const t=document.getElementById('cai-tip'); if(t) t.style.display='none';
-    });
-  }
 
 // ── SbChart hover tooltip ────────────────────────────────────────────────────
 (function() {
