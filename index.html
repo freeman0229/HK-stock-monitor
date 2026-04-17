@@ -637,7 +637,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn active" data-tab="bshui">北水追蹤</button>
   <button class="tab-btn" data-tab="short">累積沽空</button>
   <button class="tab-btn" data-tab="ccass">大戶持倉</button>
-  <button class="tab-btn" data-tab="cai">布林通道</button>
+  <button class="tab-btn" data-tab="cai">保力加通道</button>
   <button class="tab-btn" data-tab="stock">個股綜合分析</button>
   <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
 </div>
@@ -1015,8 +1015,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
     <div id="cai-charts-wrap" style="position:relative;">
       <div id="cai-tip" style="position:absolute;background:#1a1a1a;color:#eee;font-size:11px;padding:8px 10px;border-radius:6px;pointer-events:none;display:none;white-space:nowrap;z-index:99;line-height:1.9;"></div>
-      <div style="font-size:10px;color:var(--muted);margin-bottom:2px;" id="cai-title">布林通道 &amp; 成交量</div>
-      <div class="cai-chart-area" style="height:300px;"><canvas id="caiCanvas" role="img" aria-label="布林通道 chart">布林通道.</canvas></div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:2px;" id="cai-title">保力加通道 &amp; 成交量</div>
+      <div class="cai-chart-area" style="height:300px;"><canvas id="caiCanvas" role="img" aria-label="保力加通道 chart">保力加通道.</canvas></div>
       <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">RSI (14)</div>
       <div style="position:relative;width:100%;height:90px;"><canvas id="caiRsi" role="img" aria-label="RSI 14">RSI.</canvas></div>
       <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">MACD (12, 26, 9)</div>
@@ -3691,11 +3691,11 @@ async function initSdwPanel() {
   inp.addEventListener('focus',  () => sdwBuildDropdown(inp.value));
   inp.addEventListener('blur',   () => setTimeout(() => { document.getElementById('sdw-dropdown').style.display = 'none'; }, 150));
 
-  // Default: auto-select first stock with data on latest date
+  // Default: prefer 02800, then first stock with data on latest date
   const latestDs   = sdwDates[sdwDates.length - 1];
   const sdwCodes   = Object.keys(sdwData[latestDs] || {});
-  // Prefer a stock in allStocks (has a known name), pick highest turnover
-  const firstCode  = allStocks.find(s => sdwCodes.includes(s.code))?.code || sdwCodes[0];
+  const firstCode  = sdwCodes.includes('02800') ? '02800'
+    : allStocks.find(s => sdwCodes.includes(s.code))?.code || sdwCodes[0];
   if (firstCode) sdwSelectCode(firstCode);
 }
 
@@ -3867,7 +3867,7 @@ async function drawCai() {
 
   const chartDates=[], closeArr=[], volArr=[];
   for (const d of allDates) {
-    const rec = (byDate[d]||byDatePrev[d])?.[code5] || (byDate[d]||byDatePrev[d])?.[stock.code];
+    const rec = byDate[d]?.[code5] || byDatePrev[d]?.[code5];
     if (rec && rec.close > 0) { chartDates.push(d); closeArr.push(rec.close); volArr.push(rec.vol||0); }
   }
 
@@ -3880,7 +3880,7 @@ async function drawCai() {
 
   // Update title
   const titleEl = document.getElementById('cai-title');
-  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 布林通道 N=${period} K=${mult}`;
+  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 保力加通道 N=${period} K=${mult}`;
 
   // Bollinger bands (computed on full history, sliced for display)
   const bb = caiChannel(closeArr, period, mult);
@@ -4055,8 +4055,8 @@ async function drawCai() {
 
   // ATR computed but not rendered (available for future use)
   const atrHistory = computeATR(
-    allDates.map(d=>(byDate[d]||byDatePrev[d])?.[code5]?.high||0),
-    allDates.map(d=>(byDate[d]||byDatePrev[d])?.[code5]?.low||0),
+    allDates.map(d=>(byDate[d]?.[code5]||byDatePrev[d]?.[code5])?.high||0),
+    allDates.map(d=>(byDate[d]?.[code5]||byDatePrev[d]?.[code5])?.low||0),
     closeArr, 24
   );
   void atrHistory;
@@ -5105,6 +5105,9 @@ function initStockPanel() {
   document.getElementById('stock-apply')?.addEventListener('click', () => {
     if (stkCode) stkRenderCharts();
   });
+
+  // Default to 2800
+  stkSelectCode('2800');
 }
 
 

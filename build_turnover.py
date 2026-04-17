@@ -167,13 +167,14 @@ def fetch(d: date) -> str | None:
 # TRADING SUSPENDED / 暫停買賣 lines have no numeric data — skipped before regex.
 
 _PAT = re.compile(
-    r"^[*%\s]{0,12}(\d{1,5})\s+"          # g1  代號  (1–5 digits; * % prefix stripped; up to 11 leading spaces)
-    r"(\S[^\u4e00-\u9fff\u3000\n]{1,40}?)\s+"  # g2  NAME OF STOCK (stops at CJK or any space)
-    r"([\u4e00-\u9fff\uff01-\uffef][^\n]{0,35}?)\s*"  # g3  股票名稱 (must start with CJK/fullwidth)
-    r"(?:HKD|USD|CNY|RMB|EUR|GBP|AUD|JPY|SGD)\s+"  # CUR (skip; RMB used for H-share dual-currency counters)
+    r"^[*%\s]{0,12}(\d{1,5})\s+"          # g1  代號  (1–5 digits; * % prefix stripped)
+    r"((?:(?![\u4e00-\u9fff\u25c6]).)*)"   # g2  NAME OF STOCK — greedy, stops at first CJK or ◆
+    r"([\u4e00-\u9fff\u25c6].*?)\s*"       # g3  股票名稱 — from first CJK/◆ to currency (lazy)
+    r"(?:HKD|USD|CNY|RMB|EUR|GBP|AUD|JPY|SGD)\s+"  # CUR (skip)
     r"([\d,.]+)\s+"                        # g4  前收市 / PRV
     r"[\d,.NA-]+\s+"                       # BID  (skip)
     r"[\d,.NA-]+\s+"                       # ASK  (skip)
+    r"(?:[\d,.NA-]+\s+)?"                  # optional extra col (some ETF/warrant rows have 9 numeric fields)
     r"([\d,.NA-]+)\s+"                     # g5  最高 / HIGH
     r"([\d,.NA-]+)\s+"                     # g6  最低 / LOW
     r"([\d,.]+)\s+"                        # g7  收市 / CLOSING
@@ -225,7 +226,9 @@ def parse(body: str) -> dict:
         if not _is_included(code):
             continue
         name_en     = m.group(2).strip()
-        name_zh_raw = re.sub(r"[\u3000\uff20\uff64\s]+$", "", m.group(3)).strip()
+        name_zh_raw = m.group(3).strip()
+        # Strip ◆ bullet markers used in some ETF names (Big5 encoding artifact)
+        name_zh_raw = re.sub(r"^◆+|◆+$", "", name_zh_raw).strip()
         name_zh     = name_zh_raw if _has_cjk(name_zh_raw) else name_en
         prev_close  = _num(m.group(4))
         high        = _num(m.group(5))
