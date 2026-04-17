@@ -3858,51 +3858,209 @@ async function drawCai() {
 
   const year = new Date().getFullYear();
   if (!tvCache[year]) await loadTvYear(year);
-  const byDate   = tvCache[year] || {};
-  const allDates = Object.keys(byDate).sort();
-  const code5    = norm5(stock.code);
+  // Load current + prior year for warmup period
+  const prevYear = year - 1;
+  if (!tvCache[prevYear]) await loadTvYear(prevYear);
+  const byDatePrev = tvCache[prevYear] || {};
+  const byDate     = tvCache[year]     || {};
+  const allDates   = [...new Set([...Object.keys(byDatePrev), ...Object.keys(byDate)])].sort();
 
   const chartDates=[], closeArr=[], volArr=[];
   for (const d of allDates) {
-    const rec = byDate[d]?.[code5] || byDate[d]?.[stock.code];
+    const rec = (byDate[d]||byDatePrev[d])?.[code5] || (byDate[d]||byDatePrev[d])?.[stock.code];
     if (rec && rec.close > 0) { chartDates.push(d); closeArr.push(rec.close); volArr.push(rec.vol||0); }
   }
 
   if (closeArr.length < period) return;
 
+  // Only show current year dates on chart, but use full history for warmup
+  const curYearStr = String(year);
+  const viewStart  = chartDates.findIndex(d => d.startsWith(curYearStr));
+  const viewIdx    = viewStart >= 0 ? viewStart : 0;
+
   // Update title
   const titleEl = document.getElementById('cai-title');
-  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 布林通道 N=${period} K=${mult} & 成交量`;
+  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 布林通道 N=${period} K=${mult}`;
 
-  // Bollinger bands
+  // Bollinger bands (computed on full history, sliced for display)
   const bb = caiChannel(closeArr, period, mult);
-  const upper = bb.map(v => v ? +v.upper.toFixed(2) : null);
-  const lower = bb.map(v => v ? +v.lower.toFixed(2) : null);
-  const mid   = bb.map(v => v ? +v.ma.toFixed(2)    : null);
+  const upper = bb.map(v => v ? +v.upper.toFixed(2) : null).slice(viewIdx);
+  const lower = bb.map(v => v ? +v.lower.toFixed(2) : null).slice(viewIdx);
+  const mid   = bb.map(v => v ? +v.ma.toFixed(2)    : null).slice(viewIdx);
+  const closeView = closeArr.slice(viewIdx);
+  const volView   = volArr.slice(viewIdx);
+  const dateView  = chartDates.slice(viewIdx);
 
   // Squeeze zones (bandwidth bottom 25%)
-  const bwArr = bb.map(v => v ? +((v.upper-v.lower)/v.ma*100).toFixed(2) : null);
-  const validBw = bwArr.filter(v=>v!=null).sort((a,b)=>a-b);
+  const bwFull   = bb.map(v => v ? +((v.upper-v.lower)/v.ma*100).toFixed(2) : null);
+  const bwArr    = bwFull.slice(viewIdx);
+  const validBw  = bwArr.filter(v=>v!=null).sort((a,b)=>a-b);
   const bwThresh = validBw[Math.floor(validBw.length*0.25)]||0;
 
-  const priceUp = closeArr.map((c,i) => mid[i]!=null && c>=mid[i] ? c : null);
-  const priceDn = closeArr.map((c,i) => mid[i]!=null && c< mid[i] ? c : null);
+  const priceUp = closeView.map((c,i) => mid[i]!=null && c>=mid[i] ? c : null);
+  const priceDn = closeView.map((c,i) => mid[i]!=null && c< mid[i] ? c : null);
 
-  // RSI + MACD
-  const rsiArr   = calcRsi(closeArr);
-  const ema12    = calcEma(closeArr, 12);
-  const ema26    = calcEma(closeArr, 26);
-  const macdLine = closeArr.map((_,i) => ema12[i]!=null&&ema26[i]!=null ? +(ema12[i]-ema26[i]).toFixed(4) : null);
-  const sigLine  = calcEma(macdLine, 9);
-  const histArr  = macdLine.map((v,i) => v!=null&&sigLine[i]!=null ? +(v-sigLine[i]).toFixed(4) : null);
+  // RSI + MACD (computed on full history, sliced for display)
+  const rsiFull   = calcRsi(closeArr);
+  const rsiArr    = rsiFull.slice(viewIdx);
+  const ema12     = calcEma(closeArr, 12);
+  const ema26     = calcEma(closeArr, 26);
+  const macdFull  = closeArr.map((_,i) => ema12[i]!=null&&ema26[i]!=null ? +(ema12[i]-ema26[i]).toFixed(4) : null);
+  const sigFull   = calcEma(macdFull, 9);
+  const macdLine  = macdFull.slice(viewIdx);
+  const sigLine   = sigFull.slice(viewIdx);
+  const histArr   = macdLine.map((v,i) => v!=null&&sigLine[i]!=null ? +(v-sigLine[i]).toFixed(4) : null);
 
   const gc   = 'rgba(128,128,128,0.08)';
   const YW   = 52;
+  const N    = dateView.length;
   const aFit = s => { s.width = YW; };
   const isDark = matchMedia('(prefers-color-scheme:dark)').matches;
   let caiActiveIdx = null;
 
   caiDestroyCharts();
+
+  // Squeeze background plugin
+  const sqzPlugin = {
+    id:'caiSqz',
+    beforeDraw(chart) {
+      const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
+      let inSq=false, startX=0;
+      bwArr.forEach((v,i) => {
+        const inZ = v!=null && v<bwThresh;
+        if (inZ&&!inSq) { startX=x.getPixelForValue(i); inSq=true; }
+        if (!inZ&&inSq) { ctx.save(); ctx.fillStyle='rgba(255,200,0,0.1)'; ctx.fillRect(startX,y.top,x.getPixelForValue(i)-startX,y.bottom-y.top); ctx.restore(); inSq=false; }
+      });
+      if (inSq) { ctx.save(); ctx.fillStyle='rgba(255,200,0,0.1)'; ctx.fillRect(startX,y.top,x.right-startX,y.bottom-y.top); ctx.restore(); }
+    }
+  };
+
+  const crossPlugin = {
+    id:'caiCross',
+    afterDraw(chart) {
+      if (caiActiveIdx===null) return;
+      const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
+      const xp = x.getPixelForValue(caiActiveIdx);
+      ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle='rgba(150,150,150,0.45)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(xp,chart.chartArea.top); ctx.lineTo(xp,chart.chartArea.bottom); ctx.stroke(); ctx.restore();
+    }
+  };
+
+  const refPlugin = {
+    id:'caiRef',
+    afterDraw(chart) {
+      const refs = chart.config._refs||[]; if(!refs.length) return;
+      const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
+      refs.forEach(({v,color,dash}) => {
+        const yp=y.getPixelForValue(v); if(yp<y.top||yp>y.bottom) return;
+        ctx.save(); ctx.setLineDash(dash||[3,3]); ctx.strokeStyle=color||'rgba(128,128,128,0.35)'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(x.left,yp); ctx.lineTo(x.right,yp); ctx.stroke(); ctx.restore();
+      });
+    }
+  };
+
+  function getIdxCai(chart, e) {
+    const rect=chart.canvas.getBoundingClientRect(), xPx=e.clientX-rect.left;
+    const xs=chart.scales.x; if(!xs) return null;
+    let best=null, minD=Infinity;
+    for (let i=0;i<N;i++) { const d=Math.abs(xs.getPixelForValue(i)-xPx); if(d<minD){minD=d;best=i;} }
+    return minD<40?best:null;
+  }
+
+  function showCaiTip(e, idx) {
+    const tip=document.getElementById('cai-tip'), wrap=document.getElementById('cai-charts-wrap');
+    if(!tip||!wrap){return;}
+    if(idx===null){tip.style.display='none';return;}
+    const c=closeView[idx], u=upper[idx], l=lower[idx], r=rsiArr[idx], m=macdLine[idx], s=sigLine[idx], h=histArr[idx];
+    const vol=volView[idx];
+    const hc=h!=null?(h>=0?'#1a7a3c':'#c0252d'):'#888';
+    const row=(lbl,val,col)=>`<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
+    tip.innerHTML =
+      `<b style="color:#bbb">${dateView[idx]}</b><br>`+
+      row('收市', c?.toFixed(2), mid[idx]!=null&&c>=mid[idx]?'#378ADD':'#c0252d')+
+      row('上軌', u?.toFixed(2), '#c0252d')+row('下軌', l?.toFixed(2), '#1a7a3c')+
+      row('RSI',  r?.toFixed(1), '#534AB7')+
+      row('MACD', m?.toFixed(3), '#378ADD')+row('Signal', s?.toFixed(3), '#c0252d')+
+      `<span style="color:${hc}">柱狀</span>　${h?.toFixed(3)??'—'}<br>`+
+      row('成交量', vol?((vol/1e6).toFixed(1)+'M'):'—', '#888');
+    tip.style.display='block';
+    const wr=wrap.getBoundingClientRect();
+    tip.style.left=Math.min(e.clientX-wr.left+14, wr.width-170)+'px';
+    tip.style.top =Math.max(e.clientY-wr.top-120, 4)+'px';
+  }
+
+  function bindCaiHover(chart) {
+    chart.canvas.addEventListener('mousemove', e => {
+      caiActiveIdx=getIdxCai(chart,e); caiCharts.forEach(c=>c.update('none')); showCaiTip(e,caiActiveIdx);
+    });
+    chart.canvas.addEventListener('mouseleave', () => {
+      caiActiveIdx=null; caiCharts.forEach(c=>c.update('none'));
+      const t=document.getElementById('cai-tip'); if(t) t.style.display='none';
+    });
+  }
+
+  const maxVol = Math.max(...volView.filter(v=>v>0), 1);
+  const xHide  = {ticks:{display:false},grid:{color:gc},border:{display:false}};
+  const xShow  = {ticks:{font:{size:10},color:'#888',maxRotation:0,callback:(v,i)=>i%Math.max(1,Math.floor(N/8))===0?dateView[i].slice(2,10):''},grid:{color:gc},border:{display:false}};
+
+  const c1 = new Chart(document.getElementById('caiCanvas'), {
+    type:'line', plugins:[sqzPlugin, crossPlugin],
+    data:{labels:dateView, datasets:[
+      {type:'line',  label:'上軌',     data:upper,    borderColor:'#c0252d',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:2},
+      {type:'line',  label:'中軌',     data:mid,      borderColor:'rgba(128,128,128,0.55)',borderWidth:1,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:3},
+      {type:'line',  label:'下軌',     data:lower,    borderColor:'#1a7a3c',borderWidth:1.5,pointRadius:0,fill:'-2',backgroundColor:'rgba(192,37,45,0.05)',tension:0.3,spanGaps:false,order:2},
+      {type:'line',  label:'上方中軌', data:priceUp,  borderColor:'#378ADD',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
+      {type:'line',  label:'下方中軌', data:priceDn,  borderColor:'#c0252d',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:xHide,
+        y:{afterFit:aFit,position:'left',ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
+      }}
+  });
+
+  const c2 = new Chart(document.getElementById('caiRsi'), {
+    type:'line', plugins:[crossPlugin, refPlugin],
+    _refs:[{v:70,color:'rgba(192,37,45,0.4)',dash:[3,3]},{v:50,color:'rgba(128,128,128,0.3)',dash:[2,4]},{v:30,color:'rgba(26,122,60,0.4)',dash:[3,3]}],
+    data:{labels:dateView, datasets:[{
+      label:'RSI', data:rsiArr, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, fill:false, tension:0.3, spanGaps:false,
+    }]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:xHide, y:{afterFit:aFit, min:0, max:100,
+        afterBuildTicks: axis => { axis.ticks = [0,30,50,70,100].map(v=>({value:v})); },
+        ticks:{font:{size:10},color:'#888',callback:v=>[30,50,70].includes(+v)?String(+v):''},
+        grid:{color:gc},border:{display:false}}}}
+  });
+
+  const c3 = new Chart(document.getElementById('caiMacd'), {
+    type:'bar', plugins:[crossPlugin],
+    data:{labels:dateView, datasets:[
+      {type:'bar',  label:'成交量', data:volView,  backgroundColor:'rgba(128,128,128,0.12)',borderWidth:0,yAxisID:'yVol',order:4},
+      {type:'bar',  label:'柱狀',  data:histArr,  backgroundColor:histArr.map(v=>v==null?'transparent':v>=0?'rgba(26,122,60,0.6)':'rgba(192,37,45,0.6)'),borderWidth:0,yAxisID:'yMacd',order:3},
+      {type:'line', label:'MACD',  data:macdLine, borderColor:'#378ADD',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yMacd',order:1},
+      {type:'line', label:'Signal',data:sigLine,  borderColor:'#c0252d',borderWidth:1.5,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yMacd',order:2},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{
+        x:xShow,
+        yMacd:{position:'left',  afterFit:aFit, ticks:{callback:v=>v.toFixed(2),font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
+        yVol: {position:'right', min:0, max:maxVol*5, ticks:{display:false},grid:{display:false},border:{display:false}},
+      }}
+  });
+
+  caiCharts = [c1, c2, c3];
+  bindCaiHover(c1); bindCaiHover(c2); bindCaiHover(c3);
+
+  // ATR computed but not rendered (available for future use)
+  const atrHistory = computeATR(
+    allDates.map(d=>(byDate[d]||byDatePrev[d])?.[code5]?.high||0),
+    allDates.map(d=>(byDate[d]||byDatePrev[d])?.[code5]?.low||0),
+    closeArr, 24
+  );
+  void atrHistory;
+}
 
   // Squeeze background plugin
   const sqzPlugin = {
@@ -3980,68 +4138,6 @@ async function drawCai() {
       const t=document.getElementById('cai-tip'); if(t) t.style.display='none';
     });
   }
-
-  const maxVol = Math.max(...volArr);
-  const xHide  = {ticks:{display:false},grid:{color:gc},border:{display:false}};
-  const xShow  = {ticks:{font:{size:10},color:'#888',maxRotation:0,callback:(v,i)=>i%Math.max(1,Math.floor(chartDates.length/8))===0?chartDates[i].slice(2,10):''},grid:{color:gc},border:{display:false}};
-
-  const c1 = new Chart(document.getElementById('caiCanvas'), {
-    type:'line', plugins:[sqzPlugin, crossPlugin],
-    data:{labels:chartDates, datasets:[
-      {type:'line',  label:'上軌',     data:upper,    borderColor:'#c0252d',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:2},
-      {type:'line',  label:'中軌',     data:mid,      borderColor:'rgba(128,128,128,0.55)',borderWidth:1,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:3},
-      {type:'line',  label:'下軌',     data:lower,    borderColor:'#1a7a3c',borderWidth:1.5,pointRadius:0,fill:'-2',backgroundColor:'rgba(192,37,45,0.05)',tension:0.3,spanGaps:false,order:2},
-      {type:'line',  label:'上方中軌', data:priceUp,  borderColor:'#378ADD',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
-      {type:'line',  label:'下方中軌', data:priceDn,  borderColor:'#c0252d',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{x:xHide,
-        y:{afterFit:aFit,position:'left',ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
-      }}
-  });
-
-  const c2 = new Chart(document.getElementById('caiRsi'), {
-    type:'line', plugins:[crossPlugin, refPlugin],
-    _refs:[{v:70,color:'rgba(192,37,45,0.4)',dash:[3,3]},{v:50,color:'rgba(128,128,128,0.3)',dash:[2,4]},{v:30,color:'rgba(26,122,60,0.4)',dash:[3,3]}],
-    data:{labels:chartDates, datasets:[{
-      label:'RSI', data:rsiArr, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, fill:false, tension:0.3, spanGaps:false,
-    }]},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{x:xHide, y:{afterFit:aFit,min:0,max:100,
-        ticks:{stepSize:20,font:{size:10},color:'#888',callback:v=>[30,50,70].includes(+v)?v:''},
-        grid:{color:gc},border:{display:false}}}}
-  });
-
-  const c3 = new Chart(document.getElementById('caiMacd'), {
-    type:'bar', plugins:[crossPlugin],
-    data:{labels:chartDates, datasets:[
-      {type:'bar',  label:'成交量', data:volArr,   backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yVol',order:4},
-      {type:'bar',  label:'柱狀',  data:histArr,  backgroundColor:histArr.map(v=>v==null?'transparent':v>=0?'rgba(26,122,60,0.6)':'rgba(192,37,45,0.6)'),borderWidth:0,yAxisID:'yMacd',order:3},
-      {type:'line', label:'MACD',  data:macdLine, borderColor:'#378ADD',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yMacd',order:1},
-      {type:'line', label:'Signal',data:sigLine,  borderColor:'#c0252d',borderWidth:1.5,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yMacd',order:2},
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{
-        x:xShow,
-        yMacd:{position:'left', afterFit:aFit, ticks:{callback:v=>v.toFixed(2),font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
-        yVol:{position:'right', max:maxVol*4,  ticks:{display:false},grid:{display:false},border:{display:false}},
-      }}
-  });
-
-  caiCharts = [c1, c2, c3];
-  bindCaiHover(c1); bindCaiHover(c2); bindCaiHover(c3);
-
-  // ATR computed but not rendered (available for future use)
-  const atrHistory = computeATR(
-    allDates.map(d=>(byDate[d]?.[code5]||byDate[d]?.[stock.code])?.high||0),
-    allDates.map(d=>(byDate[d]?.[code5]||byDate[d]?.[stock.code])?.low||0),
-    closeArr, 24
-  );
-  void atrHistory;
-}
 
 // ── SbChart hover tooltip ────────────────────────────────────────────────────
 (function() {
