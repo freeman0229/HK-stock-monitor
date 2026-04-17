@@ -638,7 +638,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn active" data-tab="bshui">北水追蹤</button>
   <button class="tab-btn" data-tab="short">累積沽空</button>
   <button class="tab-btn" data-tab="ccass">大戶持倉</button>
-  <button class="tab-btn" data-tab="cai">波動率</button>
+  <button class="tab-btn" data-tab="cai">布林通道</button>
   <button class="tab-btn" data-tab="stock">個股綜合分析</button>
   <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
 </div>
@@ -1014,15 +1014,25 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <input type="number" id="cai-mult" value="2" min="0.5" max="4" step="0.5" style="width:60px">
     </div>
 
-    <div class="cai-chart-area">
-      <canvas id="caiCanvas"></canvas>
+    <div id="cai-charts-wrap" style="position:relative;">
+      <div id="cai-tip" style="position:absolute;background:#1a1a1a;color:#eee;font-size:11px;padding:8px 10px;border-radius:6px;pointer-events:none;display:none;white-space:nowrap;z-index:99;line-height:1.9;"></div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:2px;" id="cai-title">布林通道 &amp; 成交量</div>
+      <div class="cai-chart-area" style="height:300px;"><canvas id="caiCanvas" role="img" aria-label="布林通道 chart">布林通道.</canvas></div>
+      <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">RSI (14)</div>
+      <div style="position:relative;width:100%;height:90px;"><canvas id="caiRsi" role="img" aria-label="RSI 14">RSI.</canvas></div>
+      <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">MACD (12, 26, 9)</div>
+      <div style="position:relative;width:100%;height:90px;"><canvas id="caiMacd" role="img" aria-label="MACD">MACD.</canvas></div>
     </div>
 
     <div class="cai-legend">
-      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>上軌 (Upper Band)</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#666;height:2px"></div>中軌 (Middle Band)</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>下軌 (Lower Band)</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#e8a020;height:6px;border-radius:1px"></div>收市價</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>上軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#666;height:2px"></div>中軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>下軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>收市(上方中軌)</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>收市(下方中軌)</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#534AB7;height:2px"></div>RSI</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>MACD</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px;border-top:2px dashed #c0252d"></div>Signal</div>
     </div>
   </div>
 </div>
@@ -3804,220 +3814,230 @@ function renderCaiStockSelect() {
   document.getElementById('cai-mult').oninput = () => { drawCai(); updateCaiCards(); };
 }
 
-async function drawCai() {
-  const code = document.getElementById('cai-stock').value;
-  const period = parseInt(document.getElementById('cai-period').value);
-  const mult = parseFloat(document.getElementById('cai-mult').value) || 2;
-  const canvas = document.getElementById('caiCanvas');
-  const area = canvas.parentElement;
-  const W = area.clientWidth || 800;
-  const H = area.clientHeight || 420;
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, W, H);
+let caiCharts = [];
+function caiDestroyCharts() {
+  caiCharts.forEach(c => { try { c.destroy(); } catch(e){} });
+  caiCharts = [];
+}
 
-  // Find stock
+function calcRsi(data, period=14) {
+  const rsi = Array(data.length).fill(null);
+  let avgG=0, avgL=0;
+  for (let i=1; i<=period; i++) { const d=data[i]-data[i-1]; if(d>0) avgG+=d; else avgL-=d; }
+  avgG/=period; avgL/=period;
+  rsi[period] = +(100-100/(1+(avgG/(avgL||1e-9)))).toFixed(2);
+  for (let i=period+1; i<data.length; i++) {
+    const d=data[i]-data[i-1], g=d>0?d:0, l=d<0?-d:0;
+    avgG=(avgG*(period-1)+g)/period; avgL=(avgL*(period-1)+l)/period;
+    rsi[i] = +(100-100/(1+(avgG/(avgL||1e-9)))).toFixed(2);
+  }
+  return rsi;
+}
+
+function calcEma(data, period) {
+  const k=2/(period+1), result=Array(data.length).fill(null);
+  let si=-1;
+  for (let i=0;i<data.length;i++) { if(data[i]!=null){si=i;break;} }
+  if (si<0) return result;
+  const initSlice = data.slice(si, si+period).filter(v=>v!=null);
+  if (initSlice.length < period) return result;
+  result[si+period-1] = initSlice.reduce((a,b)=>a+b,0)/period;
+  for (let i=si+period; i<data.length; i++) {
+    if (data[i]==null||result[i-1]==null) continue;
+    result[i] = +(data[i]*k+result[i-1]*(1-k)).toFixed(4);
+  }
+  return result;
+}
+
+async function drawCai() {
+  const code   = document.getElementById('cai-stock').value;
+  const period = parseInt(document.getElementById('cai-period').value);
+  const mult   = parseFloat(document.getElementById('cai-mult').value) || 2;
+
   const stock = allStocks.find(s => s.code === code) || allStocks[0];
   if (!stock) return;
 
-  // Ensure turnover data is loaded before drawing
   const year = new Date().getFullYear();
   if (!tvCache[year]) await loadTvYear(year);
-  const byDate = tvCache[year] || {};
+  const byDate   = tvCache[year] || {};
   const allDates = Object.keys(byDate).sort();
-  const code5  = norm5(stock.code);
+  const code5    = norm5(stock.code);
 
-  const chartDates = [], closeHistory = [], volHistory = [];  // close = 收市價, vol = 成交股數 (shares traded)
-  const highHistory = [], lowHistory = [];                    // high = 最高, low = 最低 (for ATR)
+  const chartDates=[], closeArr=[], volArr=[];
   for (const d of allDates) {
     const rec = byDate[d]?.[code5] || byDate[d]?.[stock.code];
-    if (rec && rec.close > 0) {
-      chartDates.push(d);
-      closeHistory.push(rec.close);
-      volHistory.push(rec.vol || 0);
-      highHistory.push(rec.high || rec.close);  // fallback to close if high not yet in library
-      lowHistory.push(rec.low  || rec.close);   // fallback to close if low  not yet in library
-    }
+    if (rec && rec.close > 0) { chartDates.push(d); closeArr.push(rec.close); volArr.push(rec.vol||0); }
   }
 
-  // ATR(24) — ready for display when needed; not rendered yet
-  const atrHistory = computeATR(highHistory, lowHistory, closeHistory, 24);
+  if (closeArr.length < period) return;
 
-  if (closeHistory.length < period) {
-    ctx.fillStyle = '#aaa'; ctx.font = '13px sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(`數據不足（需 ${period} 日，現有 ${closeHistory.length} 日）`, W/2, H/2);
-    return;
+  // Update title
+  const titleEl = document.getElementById('cai-title');
+  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 布林通道 N=${period} K=${mult} & 成交量`;
+
+  // Bollinger bands
+  const bb = caiChannel(closeArr, period, mult);
+  const upper = bb.map(v => v ? +v.upper.toFixed(2) : null);
+  const lower = bb.map(v => v ? +v.lower.toFixed(2) : null);
+  const mid   = bb.map(v => v ? +v.ma.toFixed(2)    : null);
+
+  // Squeeze zones (bandwidth bottom 25%)
+  const bwArr = bb.map(v => v ? +((v.upper-v.lower)/v.ma*100).toFixed(2) : null);
+  const validBw = bwArr.filter(v=>v!=null).sort((a,b)=>a-b);
+  const bwThresh = validBw[Math.floor(validBw.length*0.25)]||0;
+
+  const priceUp = closeArr.map((c,i) => mid[i]!=null && c>=mid[i] ? c : null);
+  const priceDn = closeArr.map((c,i) => mid[i]!=null && c< mid[i] ? c : null);
+
+  // RSI + MACD
+  const rsiArr   = calcRsi(closeArr);
+  const ema12    = calcEma(closeArr, 12);
+  const ema26    = calcEma(closeArr, 26);
+  const macdLine = closeArr.map((_,i) => ema12[i]!=null&&ema26[i]!=null ? +(ema12[i]-ema26[i]).toFixed(4) : null);
+  const sigLine  = calcEma(macdLine, 9);
+  const histArr  = macdLine.map((v,i) => v!=null&&sigLine[i]!=null ? +(v-sigLine[i]).toFixed(4) : null);
+
+  const gc   = 'rgba(128,128,128,0.08)';
+  const YW   = 52;
+  const aFit = s => { s.width = YW; };
+  const isDark = matchMedia('(prefers-color-scheme:dark)').matches;
+  let caiActiveIdx = null;
+
+  caiDestroyCharts();
+
+  // Squeeze background plugin
+  const sqzPlugin = {
+    id:'caiSqz',
+    beforeDraw(chart) {
+      const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
+      let inSq=false, startX=0;
+      bwArr.forEach((v,i) => {
+        const inZ = v!=null && v<bwThresh;
+        if (inZ&&!inSq) { startX=x.getPixelForValue(i); inSq=true; }
+        if (!inZ&&inSq) { ctx.save(); ctx.fillStyle='rgba(255,200,0,0.1)'; ctx.fillRect(startX,y.top,x.getPixelForValue(i)-startX,y.bottom-y.top); ctx.restore(); inSq=false; }
+      });
+      if (inSq) { ctx.save(); ctx.fillStyle='rgba(255,200,0,0.1)'; ctx.fillRect(startX,y.top,x.right-startX,y.bottom-y.top); ctx.restore(); }
+    }
+  };
+
+  const crossPlugin = {
+    id:'caiCross',
+    afterDraw(chart) {
+      if (caiActiveIdx===null) return;
+      const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
+      const xp = x.getPixelForValue(caiActiveIdx);
+      ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle='rgba(150,150,150,0.45)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(xp,chart.chartArea.top); ctx.lineTo(xp,chart.chartArea.bottom); ctx.stroke(); ctx.restore();
+    }
+  };
+
+  const refPlugin = {
+    id:'caiRef',
+    afterDraw(chart) {
+      const refs = chart.config._refs||[]; if(!refs.length) return;
+      const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
+      refs.forEach(({v,color,dash}) => {
+        const yp=y.getPixelForValue(v); if(yp<y.top||yp>y.bottom) return;
+        ctx.save(); ctx.setLineDash(dash||[3,3]); ctx.strokeStyle=color||'rgba(128,128,128,0.35)'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(x.left,yp); ctx.lineTo(x.right,yp); ctx.stroke(); ctx.restore();
+      });
+    }
+  };
+
+  function getIdxCai(chart, e) {
+    const rect=chart.canvas.getBoundingClientRect(), xPx=e.clientX-rect.left;
+    const xs=chart.scales.x; if(!xs) return null;
+    let best=null, minD=Infinity;
+    for (let i=0;i<chartDates.length;i++) { const d=Math.abs(xs.getPixelForValue(i)-xPx); if(d<minD){minD=d;best=i;} }
+    return minD<40?best:null;
   }
 
-  const n = closeHistory.length;
-  const bands = caiChannel(closeHistory, period, mult);
-  const validBands = bands.filter(b => b !== null);
-
-  const pad = { top:30, right:20, bottom:50, left:60 };
-  const cW = W - pad.left - pad.right;
-  const cH = H - pad.top - pad.bottom;
-
-  const allVals = closeHistory.concat(validBands.flatMap(b => b ? [b.upper, b.lower] : []));
-  const minV = Math.min(...allVals) * 0.95;
-  const maxV = Math.max(...allVals) * 1.05;
-  const maxVol = Math.max(...volHistory, 1);
-
-  const xScale = i => pad.left + (n > 1 ? i / (n - 1) : 0.5) * cW;
-  const yScale = v => pad.top + cH - ((v - minV) / (maxV - minV)) * cH;
-
-  // Grid + Y-axis labels (price, not fmtM)
-  ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
-  for (let g = 0; g <= 4; g++) {
-    const y = pad.top + (g / 4) * cH;
-    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + cW, y); ctx.stroke();
-    const val = maxV - (g / 4) * (maxV - minV);
-    ctx.fillStyle = '#999'; ctx.font = '11px sans-serif';
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillText(val.toFixed(2), pad.left - 4, y);
+  function showCaiTip(e, idx) {
+    const tip=document.getElementById('cai-tip'), wrap=document.getElementById('cai-charts-wrap');
+    if(!tip||!wrap){return;}
+    if(idx===null){tip.style.display='none';return;}
+    const c=closeArr[idx], u=upper[idx], l=lower[idx], r=rsiArr[idx], m=macdLine[idx], s=sigLine[idx], h=histArr[idx];
+    const hc=h!=null?(h>=0?'#1a7a3c':'#c0252d'):'#888';
+    const row=(lbl,val,col)=>`<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
+    tip.innerHTML =
+      `<b style="color:#bbb">${chartDates[idx]}</b><br>`+
+      row('收市', c?.toFixed(2), mid[idx]!=null&&c>=mid[idx]?'#378ADD':'#c0252d')+
+      row('上軌', u?.toFixed(2), '#c0252d')+row('下軌', l?.toFixed(2), '#1a7a3c')+
+      row('RSI',  r?.toFixed(1), '#534AB7')+
+      row('MACD', m?.toFixed(3), '#378ADD')+row('Signal', s?.toFixed(3), '#c0252d')+
+      `<span style="color:${hc}">柱狀</span>　${h?.toFixed(3)??'—'}`;
+    tip.style.display='block';
+    const wr=wrap.getBoundingClientRect();
+    tip.style.left=Math.min(e.clientX-wr.left+14, wr.width-170)+'px';
+    tip.style.top =Math.max(e.clientY-wr.top-120, 4)+'px';
   }
 
-  // X-axis: show real dates, max ~8 labels; include year when data spans multiple years
-  ctx.fillStyle = '#999'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  ctx.font = '10px sans-serif';
-  const _pYrs = new Set(chartDates.map(d => d.slice(0, 4)));
-  const _pSY  = _pYrs.size > 1;
-  chartDates.forEach((d, i) => {
-    if (n > 8 && i % Math.ceil(n / 8) !== 0 && i !== n - 1) return;
-    ctx.fillText(_pSY ? d.slice(2, 10).replace(/-/g, '/') : d.slice(5), xScale(i), H - pad.bottom + 4);
-  });
-
-  // Volume bars (real vol, capped at 25% chart height)
-  const barW = cW / n * 0.6;
-  volHistory.forEach((v, i) => {
-    const bh = Math.max(1, (v / maxVol) * cH * 0.25);
-    ctx.fillStyle = 'rgba(232,160,32,0.5)';
-    ctx.fillRect(xScale(i) - barW / 2, pad.top + cH - bh, barW, bh);
-  });
-
-  // Band fill
-  const startIdx = bands.findIndex(b => b !== null);
-  if (startIdx >= 0) {
-    ctx.beginPath();
-    ctx.moveTo(xScale(startIdx), yScale(bands[startIdx].upper));
-    for (let i=startIdx+1; i<n; i++) if(bands[i]) ctx.lineTo(xScale(i), yScale(bands[i].upper));
-    for (let i=n-1; i>=startIdx; i--) if(bands[i]) ctx.lineTo(xScale(i), yScale(bands[i].lower));
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(192,37,45,0.06)';
-    ctx.fill();
-
-    // Upper band
-    ctx.beginPath(); ctx.strokeStyle = '#c0252d'; ctx.lineWidth = 1.5;
-    let first = true;
-    for (let i=startIdx; i<n; i++) {
-      if (!bands[i]) continue;
-      first ? ctx.moveTo(xScale(i), yScale(bands[i].upper)) : ctx.lineTo(xScale(i), yScale(bands[i].upper));
-      first = false;
-    }
-    ctx.stroke();
-
-    // Middle band (MA)
-    ctx.beginPath(); ctx.strokeStyle = '#666'; ctx.lineWidth = 1.5; ctx.setLineDash([4,3]);
-    first = true;
-    for (let i=startIdx; i<n; i++) {
-      if (!bands[i]) continue;
-      first ? ctx.moveTo(xScale(i), yScale(bands[i].ma)) : ctx.lineTo(xScale(i), yScale(bands[i].ma));
-      first = false;
-    }
-    ctx.stroke(); ctx.setLineDash([]);
-
-    // Lower band
-    ctx.beginPath(); ctx.strokeStyle = '#1a7a3c'; ctx.lineWidth = 1.5;
-    first = true;
-    for (let i=startIdx; i<n; i++) {
-      if (!bands[i]) continue;
-      first ? ctx.moveTo(xScale(i), yScale(bands[i].lower)) : ctx.lineTo(xScale(i), yScale(bands[i].lower));
-      first = false;
-    }
-    ctx.stroke();
-  }
-
-  // Close price line
-  ctx.beginPath(); ctx.strokeStyle = '#e8a020'; ctx.lineWidth = 2;
-  closeHistory.forEach((v,i) => { i===0 ? ctx.moveTo(xScale(i), yScale(v)) : ctx.lineTo(xScale(i), yScale(v)); });
-  ctx.stroke();
-
-  // Title
-  ctx.fillStyle = '#222'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText(`${stock.name_chi} (${stock.code}) — 波動率通道 N=${period} K=${mult}`, pad.left, 18);
-
-  // Snapshot the fully-drawn chart so we can restore it before each crosshair redraw
-  canvas._caiSnapshot = ctx.getImageData(0, 0, W, H);
-
-  // ── Hover tooltip + crosshair ─────────────────────────────────────────────
-  canvas._caiData = { chartDates, closeHistory, volHistory, bands, pad, n, xScale, yScale, maxVol, cH, W, H };
-  if (!canvas._caiTip) {
-    const tip = document.createElement('div');
-    tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
-      'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
-    
-    document.body.appendChild(tip);
-    canvas._caiTip = tip;
-    canvas.style.cursor = 'crosshair';
-
-    canvas.addEventListener('mousemove', e => {
-      const d = canvas._caiData;
-      if (!d || !canvas._caiSnapshot) return;
-      const rect = canvas.getBoundingClientRect();
-      const mx   = (e.clientX - rect.left) * (d.W / rect.width);
-
-      // Snap to nearest index
-      let idx = 0, bestDx = Infinity;
-      for (let i = 0; i < d.n; i++) {
-        const dx = Math.abs(mx - d.xScale(i));
-        if (dx < bestDx) { bestDx = dx; idx = i; }
-      }
-
-      const date  = d.chartDates[idx];
-      const close = d.closeHistory[idx];
-      const vol   = d.volHistory[idx];
-      const band  = d.bands[idx];
-      const x     = d.xScale(idx);
-      const y     = d.yScale(close);
-
-      // Restore clean snapshot then draw crosshair
-      const ctx2 = canvas.getContext('2d');
-      ctx2.putImageData(canvas._caiSnapshot, 0, 0);
-      ctx2.save();
-      ctx2.strokeStyle = 'rgba(100,100,100,0.4)';
-      ctx2.lineWidth = 1;
-      ctx2.setLineDash([4, 3]);
-      ctx2.beginPath();
-      ctx2.moveTo(x, d.pad.top);
-      ctx2.lineTo(x, d.pad.top + d.cH);
-      ctx2.stroke();
-      ctx2.setLineDash([]);
-      ctx2.beginPath();
-      ctx2.arc(x, y, 4, 0, Math.PI * 2);
-      ctx2.fillStyle = '#e8a020';
-      ctx2.fill();
-      ctx2.restore();
-
-      const volStr = vol >= 1e6 ? (vol/1e6).toFixed(1)+'M' : vol >= 1e3 ? (vol/1e3).toFixed(0)+'K' : String(vol);
-      tip.innerHTML =
-        `<b>${date}</b><br>` +
-        `收市 <span style="color:#e8a020;font-weight:600">${close.toFixed(2)}</span><br>` +
-        (band ? `上軌 <span style="color:#c0252d">${band.upper.toFixed(2)}</span>　` +
-                `MA <span style="color:#888">${band.ma.toFixed(2)}</span>　` +
-                `下軌 <span style="color:#1a7a3c">${band.lower.toFixed(2)}</span><br>` : '') +
-        `成交股數 ${volStr}`;
-
-      tip.style.left    = (e.clientX + 14) + 'px';
-      tip.style.top     = (e.clientY - 90) + 'px';
-      tip.style.display = 'block';
+  function bindCaiHover(chart) {
+    chart.canvas.addEventListener('mousemove', e => {
+      caiActiveIdx=getIdxCai(chart,e); caiCharts.forEach(c=>c.update('none')); showCaiTip(e,caiActiveIdx);
     });
-
-    canvas.addEventListener('mouseleave', () => {
-      canvas._caiTip.style.display = 'none';
-      // Restore clean snapshot to remove crosshair
-      if (canvas._caiSnapshot) canvas.getContext('2d').putImageData(canvas._caiSnapshot, 0, 0);
+    chart.canvas.addEventListener('mouseleave', () => {
+      caiActiveIdx=null; caiCharts.forEach(c=>c.update('none'));
+      const t=document.getElementById('cai-tip'); if(t) t.style.display='none';
     });
   }
+
+  const maxVol = Math.max(...volArr);
+  const xHide  = {ticks:{display:false},grid:{color:gc},border:{display:false}};
+  const xShow  = {ticks:{font:{size:10},color:'#888',maxRotation:0,callback:(v,i)=>i%Math.max(1,Math.floor(chartDates.length/8))===0?chartDates[i].slice(2,10):''},grid:{color:gc},border:{display:false}};
+
+  const c1 = new Chart(document.getElementById('caiCanvas'), {
+    type:'line', plugins:[sqzPlugin, crossPlugin],
+    data:{labels:chartDates, datasets:[
+      {type:'bar',   label:'成交量',   data:volArr,   backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yV',order:4},
+      {type:'line',  label:'上軌',     data:upper,    borderColor:'#c0252d',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:2},
+      {type:'line',  label:'中軌',     data:mid,      borderColor:'rgba(128,128,128,0.55)',borderWidth:1,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:3},
+      {type:'line',  label:'下軌',     data:lower,    borderColor:'#1a7a3c',borderWidth:1.5,pointRadius:0,fill:'-2',backgroundColor:'rgba(192,37,45,0.05)',tension:0.3,spanGaps:false,order:2},
+      {type:'line',  label:'上方中軌', data:priceUp,  borderColor:'#378ADD',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
+      {type:'line',  label:'下方中軌', data:priceDn,  borderColor:'#c0252d',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:xHide,
+        y:{afterFit:aFit,position:'left',ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
+        yV:{position:'right',max:maxVol*4,ticks:{display:false},grid:{display:false},border:{display:false}},
+      }}
+  });
+
+  const c2 = new Chart(document.getElementById('caiRsi'), {
+    type:'line', plugins:[crossPlugin, refPlugin],
+    _refs:[{v:70,color:'rgba(192,37,45,0.4)',dash:[3,3]},{v:50,color:'rgba(128,128,128,0.3)',dash:[2,4]},{v:30,color:'rgba(26,122,60,0.4)',dash:[3,3]}],
+    data:{labels:chartDates, datasets:[{
+      label:'RSI', data:rsiArr, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, fill:false, tension:0.3, spanGaps:false,
+    }]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:xHide, y:{afterFit:aFit,min:0,max:100,
+        ticks:{callback:v=>[30,70].includes(v)?v:'',font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}}}}
+  });
+
+  const c3 = new Chart(document.getElementById('caiMacd'), {
+    type:'bar', plugins:[crossPlugin],
+    data:{labels:chartDates, datasets:[
+      {type:'bar',  label:'柱狀',  data:histArr,  backgroundColor:histArr.map(v=>v==null?'transparent':v>=0?'rgba(26,122,60,0.6)':'rgba(192,37,45,0.6)'),borderWidth:0,order:3},
+      {type:'line', label:'MACD',  data:macdLine, borderColor:'#378ADD',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
+      {type:'line', label:'Signal',data:sigLine,  borderColor:'#c0252d',borderWidth:1.5,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:2},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{x:xShow, y:{afterFit:aFit,ticks:{callback:v=>v.toFixed(2),font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}}}}
+  });
+
+  caiCharts = [c1, c2, c3];
+  bindCaiHover(c1); bindCaiHover(c2); bindCaiHover(c3);
+
+  // ATR computed but not rendered (available for future use)
+  const atrHistory = computeATR(
+    allDates.map(d=>(byDate[d]?.[code5]||byDate[d]?.[stock.code])?.high||0),
+    allDates.map(d=>(byDate[d]?.[code5]||byDate[d]?.[stock.code])?.low||0),
+    closeArr, 24
+  );
+  void atrHistory;
 }
 
 // ── SbChart hover tooltip ────────────────────────────────────────────────────
