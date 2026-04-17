@@ -1054,11 +1054,15 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="hsi-chart-wrap"><canvas id="hsiCanvas" role="img" aria-label="HSI weekly price channel">HSI weekly channel chart.</canvas></div>
     <div class="hsi-vol-wrap"><canvas id="hsiVolCanvas" role="img" aria-label="HSI weekly oscillation vs 4-week MA">HSI weekly high/low vs 4-week MA.</canvas></div>
 
+    <div id="hsi-vline-bar" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;font-size:12px;padding:8px 12px;border-radius:8px;background:var(--bg);border:0.5px solid var(--border);margin-top:8px;min-height:38px;">
+      <span style="color:var(--muted)">— 點擊圖表設定基準線</span>
+    </div>
+
     <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.8">
       <span style="display:inline-block;width:20px;height:2px;background:rgba(83,74,183,0.85);border-top:2px dashed rgba(83,74,183,0.85);vertical-align:middle;margin-right:4px"></span>預測高/低 &nbsp;｜&nbsp;
       <span style="display:inline-block;width:20px;height:1px;background:rgba(226,75,74,0.5);border-top:1px dashed rgba(226,75,74,0.5);vertical-align:middle;margin-right:4px"></span>實際高/低 &nbsp;｜&nbsp;
 <span style="display:inline-block;width:20px;height:2px;background:#378ADD;vertical-align:middle;margin-right:4px"></span>收市價 &nbsp;｜&nbsp;
-      下方圖: 週高/低 − 4週均值
+      下方圖: 週高/低 − 4週均值 &nbsp;｜&nbsp; 點擊圖表設基準線
     </div>
   </div>
 </div>
@@ -4116,6 +4120,7 @@ window.addEventListener('resize', () => {
 let hsiData = null;
 let hsiChartInst = null;
 let hsiVolInst   = null;
+let hsiVlineIdx  = null;   // index of the interactive reference line
 
 async function loadHsiData() {
   try {
@@ -4293,9 +4298,39 @@ function renderHsiPanel() {
     }
   };
 
+  // Interactive reference line plugin
+  const vlinePlugin = {
+    id: 'hsiVline',
+    afterDraw(chart) {
+      if (hsiVlineIdx === null) return;
+      const {ctx, scales: {x, y}} = chart;
+      if (!x || !y) return;
+      const xp = x.getPixelForValue(hsiVlineIdx);
+      ctx.save();
+      ctx.setLineDash([6, 3]);
+      ctx.strokeStyle = '#c0252d';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(xp, y.top);
+      ctx.lineTo(xp, y.bottom);
+      ctx.stroke();
+      const ds = chartLabels[hsiVlineIdx];
+      if (ds && ds !== '下週(預測)') {
+        ctx.font = '11px sans-serif';
+        const tw = ctx.measureText(ds.slice(0, 7)).width + 8;
+        const tx = Math.min(xp + 3, chart.chartArea.right - tw);
+        ctx.fillStyle = 'rgba(192,37,45,0.1)';
+        ctx.fillRect(tx, y.top, tw, 16);
+        ctx.fillStyle = '#c0252d';
+        ctx.fillText(ds.slice(0, 7), tx + 4, y.top + 11);
+      }
+      ctx.restore();
+    }
+  };
+
   hsiChartInst = new Chart(document.getElementById('hsiCanvas'), {
     type: 'line',
-    plugins: [predDividerPlugin],
+    plugins: [predDividerPlugin, vlinePlugin],
     data: {
       labels: chartLabels,
       datasets: [
@@ -4357,6 +4392,14 @@ function renderHsiPanel() {
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
+      onClick(e, _, chart) {
+        const pts = chart.getElementsAtEventForMode(e, 'index', {intersect: false}, false);
+        if (!pts.length) return;
+        const idx = pts[0].index;
+        hsiVlineIdx = (idx === hsiVlineIdx) ? null : idx;
+        _updateHsiVlineBar(chartLabels, weekly, lastDs);
+        chart.update('none');
+      },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -4453,6 +4496,7 @@ function renderHsiPanel() {
         document.getElementById('hsi-from').value = fromDate;
       }
       document.getElementById('hsi-to').value = lastDs;
+      hsiVlineIdx = null;
       renderHsiPanel();
     });
   }
@@ -4460,6 +4504,36 @@ function renderHsiPanel() {
     applyBtn._hsiWired = true;
     applyBtn.addEventListener('click', () => renderHsiPanel());
   }
+}
+
+function _updateHsiVlineBar(chartLabels, weekly, lastDs) {
+  const bar = document.getElementById('hsi-vline-bar');
+  if (!bar) return;
+  if (hsiVlineIdx === null || !chartLabels[hsiVlineIdx] || chartLabels[hsiVlineIdx] === '下週(預測)') {
+    bar.innerHTML = '<span style="color:var(--muted)">— 點擊圖表設定基準線</span>';
+    return;
+  }
+  const ds  = chartLabels[hsiVlineIdx];
+  const rec = weekly[ds];
+  if (!rec) { bar.innerHTML = '<span style="color:var(--muted)">—</span>'; return; }
+  const lastRec = weekly[lastDs];
+  const chg  = lastRec.c - rec.c;
+  const pct  = (chg / rec.c * 100).toFixed(1);
+  const cc   = chg >= 0 ? '#1a7a3c' : '#c0252d';
+  const chgStr = (chg >= 0 ? '+' : '') + Math.round(chg) + ' (' + (chg >= 0 ? '+' : '') + pct + '%)';
+  const weeks  = chartLabels.length - 1 - hsiVlineIdx;
+  const item = (lbl, val, color) =>
+    `<div style="display:flex;flex-direction:column;gap:1px">` +
+    `<div style="font-size:10px;color:var(--muted)">${lbl}</div>` +
+    `<div style="font-size:13px;font-weight:500;color:${color||'var(--text)'}">${val}</div></div>`;
+  bar.innerHTML =
+    item('基準日',    ds.slice(0, 7)) +
+    item('基準收市',  rec.c.toLocaleString()) +
+    item('現價',      lastRec.c.toLocaleString()) +
+    item('變動',      chgStr, cc) +
+    item('週數',      weeks) +
+    `<button onclick="hsiVlineIdx=null;document.getElementById('hsi-vline-bar').innerHTML='<span style=\\'color:var(--muted)\\'>— 點擊圖表設定基準線</span>';if(window.hsiChartInst)hsiChartInst.update(\\'none\\');" ` +
+    `style="margin-left:auto;font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);cursor:pointer">清除</button>`;
 }
 
 async function initHsiPanel() {
