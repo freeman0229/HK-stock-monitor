@@ -3863,6 +3863,7 @@ async function drawCai() {
 
   const stock = allStocks.find(s => s.code === code) || allStocks[0];
   if (!stock) return;
+  const code5 = norm5(stock.code);
 
   const year = new Date().getFullYear();
   if (!tvCache[year]) await loadTvYear(year);
