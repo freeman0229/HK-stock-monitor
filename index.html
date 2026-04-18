@@ -1027,8 +1027,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>上軌</div>
       <div class="leg-item"><div class="leg-dot" style="background:#666;height:2px"></div>中軌</div>
       <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>下軌</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>收市(上方中軌)</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>收市(下方中軌)</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>收市價</div>
       <div class="leg-item"><div class="leg-dot" style="background:rgba(128,128,128,0.4);height:8px;border-radius:1px"></div>成交量</div>
       <div class="leg-item"><div class="leg-dot" style="background:#534AB7;height:2px"></div>RSI</div>
       <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>MACD</div>
@@ -3994,7 +3993,7 @@ async function drawCai() {
     const row=(lbl,val,col)=>`<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
     tip.innerHTML =
       `<b style="color:#bbb">${dateView[idx]}</b><br>`+
-      row('收市', c?.toFixed(2), mid[idx]!=null&&c>=mid[idx]?'#378ADD':'#c0252d')+
+      row('收市', c?.toFixed(2), '#378ADD')+
       row('上軌', u?.toFixed(2), '#c0252d')+row('下軌', l?.toFixed(2), '#1a7a3c')+
       row('RSI',  r?.toFixed(1), '#534AB7')+
       row('MACD', m?.toFixed(3), '#378ADD')+row('Signal', s?.toFixed(3), '#c0252d')+
@@ -4021,7 +4020,7 @@ async function drawCai() {
   const xShow  = {ticks:{font:{size:10},color:'#888',maxRotation:0,callback:(v,i)=>i%Math.max(1,Math.floor(N/8))===0?dateView[i].slice(2,10):''},grid:{color:gc},border:{display:false}};
 
   // Fixed right-axis width to align crosshair across all 3 panels
-  const aFitR = s => { s.width = 0; };  // right axis: zero width (hidden ticks)
+  const aFitR = s => { s.width = 32; };  // all right axes same width for crosshair alignment
 
   const c1 = new Chart(document.getElementById('caiCanvas'), {
     type:'line', plugins:[sqzPlugin, crossPlugin],
@@ -4030,14 +4029,7 @@ async function drawCai() {
       {type:'line', label:'上軌',     data:upper,    borderColor:'#c0252d',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yPrice',order:2},
       {type:'line', label:'中軌',     data:mid,      borderColor:'rgba(128,128,128,0.55)',borderWidth:1,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yPrice',order:3},
       {type:'line', label:'下軌',     data:lower,    borderColor:'#1a7a3c',borderWidth:1.5,pointRadius:0,fill:'-2',backgroundColor:'rgba(192,37,45,0.05)',tension:0.3,spanGaps:false,yAxisID:'yPrice',order:2},
-      {type:'line', label:'收市價',   data:closeView,borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:true,yAxisID:'yPrice',order:1,
-        segment:{
-          borderColor: ctx => {
-            const i = ctx.p0DataIndex;
-            return mid[i] != null && closeView[i] != null && closeView[i] >= mid[i] ? '#378ADD' : '#c0252d';
-          }
-        }
-      },
+      {type:'line', label:'收市價',   data:closeView,borderColor:'#378ADD',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:true,yAxisID:'yPrice',order:1},
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
@@ -4055,13 +4047,16 @@ async function drawCai() {
     }]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{x:xHide, y:{afterFit:aFit, min:0, max:100,
-        afterBuildTicks: axis => { axis.ticks = [0,30,50,70,100].map(v=>({value:v})); },
-        ticks:{font:{size:10},color:'#888',callback:v=>[30,50,70].includes(+v)?String(+v):''},
-        grid:{color:gc},border:{display:false}}}}
+      scales:{x:xHide,
+        y:{afterFit:aFit, min:0, max:100,
+          afterBuildTicks: axis => { axis.ticks = [0,30,50,70,100].map(v=>({value:v})); },
+          ticks:{font:{size:10},color:'#888',callback:v=>[30,50,70].includes(+v)?String(+v):''},
+          grid:{color:gc},border:{display:false}},
+        yDummy:{position:'right', afterFit:aFitR, display:true, ticks:{display:false}, grid:{display:false}, border:{display:false}},
+      }}
   });
 
-  // MACD: lines on left axis, histogram on right axis scaled to bottom quarter
+  // MACD: lines on left axis, histogram on right axis pinned to bottom
   const maxHist = Math.max(...histArr.filter(v=>v!=null).map(Math.abs), 0.001);
   const c3 = new Chart(document.getElementById('caiMacd'), {
     type:'line', plugins:[crossPlugin],
@@ -4075,7 +4070,9 @@ async function drawCai() {
       scales:{
         x:xShow,
         yMacd:{position:'left',  afterFit:aFit,  display:true, ticks:{callback:v=>v.toFixed(2),font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
-        yHist:{position:'right', afterFit:aFitR, display:true, min:-maxHist*4, max:maxHist*4, ticks:{display:false},grid:{display:false},border:{display:false}},
+        yHist:{position:'right', afterFit:s=>{s.width=32;}, display:true, min:-maxHist*0.5, max:maxHist*8,
+          ticks:{font:{size:9},color:'rgba(128,128,128,0.6)',callback:v=>Math.abs(v)<0.001?'0':v.toFixed(2)},
+          grid:{display:false},border:{display:false}},
       }}
   });
 
