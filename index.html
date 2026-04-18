@@ -3938,7 +3938,6 @@ async function drawCai() {
 
   // Squeeze background plugin
   const sqzPlugin = {
-    id:'caiSqz',
     beforeDraw(chart) {
       const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
       let inSq=false, startX=0;
@@ -3952,7 +3951,6 @@ async function drawCai() {
   };
 
   const crossPlugin = {
-    id:'caiCross',
     afterDraw(chart) {
       if (caiActiveIdx===null) return;
       const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
@@ -3963,7 +3961,6 @@ async function drawCai() {
   };
 
   const refPlugin = {
-    id:'caiRef',
     afterDraw(chart) {
       const refs = chart.config._refs||[]; if(!refs.length) return;
       const {ctx,scales:{x,y}} = chart; if(!x||!y) return;
