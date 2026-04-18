@@ -1185,7 +1185,13 @@ function insightBadge(s) {
 const fmtConsec = s => {
   const c = s.ccass_consec || 0;
   const p = s.ccass_streak_pct || 0;
-  if (c === 0) return '—';
+  const d = s.pct_delta || 0;
+  if (c === 0 && d === 0) return '—';
+  if (c === 0 && d !== 0) {
+    // Single day change — no streak yet
+    const pStr = (d > 0 ? '+' : '') + d.toFixed(2) + 'pp';
+    return `${d > 0 ? '▲' : '▼'}1 (${pStr})`;
+  }
   const dir = c > 0 ? '▲' : '▼';
   const pStr = (p >= 0 ? '+' : '') + p.toFixed(2) + 'pp';
   return `${dir}${Math.abs(c)} (${pStr})`;
@@ -1686,7 +1692,7 @@ function renderBshui() {
       <td class="num-r mob-hide ${netClass}">${s.sb_buy > 0 || s.sb_sell > 0 ? sign(s.sb_net)+fmtM(s.sb_net) : '<span class="na-txt">—</span>'}</td>
       <td class="num-r mob-hide">${s.sb_buy ? fmtM(s.sb_buy) : '<span class="na-txt">—</span>'}</td>
       <td class="num-r mob-hide">${s.sb_sell ? fmtM(s.sb_sell) : '<span class="na-txt">—</span>'}</td>
-      <td class="num-r mob-hide ${s.ccass_consec>0?'up-txt':s.ccass_consec<0?'dn-txt':''}">${fmtConsec(s)}</td>
+      <td class="num-r mob-hide ${s.ccass_consec>0||(s.ccass_consec===0&&(s.pct_delta||0)>0)?'up-txt':s.ccass_consec<0||(s.ccass_consec===0&&(s.pct_delta||0)<0)?'dn-txt':''}">${fmtConsec(s)}</td>
       <td>${insightBadge(s.insight)}</td>
     </tr>`;
   }).join('');
