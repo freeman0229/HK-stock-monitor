@@ -1029,9 +1029,12 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>下軌</div>
       <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>收市(上方中軌)</div>
       <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>收市(下方中軌)</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(128,128,128,0.4);height:8px;border-radius:1px"></div>成交量</div>
       <div class="leg-item"><div class="leg-dot" style="background:#534AB7;height:2px"></div>RSI</div>
       <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>MACD</div>
       <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px;border-top:2px dashed #c0252d"></div>Signal</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:8px;border-radius:1px"></div>柱狀(+)</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:8px;border-radius:1px"></div>柱狀(-)</div>
     </div>
   </div>
 </div>
@@ -1531,8 +1534,8 @@ function drawSbChart(sorted) {
       ctx.fillRect(zeroX - 1, cy - barH/2, 2, barH);
     }
 
-    // CCASS dot
-    if (consec !== 0) {
+    // CCASS dot — only show for streaks ≥ 2 consecutive days
+    if (Math.abs(consec) >= 2) {
       const dotX = s.sb_net >= 0 ? zeroX + bw + 6 : zeroX - bw - 6;
       ctx.beginPath();
       ctx.arc(dotX, cy, 5, 0, Math.PI * 2);
@@ -3700,7 +3703,12 @@ async function initSdwPanel() {
   const sdwCodes   = Object.keys(sdwData[latestDs] || {});
   const firstCode  = sdwCodes.includes('02800') ? '02800'
     : allStocks.find(s => sdwCodes.includes(s.code))?.code || sdwCodes[0];
-  if (firstCode) sdwSelectCode(firstCode);
+  if (firstCode) {
+    sdwSelectCode(firstCode);
+  } else {
+    // No SDW data yet — still pre-fill search box with 02800
+    sdwSelectCode('02800');
+  }
 }
 
 // ── Cai Channel ──────────────────────────────────────────────────────────
@@ -3906,8 +3914,8 @@ async function drawCai() {
   const validBw  = bwArr.filter(v=>v!=null).sort((a,b)=>a-b);
   const bwThresh = validBw[Math.floor(validBw.length*0.25)]||0;
 
-  const priceUp = closeView.map((c,i) => mid[i]!=null && c>=mid[i] ? c : null);
-  const priceDn = closeView.map((c,i) => mid[i]!=null && c< mid[i] ? c : null);
+  const priceUp = closeView.map((c,i) => mid[i]!=null && c>=mid[i] ? c : null); // kept for tooltip reference
+  const priceDn = closeView.map((c,i) => mid[i]!=null && c< mid[i] ? c : null); // kept for tooltip reference
 
   // RSI + MACD (computed on full history, sliced for display)
   const rsiFull   = calcRsi(closeArr);
@@ -4013,18 +4021,27 @@ async function drawCai() {
   const xShow  = {ticks:{font:{size:10},color:'#888',maxRotation:0,callback:(v,i)=>i%Math.max(1,Math.floor(N/8))===0?dateView[i].slice(2,10):''},grid:{color:gc},border:{display:false}};
 
   const c1 = new Chart(document.getElementById('caiCanvas'), {
-    type:'line', plugins:[sqzPlugin, crossPlugin],
+    type:'bar', plugins:[sqzPlugin, crossPlugin],
     data:{labels:dateView, datasets:[
-      {type:'line',  label:'上軌',     data:upper,    borderColor:'#c0252d',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:2},
-      {type:'line',  label:'中軌',     data:mid,      borderColor:'rgba(128,128,128,0.55)',borderWidth:1,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:3},
-      {type:'line',  label:'下軌',     data:lower,    borderColor:'#1a7a3c',borderWidth:1.5,pointRadius:0,fill:'-2',backgroundColor:'rgba(192,37,45,0.05)',tension:0.3,spanGaps:false,order:2},
-      {type:'line',  label:'上方中軌', data:priceUp,  borderColor:'#378ADD',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
-      {type:'line',  label:'下方中軌', data:priceDn,  borderColor:'#c0252d',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
+      // Volume bars behind everything on right axis
+      {type:'bar',  label:'成交量',   data:volView,  backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yVol',order:5},
+      {type:'line', label:'上軌',     data:upper,    borderColor:'#c0252d',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yPrice',order:2},
+      {type:'line', label:'中軌',     data:mid,      borderColor:'rgba(128,128,128,0.55)',borderWidth:1,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yPrice',order:3},
+      {type:'line', label:'下軌',     data:lower,    borderColor:'#1a7a3c',borderWidth:1.5,pointRadius:0,fill:'-2',backgroundColor:'rgba(192,37,45,0.05)',tension:0.3,spanGaps:false,yAxisID:'yPrice',order:2},
+      {type:'line', label:'收市價',   data:closeView,borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:true,yAxisID:'yPrice',order:1,
+        segment:{
+          borderColor: ctx => {
+            const i = ctx.p0DataIndex;
+            return mid[i] != null && closeView[i] != null && closeView[i] >= mid[i] ? '#378ADD' : '#c0252d';
+          }
+        }
+      },
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
       scales:{x:xHide,
-        y:{afterFit:aFit,position:'left',ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
+        yPrice:{position:'left',  afterFit:aFit, ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
+        yVol:  {position:'right', min:0, max:maxVol*4, ticks:{display:false},grid:{display:false},border:{display:false}},
       }}
   });
 
@@ -4045,17 +4062,16 @@ async function drawCai() {
   const c3 = new Chart(document.getElementById('caiMacd'), {
     type:'bar', plugins:[crossPlugin],
     data:{labels:dateView, datasets:[
-      {type:'bar',  label:'成交量', data:volView,  backgroundColor:'rgba(128,128,128,0.12)',borderWidth:0,yAxisID:'yVol',order:4},
-      {type:'bar',  label:'柱狀',  data:histArr,  backgroundColor:histArr.map(v=>v==null?'transparent':v>=0?'rgba(26,122,60,0.6)':'rgba(192,37,45,0.6)'),borderWidth:0,yAxisID:'yMacd',order:3},
-      {type:'line', label:'MACD',  data:macdLine, borderColor:'#378ADD',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yMacd',order:1},
-      {type:'line', label:'Signal',data:sigLine,  borderColor:'#c0252d',borderWidth:1.5,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yMacd',order:2},
+      // Histogram bars at bottom (order:3), lines on top (order:1,2)
+      {type:'bar',  label:'柱狀',  data:histArr,  backgroundColor:histArr.map(v=>v==null?'transparent':v>=0?'rgba(26,122,60,0.6)':'rgba(192,37,45,0.6)'),borderWidth:0,order:3},
+      {type:'line', label:'MACD',  data:macdLine, borderColor:'#378ADD',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:1},
+      {type:'line', label:'Signal',data:sigLine,  borderColor:'#c0252d',borderWidth:1.5,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,order:2},
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
       scales:{
         x:xShow,
-        yMacd:{position:'left',  afterFit:aFit, ticks:{callback:v=>v.toFixed(2),font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
-        yVol: {position:'right', min:0, max:maxVol*5, ticks:{display:false},grid:{display:false},border:{display:false}},
+        y:{position:'left', afterFit:aFit, ticks:{callback:v=>v.toFixed(2),font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
       }}
   });
 
