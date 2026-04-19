@@ -3415,9 +3415,12 @@ function drawSdwChart(code, selectedDs) {
 function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders) {
   if (!holders.length) return;
 
-  // Stock metrics from allStocks
+  // Stock metrics from allStocks — fall back to computing from holders if missing
   const s = allStocks.find(x => x.code === code) || {};
-  const conc    = parseFloat(s.concentration || 0);
+  const top5sh    = holders.slice(0,5).reduce((a,h)=>a+(h.sh||0),0);
+  const totalShForConc = rawEntry?.total_sh || 0;
+  const concFromHolders = totalShForConc > 0 ? +(top5sh / totalShForConc * 100).toFixed(1) : 0;
+  const conc    = parseFloat(s.concentration || 0) || concFromHolders;
   const lockup  = parseFloat(s.lockup_threshold || 60);
   const gap     = parseFloat((conc - lockup).toFixed(1));
   const exceeded= gap >= 0;
