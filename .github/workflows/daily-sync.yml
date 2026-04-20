@@ -32,6 +32,7 @@ on:
           - sdw-backfill     # manual: backfill a specific date range
           - sdw-migrate-json # one-time: import old ccass_sdw_*.json files into SQLite DB
           - hsi-build        # manual: rebuild full HSI weekly history from scratch
+          - rank-history-backfill  # manual: rebuild rank_history.json from 2026-02-02
       backfill_date:
         description: 'Date to backfill (YYYY-MM-DD) — e.g. 2025-04-11. Required for sdw-backfill.'
         required: false
@@ -662,3 +663,35 @@ jobs:
           [ -f hsi_weekly.json ] && git add hsi_weekly.json
           git diff --staged --quiet || \
             (git commit -m "HSI weekly: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+  # ── Rank history backfill (manual) ───────────────────────────────────────────
+  rank-history-backfill:
+    name: Rank history backfill (2026-02-02 to today)
+    runs-on: ubuntu-latest
+    timeout-minutes: 320
+    concurrency:
+      group: rank-history-backfill-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'rank-history-backfill'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+
+      - name: Backfill rank_history.json from 2026-02-02
+        run: python main.py --backfill 2026-02-02
+
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          [ -f rank_history.json ] && git add rank_history.json
+          [ -f name_map.json ] && git add name_map.json
+          git diff --staged --quiet || \
+            (git commit -m "Rank history backfill: $(date +'%Y-%m-%d %H:%M')" && git push)
