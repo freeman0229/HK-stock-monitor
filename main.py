@@ -486,8 +486,8 @@ def get_short_avg_ratio(stock_codes: list, days: int, daily_tv: dict,
                      "short_avg": round(sum(v) / len(v), 2) if v else 0.0})
     return pd.DataFrame(rows)
 
-def run_analysis():
-    today       = datetime.now()
+def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
+    today       = for_date or datetime.now()
     trading_day = last_trading_day(today)
     log.info("=== analysis — trading day: %s ===", trading_day.strftime("%Y-%m-%d"))
     today_ds = trading_day.strftime("%Y-%m-%d")
@@ -1084,50 +1084,84 @@ def run_analysis():
         })
 
     # ── 11. Persist ───────────────────────────────────────────────────────────
-    output = {
-        "update_time": trading_day.strftime("%Y-%m-%d %H:%M"),
-        "sb_date":     sb_date_used,
-        "sb_summary":  get_sb_summary(sb_date_used),
-        "name_map":    load_store(NAME_MAP_FILE),
-        "stocks":      results,
-    }
-    with open("data.json", "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, separators=(",", ":"))
-    log.info("data.json written: %d stocks", len(results))
     save_rank_history(trading_day, results)
+    log.info("rank_history.json updated for %s", today_ds)
 
-    # ── 12. Telegram ──────────────────────────────────────────────────────────
-    if results:
-        flagged     = [s for s in results if s["insight"]]
-        new_entries = [s for s in results if s["rank_new"]]
-        big_movers  = [s for s in results if not s["rank_new"] and s["rank_change"] >= 5]
-        # Top = highest actual turnover (quotation stocks ranked first)
-        top = next((s for s in results if s["turnover"] > 0), results[0])
-        top_rc = (f" [↑{top['rank_change']}]" if top["rank_change"] > 0
-                  else (" [new]" if top["rank_new"] else ""))
-        lines = [
-            "📊 港股策略板",
-            f"時間: {output['update_time']}",
-            f"榜首: {top['name_chi']} ({top['code']}){top_rc} 成交額 {top['turnover']:,}",
-            f"異動股: {len(flagged)} 隻 | 新進榜: {len(new_entries)} 隻",
-        ]
-        if new_entries:
-            lines.append("⭐ 新進: " + "、".join(
-                f"{s['name_chi']}({s['code']})" for s in new_entries[:3]))
-        if big_movers:
-            lines.append("🔺 大升: " + "、".join(
-                f"{s['name_chi']} ↑{s['rank_change']}" for s in big_movers[:3]))
-        if flagged:
-            lines.append("─────────────")
-            for s in flagged[:5]:
-                rc = (f" [↑{s['rank_change']}]" if s["rank_change"] > 0
-                      else (" [new]" if s["rank_new"] else ""))
-                lines.append(
-                    f"{s['insight']} {s['name_chi']}({s['code']}){rc}"
-                    f" | 沽空率 {s['short_ratio']}%"
-                    f" | CCASS {'+' if s['pct_delta']>=0 else ''}{s['pct_delta']}pp"
-                )
-        send_telegram("\n".join(lines))
+    if not suppress_telegram:
+        output = {
+            "update_time": trading_day.strftime("%Y-%m-%d %H:%M"),
+            "sb_date":     sb_date_used,
+            "sb_summary":  get_sb_summary(sb_date_used),
+            "name_map":    load_store(NAME_MAP_FILE),
+            "stocks":      results,
+        }
+        with open("data.json", "w", encoding="utf-8") as f:
+            json.dump(output, f, ensure_ascii=False, separators=(",", ":"))
+        log.info("data.json written: %d stocks", len(results))
+
+        # ── 12. Telegram ──────────────────────────────────────────────────────────
+        if results:
+            flagged     = [s for s in results if s["insight"]]
+            new_entries = [s for s in results if s["rank_new"]]
+            big_movers  = [s for s in results if not s["rank_new"] and s["rank_change"] >= 5]
+            # Top = highest actual turnover (quotation stocks ranked first)
+            top = next((s for s in results if s["turnover"] > 0), results[0])
+            top_rc = (f" [↑{top['rank_change']}]" if top["rank_change"] > 0
+                      else (" [new]" if top["rank_new"] else ""))
+            lines = [
+                "📊 港股策略板",
+                f"時間: {output['update_time']}",
+                f"榜首: {top['name_chi']} ({top['code']}){top_rc} 成交額 {top['turnover']:,}",
+                f"異動股: {len(flagged)} 隻 | 新進榜: {len(new_entries)} 隻",
+            ]
+            if new_entries:
+                lines.append("⭐ 新進: " + "、".join(
+                    f"{s['name_chi']}({s['code']})" for s in new_entries[:3]))
+            if big_movers:
+                lines.append("🔺 大升: " + "、".join(
+                    f"{s['name_chi']} ↑{s['rank_change']}" for s in big_movers[:3]))
+            if flagged:
+                lines.append("─────────────")
+                for s in flagged[:5]:
+                    rc = (f" [↑{s['rank_change']}]" if s["rank_change"] > 0
+                          else (" [new]" if s["rank_new"] else ""))
+                    lines.append(
+                        f"{s['insight']} {s['name_chi']}({s['code']}){rc}"
+                        f" | 沽空率 {s['short_ratio']}%"
+                        f" | CCASS {'+' if s['pct_delta']>=0 else ''}{s['pct_delta']}pp"
+                    )
+            send_telegram("\n".join(lines))
 
 if __name__ == "__main__":
-    run_analysis()
+    import argparse
+
+    ap = argparse.ArgumentParser(description="HK Stock daily analysis")
+    ap.add_argument("--date", metavar="YYYY-MM-DD",
+                    help="Run analysis for a specific date (backfill mode — no Telegram, no data.json)")
+    ap.add_argument("--backfill", metavar="YYYY-MM-DD",
+                    help="Backfill rank_history.json from this date to today (all trading days)")
+    args = ap.parse_args()
+
+    def _parse_date(s):
+        y, m, d = s.split("-")
+        return datetime(int(y), int(m), int(d))
+
+    if args.backfill:
+        start = _parse_date(args.backfill)
+        end   = datetime.now()
+        cur   = start
+        total = 0
+        while cur <= end:
+            if is_trading_day(cur):
+                log.info("=== backfill: %s ===", cur.strftime("%Y-%m-%d"))
+                try:
+                    run_analysis(for_date=cur, suppress_telegram=True)
+                    total += 1
+                except Exception as e:
+                    log.error("backfill failed for %s: %s", cur.strftime("%Y-%m-%d"), e)
+            cur += timedelta(days=1)
+        log.info("Backfill complete: %d trading days processed", total)
+    elif args.date:
+        run_analysis(for_date=_parse_date(args.date), suppress_telegram=True)
+    else:
+        run_analysis()

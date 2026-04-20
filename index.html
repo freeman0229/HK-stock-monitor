@@ -4409,13 +4409,22 @@ function renderHsiPanel() {
     ...view.map(d => +( ((weekly[d].c-sigmaDown*channel[d].vr*3.0)+(weekly[d].o-sigmaDownO*channel[d].vr*3.0))/2 ).toFixed(0)),
     Math.round(pl30avg)
   ];
+  // 2.5σ bands
+  const predPh25Data = [
+    ...view.map(d => +( ((weekly[d].c+sigmaUp  *channel[d].vr*2.5)+(weekly[d].o+sigmaUpO  *channel[d].vr*2.5))/2 ).toFixed(0)),
+    Math.round(ph25avg)
+  ];
+  const predPl25Data = [
+    ...view.map(d => +( ((weekly[d].c-sigmaDown*channel[d].vr*2.5)+(weekly[d].o-sigmaDownO*channel[d].vr*2.5))/2 ).toFixed(0)),
+    Math.round(pl25avg)
+  ];
   const closeData  = [...view.map(d => weekly[d].c), null];
   const highData   = [...view.map(d => weekly[d].h), null];
   const lowData    = [...view.map(d => weekly[d].l), null];
 
-  // Fill zone between pred high and low for last two points only
-  const fillPhData = chartLabels.map((l,i) => i >= N-2 ? predPhData[i] : null);
-  const fillPlData = chartLabels.map((l,i) => i >= N-2 ? predPlData[i] : null);
+  // Fill zone between 2.5σ high and low for last two points only
+  const fillPhData = chartLabels.map((l,i) => i >= N-2 ? predPh25Data[i] : null);
+  const fillPlData = chartLabels.map((l,i) => i >= N-2 ? predPl25Data[i] : null);
 
   // Vertical divider + shaded background plugin
   const predDividerPlugin = {
@@ -4487,17 +4496,31 @@ function renderHsiPanel() {
           borderColor: 'transparent', backgroundColor: 'transparent',
           fill: false, pointRadius: 0, tension: 0.3, spanGaps: false, order: 11,
         },
-        // Predicted high band — last segment turns red
+        // Predicted high band 3σ — dotted
         {
-          label: '預測高位',
+          label: '預測高位(3σ)',
           data: predPhData,
+          borderColor: 'rgba(83,74,183,0.6)',
+          borderWidth: 1.2,
+          borderDash: [3,3],
+          segment: {
+            borderColor: ctx => ctx.p1DataIndex === N-1 ? 'rgba(192,37,45,0.7)' : 'rgba(83,74,183,0.6)',
+            borderDash:  ctx => [3,3],
+          },
+          pointRadius: ctx => ctx.dataIndex === N-1 ? 6 : 0,
+          pointBackgroundColor: '#c0252d',
+          pointStyle: ctx => ctx.dataIndex === N-1 ? 'triangle' : 'circle',
+          fill: false, tension: 0.2, spanGaps: false, order: 2,
+        },
+        // Predicted high band 2.5σ — solid
+        {
+          label: '預測高位(2.5σ)',
+          data: predPh25Data,
           borderColor: 'rgba(83,74,183,0.85)',
           borderWidth: 1.5,
-          borderDash: [6,3],
           segment: {
             borderColor: ctx => ctx.p1DataIndex === N-1 ? '#c0252d' : 'rgba(83,74,183,0.85)',
             borderWidth: ctx => ctx.p1DataIndex === N-1 ? 2.5 : 1.5,
-            borderDash:  ctx => ctx.p1DataIndex === N-1 ? [10,4] : [6,3],
           },
           pointRadius: ctx => ctx.dataIndex === N-1 ? 7 : 0,
           pointBackgroundColor: '#c0252d',
@@ -4510,19 +4533,34 @@ function renderHsiPanel() {
         { label: '收市價', data: closeData, borderColor:'#378ADD', borderWidth:2, pointRadius:0, fill:false, tension:0.2, spanGaps:false, order:1 },
         // Actual low
         { label: '實際低位', data: lowData, borderColor:'rgba(226,75,74,0.5)', borderWidth:1, pointRadius:0, fill:false, tension:0.2, borderDash:[2,2], spanGaps:false, order:5 },
-        // Predicted low band — last segment turns green
+        // Predicted low band 2.5σ — solid
         {
-          label: '預測低位',
-          data: predPlData,
+          label: '預測低位(2.5σ)',
+          data: predPl25Data,
           borderColor: 'rgba(83,74,183,0.85)',
           borderWidth: 1.5,
-          borderDash: [6,3],
           segment: {
             borderColor: ctx => ctx.p1DataIndex === N-1 ? '#1a7a3c' : 'rgba(83,74,183,0.85)',
             borderWidth: ctx => ctx.p1DataIndex === N-1 ? 2.5 : 1.5,
-            borderDash:  ctx => ctx.p1DataIndex === N-1 ? [10,4] : [6,3],
           },
           pointRadius: ctx => ctx.dataIndex === N-1 ? 7 : 0,
+          pointBackgroundColor: '#1a7a3c',
+          pointStyle: ctx => ctx.dataIndex === N-1 ? 'triangle' : 'circle',
+          rotation: 180,
+          fill: false, tension: 0.2, spanGaps: false, order: 3,
+        },
+        // Predicted low band 3σ — dotted
+        {
+          label: '預測低位(3σ)',
+          data: predPlData,
+          borderColor: 'rgba(83,74,183,0.6)',
+          borderWidth: 1.2,
+          borderDash: [3,3],
+          segment: {
+            borderColor: ctx => ctx.p1DataIndex === N-1 ? 'rgba(26,122,60,0.7)' : 'rgba(83,74,183,0.6)',
+            borderDash:  ctx => [3,3],
+          },
+          pointRadius: ctx => ctx.dataIndex === N-1 ? 6 : 0,
           pointBackgroundColor: '#1a7a3c',
           pointStyle: ctx => ctx.dataIndex === N-1 ? 'triangle' : 'circle',
           rotation: 180,
@@ -4549,7 +4587,14 @@ function renderHsiPanel() {
           caretPadding: 20,
           filter: item => !item.dataset.label.startsWith('_') && item.parsed.y !== null,
           callbacks: {
-            label: item => `${item.dataset.label}: ${item.parsed.y?.toFixed(0)}`,
+            label: item => {
+              const l = item.dataset.label;
+              if (l === '預測高位(3σ)') return `預測高(3σ): ${item.parsed.y?.toFixed(0)}`;
+              if (l === '預測高位(2.5σ)') return `預測高(2.5σ): ${item.parsed.y?.toFixed(0)}`;
+              if (l === '預測低位(3σ)') return `預測低(3σ): ${item.parsed.y?.toFixed(0)}`;
+              if (l === '預測低位(2.5σ)') return `預測低(2.5σ): ${item.parsed.y?.toFixed(0)}`;
+              return `${l}: ${item.parsed.y?.toFixed(0)}`;
+            },
             afterBody: items => {
               if (!items.length) return [];
               const i = items[0].dataIndex;
