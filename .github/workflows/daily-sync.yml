@@ -666,7 +666,7 @@ jobs:
 
   # ── Rank history backfill (manual) ───────────────────────────────────────────
   rank-history-backfill:
-    name: Rank history backfill (2026-02-02 to today)
+    name: Rank history backfill (${{ inputs.backfill_date || '2026-02-02' }} to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
     concurrency:
@@ -684,14 +684,51 @@ jobs:
       - run: pip install -r requirements.txt
       - run: playwright install chromium
 
-      - name: Backfill rank_history.json from 2026-02-02
-        run: python main.py --backfill 2026-02-02
-
-      - name: Commit
+      - name: Backfill rank_history.json (commit every 5 trading days)
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
+
+          START_DATE="${{ inputs.backfill_date }}"
+          START_DATE="${START_DATE:-2026-02-02}"
+          echo "Backfilling from $START_DATE to today"
+
+          # Generate list of trading days
+          python3 -c "
+          from datetime import date, timedelta
+          import holidays, sys
+          hk    = holidays.HongKong()
+          start = date.fromisoformat('$START_DATE')
+          end   = date.today()
+          cur   = start
+          days  = []
+          while cur <= end:
+              if cur.weekday() < 5 and cur not in hk:
+                  days.append(cur.isoformat())
+              cur += timedelta(days=1)
+          print('\n'.join(days))
+          sys.stderr.write(f'Generated {len(days)} trading days\n')
+          " > /tmp/trading_days.txt
+
+          COUNT=0
+          while IFS= read -r DAY; do
+            echo "=== Processing $DAY ==="
+            python main.py --date "$DAY" || echo "WARNING: $DAY failed, continuing"
+            COUNT=$((COUNT + 1))
+
+            # Commit every 5 trading days
+            if [ $((COUNT % 5)) -eq 0 ]; then
+              [ -f rank_history.json ] && git add rank_history.json
+              [ -f name_map.json ]     && git add name_map.json
+              git diff --staged --quiet || \
+                (git commit -m "Rank history backfill progress: up to $DAY" && git push)
+              echo "--- Committed progress up to $DAY ---"
+            fi
+          done < /tmp/trading_days.txt
+
+          # Final commit for any remaining days
           [ -f rank_history.json ] && git add rank_history.json
-          [ -f name_map.json ] && git add name_map.json
+          [ -f name_map.json ]     && git add name_map.json
           git diff --staged --quiet || \
-            (git commit -m "Rank history backfill: $(date +'%Y-%m-%d %H:%M')" && git push)
+            (git commit -m "Rank history backfill complete: $(date +'%Y-%m-%d %H:%M')" && git push)
+          echo "Backfill done: $COUNT trading days processed"
