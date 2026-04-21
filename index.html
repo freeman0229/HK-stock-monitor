@@ -4921,18 +4921,19 @@ function stkDrawCharts(series) {
 
   let activeIdx = null;
 
+  const afterFitR = scale => { scale.width = YW; };
+
   const crossPlugin = {
-    id:'stkCross',
-    afterDraw(chart) {
+    afterDatasetsDraw(chart) {
       if (activeIdx === null) return;
-      const {ctx,scales:{x,y}} = chart;
-      if (!x||!y) return;
+      const {ctx, chartArea, scales:{x}} = chart;
+      if (!x || !chartArea) return;
       const xp = x.getPixelForValue(activeIdx);
       ctx.save();
       ctx.setLineDash([4,3]);
       ctx.strokeStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(80,80,80,0.4)';
       ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(xp,chart.chartArea.top); ctx.lineTo(xp,chart.chartArea.bottom); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xp,chartArea.top); ctx.lineTo(xp,chartArea.bottom); ctx.stroke();
       ctx.restore();
     }
   };
@@ -5003,8 +5004,10 @@ function stkDrawCharts(series) {
     }]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{x:xHide,y:{afterFit:afterFitY,
-        ticks:{callback:v=>v+'%',font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}}}}
+      scales:{x:xHide,
+        y:{afterFit:afterFitY, ticks:{callback:v=>v+'%',font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
+        yR:{position:'right', afterFit:afterFitR, ticks:{display:false},grid:{display:false},border:{display:false}},
+      }}
   });
 
   // Panel 2 — Price + VWAP + Volume
@@ -5020,22 +5023,25 @@ function stkDrawCharts(series) {
       plugins:{legend:{display:false},tooltip:{enabled:false}},
       scales:{
         x:xHide,
-        yP:{position:'left', afterFit:afterFitY, ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
-        yV:{position:'right',max:maxVol*4,ticks:{display:false},grid:{display:false},border:{display:false}},
+        yP:{position:'left',  afterFit:afterFitY, ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
+        yV:{position:'right', afterFit:afterFitR, min:0, max:maxVol*4, ticks:{display:false},grid:{display:false},border:{display:false}},
       }}
   });
 
-  // Panel 3 — Top10 + SFC
+  // Panel 3 — Top10 (left) + SFC (right, separate scale)
   const c3 = new Chart(document.getElementById('stkC3'), {
     type:'line', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[
-      {label:'Top10持倉',data:series.top10,borderColor:'#534AB7',borderWidth:1.5,pointRadius:0,tension:0.3,fill:false,spanGaps:false},
-      {label:'SFC賣空',  data:series.sfc,  borderColor:'#c0252d',borderWidth:1.5,borderDash:[4,3],pointRadius:0,tension:0.3,fill:false,spanGaps:false},
+      {label:'Top10持倉', data:series.top10, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, tension:0.3, fill:false, spanGaps:false, yAxisID:'yT'},
+      {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:1.5, borderDash:[4,3], pointRadius:0, tension:0.3, fill:false, spanGaps:false, yAxisID:'yS'},
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{x:xShow,y:{afterFit:afterFitY,
-        ticks:{callback:v=>v+'%',font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}}}}
+      scales:{
+        x:xShow,
+        yT:{position:'left',  afterFit:afterFitY, ticks:{callback:v=>v+'%',font:{size:10},color:'#534AB7'},grid:{color:gc},border:{display:false}},
+        yS:{position:'right', afterFit:afterFitR, ticks:{callback:v=>v+'%',font:{size:9}, color:'rgba(192,37,45,0.7)'},grid:{display:false},border:{display:false}},
+      }}
   });
 
   stkCharts = [c1, c2, c3];
