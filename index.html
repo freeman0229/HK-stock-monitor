@@ -2446,9 +2446,11 @@ function _sfcWireTip(canvas, pts, xFn, yFn, stepW, labelFn) {
       });
       if (!best) { tip.style.display='none'; return; }
       tip.innerHTML = canvas._sfcLblFn(best);
-      const px = typeof canvas._sfcXFn === 'function' ? canvas._sfcXFn(best) : best.x;
-      tip.style.left    = Math.min(px + 8, canvas.width - 220) + 'px';
-      tip.style.top     = Math.max(my - 50, 4) + 'px';
+      const tipW = tip.offsetWidth || 200;
+      const tx = Math.min(e.clientX + 14, window.innerWidth - tipW - 8);
+      const ty = Math.max(e.clientY - 50, 4);
+      tip.style.left    = tx + 'px';
+      tip.style.top     = ty + 'px';
       tip.style.display = 'block';
     });
     canvas.addEventListener('mouseleave', () => { tip.style.display='none'; });
@@ -5024,7 +5026,17 @@ function stkDrawCharts(series) {
       scales:{
         x:xHide,
         yP:{position:'left',  afterFit:afterFitY, ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
-        yV:{position:'right', afterFit:afterFitR, min:0, max:maxVol*4, ticks:{display:false},grid:{display:false},border:{display:false}},
+        yV:{position:'right', afterFit:afterFitR, min:0, max:maxVol*4,
+          ticks:{font:{size:9},color:'rgba(128,128,128,0.6)',maxTicksLimit:4,
+            callback: v => {
+              if (v === 0) return '0';
+              if (v >= 1e9) return (v/1e9).toFixed(1)+'B';
+              if (v >= 1e6) return (v/1e6).toFixed(0)+'M';
+              if (v >= 1e3) return (v/1e3).toFixed(0)+'K';
+              return v;
+            }
+          },
+          grid:{display:false},border:{display:false}},
       }}
   });
 
@@ -5039,8 +5051,8 @@ function stkDrawCharts(series) {
       plugins:{legend:{display:false},tooltip:{enabled:false}},
       scales:{
         x:xShow,
-        yT:{position:'left',  afterFit:afterFitY, ticks:{callback:v=>v+'%',font:{size:10},color:'#534AB7'},grid:{color:gc},border:{display:false}},
-        yS:{position:'right', afterFit:afterFitR, ticks:{callback:v=>v+'%',font:{size:9}, color:'rgba(192,37,45,0.7)'},grid:{display:false},border:{display:false}},
+        yT:{position:'left',  afterFit:afterFitY, ticks:{callback:v=>Number(v).toFixed(1)+'%',font:{size:10},color:'#534AB7',maxTicksLimit:5},grid:{color:gc},border:{display:false}},
+        yS:{position:'right', afterFit:afterFitR, ticks:{callback:v=>Number(v).toFixed(1)+'%',font:{size:9}, color:'rgba(192,37,45,0.7)',maxTicksLimit:4},grid:{display:false},border:{display:false}},
       }}
   });
 
