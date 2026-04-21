@@ -75,6 +75,15 @@ jobs:
       - name: Update CCASS southbound holdings (today)
         run: python ccass_library.py --update --fix-names
 
+      - name: Download SDW DB from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "Warning: ccass_sdw.db not found in R2 — SDW holders will be empty"
+
       - name: Run daily analysis
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
