@@ -707,7 +707,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     sfc_map = {}
     if _SFC_AVAILABLE:
         try:
-            _sfc_fridays = [d for d in sfc_fridays() if d <= trading_day.date()]
+            _sfc_fridays = [d for d in sfc_fridays() if d is not None and d <= trading_day.date()]
             if _sfc_fridays:
                 _latest_sfc_ds = max(_sfc_fridays).isoformat()
                 for code in stock_codes:
