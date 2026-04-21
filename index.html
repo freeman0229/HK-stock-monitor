@@ -1000,9 +1000,11 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <div class="chart-placeholder">
     <div class="cai-controls">
       <label>股票代號</label>
-      <select id="cai-stock">
-        <option value="">-- 選擇股票 --</option>
-      </select>
+      <div style="position:relative;display:inline-block;">
+        <input type="text" id="cai-search" placeholder="輸入代號或名稱…"
+          style="width:180px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;">
+        <div id="cai-dropdown" style="display:none;position:absolute;top:100%;left:0;width:240px;max-height:220px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:999;font-size:13px;"></div>
+      </div>
       <label>通道週期</label>
       <select id="cai-period">
         <option value="20">20日</option>
@@ -1043,8 +1045,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <div id="hsi-content" style="display:none">
     <div class="summary-bar">
       <div class="sum-card"><div class="sum-label">最新收市</div><div class="sum-val" id="hsi-close">--</div><div class="sum-sub" id="hsi-range-val">--</div></div>
-      <div class="sum-card"><div class="sum-label">預測下週高位 (均值3σ)</div><div class="sum-val up" id="hsi-ph30">--</div><div class="sum-sub" id="hsi-ph30-sub">&nbsp;</div></div>
-      <div class="sum-card"><div class="sum-label">預測下週低位 (均值3σ)</div><div class="sum-val dn" id="hsi-pl30">--</div><div class="sum-sub" id="hsi-pl30-sub">&nbsp;</div></div>
+      <div class="sum-card"><div class="sum-label">預測下週高位</div><div class="sum-val up" id="hsi-ph30">--</div><div class="sum-sub" id="hsi-ph30-sub">&nbsp;</div></div>
+      <div class="sum-card"><div class="sum-label">預測下週低位</div><div class="sum-val dn" id="hsi-pl30">--</div><div class="sum-sub" id="hsi-pl30-sub">&nbsp;</div></div>
     </div>
 
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
@@ -2357,7 +2359,7 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
   function _getOrCreateTip(cvs) {
     if (!cvs._sfcTip) {
       const tip = document.createElement('div');
-      tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
+      tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
         'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
       cvs.parentElement.style.position = 'relative';
       cvs.parentElement.appendChild(tip);
@@ -3813,28 +3815,63 @@ async function updateCaiCards() {
   } catch(e) { console.warn('updateCaiCards error:', e); }
 }
 
+function caiSetStock(code) {
+  const s = allStocks.find(x => x.code === code) || allStocks.find(x => String(parseInt(x.code)) === String(parseInt(code)));
+  if (!s) return;
+  document.getElementById('cai-search').value = s.code + ' ' + s.name_chi;
+  document.getElementById('cai-dropdown').style.display = 'none';
+  const caiActive = document.querySelector('.tab-btn[data-tab="cai"]')?.classList.contains('active');
+  if (caiActive) { drawCai(); updateCaiCards(); setTimeout(() => caiCharts.forEach(c => c?.resize()), 50); }
+}
+
+function caiBuildDropdown(q) {
+  const dd = document.getElementById('cai-dropdown');
+  const term = q.trim().toLowerCase();
+  const matches = !term ? allStocks.slice(0, 50) :
+    allStocks.filter(s =>
+      s.code.includes(term) ||
+      (s.name_chi || '').toLowerCase().includes(term) ||
+      (s.name_eng || '').toLowerCase().includes(term)
+    ).slice(0, 50);
+  if (!matches.length) { dd.style.display = 'none'; return; }
+  dd.innerHTML = matches.map(s =>
+    `<div style="padding:6px 10px;cursor:pointer;" onmousedown="caiSetStock('${s.code}')"
+      onmouseover="this.style.background='var(--hover)'" onmouseout="this.style.background=''">
+      <span style="color:var(--muted);font-size:11px;margin-right:6px">${s.code}</span>${s.name_chi}
+    </div>`
+  ).join('');
+  dd.style.display = 'block';
+}
+
+function caiGetSelectedCode() {
+  const val = document.getElementById('cai-search').value.trim();
+  const code = val.split(' ')[0];
+  const s = allStocks.find(x => x.code === code || String(parseInt(x.code)) === String(parseInt(code)));
+  return s ? s.code : (allStocks[0]?.code || '');
+}
+
 function renderCaiStockSelect() {
-  const sel = document.getElementById('cai-stock');
-  sel.innerHTML = '<option value="">-- 選擇股票 --</option>';
-  allStocks.forEach(s => {
-    const opt = document.createElement('option');
-    opt.value = s.code;
-    opt.textContent = s.code + ' ' + s.name_chi;
-    sel.appendChild(opt);
+  const inp = document.getElementById('cai-search');
+  const preferred = allStocks.find(s => s.code === '02800' || s.code === '2800' || String(parseInt(s.code)) === '2800');
+  const target = preferred || allStocks[0];
+  if (target) inp.value = target.code + ' ' + target.name_chi;
+
+  inp.addEventListener('input',  () => caiBuildDropdown(inp.value));
+  inp.addEventListener('focus',  () => caiBuildDropdown(inp.value));
+  inp.addEventListener('blur',   () => setTimeout(() => { document.getElementById('cai-dropdown').style.display = 'none'; }, 150));
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const code = caiGetSelectedCode();
+      if (code) caiSetStock(code);
+    }
   });
-  if (allStocks.length) {
-    // Prefer 02800 / 2800 regardless of zero-padding format in allStocks
-    const preferred = allStocks.find(s => s.code === '02800' || s.code === '2800' || s.code === '00700' || String(parseInt(s.code)) === '2800');
-    const target = preferred ? preferred.code : allStocks[0].code;
-    sel.value = target;
-    // Only draw if the cai tab is currently active — otherwise drawCai on tab click
-    const caiActive = document.querySelector('.tab-btn[data-tab="cai"]')?.classList.contains('active');
-    if (caiActive) drawCai();
-  }
-  sel.onchange = drawCai;
+
   document.getElementById('cai-period').onchange = () => { drawCai(); updateCaiCards(); };
-  document.getElementById('cai-mult').onchange = () => { drawCai(); updateCaiCards(); };
-  document.getElementById('cai-mult').oninput = () => { drawCai(); updateCaiCards(); };
+  document.getElementById('cai-mult').onchange   = () => { drawCai(); updateCaiCards(); };
+  document.getElementById('cai-mult').oninput    = () => { drawCai(); updateCaiCards(); };
+
+  const caiActive = document.querySelector('.tab-btn[data-tab="cai"]')?.classList.contains('active');
+  if (caiActive) drawCai();
 }
 
 let caiCharts = [];
@@ -3873,7 +3910,7 @@ function calcEma(data, period) {
 }
 
 async function drawCai() {
-  const code   = document.getElementById('cai-stock').value;
+  const code   = caiGetSelectedCode();
   const period = parseInt(document.getElementById('cai-period').value);
   const mult   = parseFloat(document.getElementById('cai-mult').value) || 2;
 
@@ -4357,10 +4394,8 @@ function renderHsiPanel() {
   const pl30avg = (pl30v + pl30o) / 2;
   const ph25avg = (ph25v + ph25o) / 2;
   const pl25avg = (pl25v + pl25o) / 2;
-  document.getElementById('hsi-ph30').textContent      = ph30avg.toFixed(0);
-  document.getElementById('hsi-ph30-sub').textContent  = '保守: ' + ph25avg.toFixed(0);
-  document.getElementById('hsi-pl30').textContent      = pl30avg.toFixed(0);
-  document.getElementById('hsi-pl30-sub').textContent  = '保守: ' + pl25avg.toFixed(0);
+  document.getElementById('hsi-ph30').textContent      = ph25avg.toFixed(0);
+  document.getElementById('hsi-pl30').textContent      = pl25avg.toFixed(0);
 
   // Set default 'to' date to latest
   const toEl = document.getElementById('hsi-to');
