@@ -86,9 +86,11 @@ _HK_HOL_HARDCODED = {
 def is_trading_day(d: date) -> bool:
     if d.weekday() >= 5:
         return False
+    if d.isoformat() in _HK_HOL_HARDCODED:
+        return False
     if _USE_HOL:
         return d not in _HK_HOLIDAYS
-    return d.isoformat() not in _HK_HOL_HARDCODED
+    return True
 
 def all_trading_days(start: date, end: date) -> list:
     out, d = [], start
