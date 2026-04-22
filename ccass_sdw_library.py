@@ -93,7 +93,7 @@ CIRCUIT_BREAKER_LIMIT  : int   = 5     # consecutive errors per worker before gi
 MAX_FETCH_ATTEMPTS     : int   = 3     # retries per individual stock fetch
 DIRECT_FAIL_THRESHOLD  : int   = 3     # consecutive non-transient failures before marking browser dead
 NETWORK_FAIL_THRESHOLD : int   = 8     # consecutive transient failures before marking browser dead
-WORKER_TIMEOUT_SEC     : int   = 3600  # hard wall-clock cap per worker (1 hour)
+WORKER_TIMEOUT_SEC     : int   = int(os.getenv("SDW_WORKER_TIMEOUT", "5400"))  # 90 min wall-clock cap per worker
 MAX_REQUEUE            : int   = 2     # max times a dead-browser code can be requeued
 
 # Error classification for dead-browser logic
@@ -1745,15 +1745,21 @@ def build_clean(
                 total_network += w_stats.network
                 all_results.extend(w_results)
 
-        # Single batched write after all workers finish — eliminates concurrent
-        # writer contention on SQLite even under WAL mode.
-        if all_results:
-            _save_results(all_results, ds, path)
-            _update_known_empty(all_results, ds, path)
+                # Save this worker's results immediately — preserves progress
+                # if a subsequent worker times out or the job is cancelled
+                if w_results:
+                    log.info(
+                        "Worker %d done — saving %d results to DB immediately",
+                        wid, len([r for r in w_results if r[1].participants]),
+                    )
+                    _save_results(w_results, ds, path)
+                    _update_known_empty(w_results, ds, path)
+                    successful_w = [c for c, e in w_results if e.participants]
+                    _clear_blocked_codes(successful_w, blocked_codes, ds, path)
 
-            # Clear block records for codes that fetched successfully this date
-            successful = [c for c, e in all_results if e.participants]
-            _clear_blocked_codes(successful, blocked_codes, ds, path)
+        # All workers done — log total saved (already written above per-worker)
+        if not all_results:
+            log.info("No results to save for %s", ds)
 
         # Flush updated blocked_codes to DB so next CI run starts with
         # current state rather than rediscovering blocks from scratch.
