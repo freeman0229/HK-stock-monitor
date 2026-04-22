@@ -6,6 +6,7 @@ on:
     - cron: '0 14 * * 1-5'   # 14:00 UTC / 22:00 HKT (Mon–Fri) — SFC check
     - cron: '0 13 * * 5'   # 13:00 UTC / 21:00 HKT (Friday)  — SDW weekly run 1
     - cron: '0 15 * * 5'   # 15:00 UTC / 23:00 HKT (Friday)  — SDW weekly run 2
+    - cron: '0 17 * * 5'   # 17:00 UTC / 01:00 HKT (Saturday) — SDW weekly run 3
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
     - cron: '0 3 * * 6'       # 03:00 UTC / 11:00 HKT (Saturday)  — HSI weekly update
   workflow_dispatch:
@@ -272,14 +273,14 @@ jobs:
   sdw-weekly:
     name: SDW weekly update → ccass_sdw.db
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     concurrency:
       group: sdw-weekly-${{ github.ref }}
       cancel-in-progress: false
     permissions:
       contents: write
     if: |
-      (github.event_name == 'schedule' && (github.event.schedule == '0 13 * * 5' || github.event.schedule == '0 15 * * 5')) ||
+      (github.event_name == 'schedule' && (github.event.schedule == '0 13 * * 5' || github.event.schedule == '0 15 * * 5' || github.event.schedule == '0 17 * * 5')) ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-weekly')
 
     steps:
@@ -300,6 +301,7 @@ jobs:
       - name: Fetch latest Friday SDW data
         env:
           SDW_WORKERS: "2"
+          SDW_WORKER_TIMEOUT: "5400"
         run: python ccass_sdw_library.py --update
       - name: Upload DB to R2
         if: always()
