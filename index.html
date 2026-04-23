@@ -1221,7 +1221,8 @@ const isValidName = s => {
 // ── Load data.json ────────────────────────────────────────────────────────
 const CACHE_KEY       = 'hk_dashboard_data_v5';
 const CHART_CACHE_KEY = 'hk_chart_data_v5';
-const CACHE_TTL_MS    = 4 * 60 * 60 * 1000; // 4 hours — stale after this
+// CACHE_TTL_MS / _isCacheValid removed — cache is now kept indefinitely as
+// last-known-good data, shown until a fresh data.json fetch succeeds.
 
 // Restore last chart data immediately so chart renders on first paint
 try {
@@ -1236,12 +1237,6 @@ try {
   }
 } catch(e) {}
 
-function _isCacheValid(d) {
-  if (!d || !d.update_time) return false;
-  const updated = new Date(d.update_time.replace(' ', 'T') + '+08:00');
-  return (Date.now() - updated.getTime()) < CACHE_TTL_MS;
-}
-
 function applyData(d, stale) {
   allStocks  = (d.stocks || []).map(s => ({
     ...s,
@@ -1253,7 +1248,7 @@ function applyData(d, stale) {
   updateTime = d.update_time || '';
   sbDate     = d.sb_date || '';
   sbSummary  = d.sb_summary || {};
-  const staleMark = stale ? ' ⏳' : '';
+  const staleMark = stale ? ' (最後數據)' : '';
   document.getElementById('hdr-time').textContent =
     updateTime ? '更新: ' + updateTime + staleMark : '';
 
@@ -1282,15 +1277,15 @@ async function loadData() {
   const dot = document.querySelector('.live-dot');
   if (dot) dot.style.animationPlayState = 'running';
 
-  // 1. Show cached data immediately if available, valid, and not too stale
+  // 1. Show cached data immediately if available (valid or stale — always prefer real data)
+  let staleCache = null;
   try {
     const cached = localStorage.getItem(CACHE_KEY);
     if (cached) {
       const d = JSON.parse(cached);
-      if (d.stocks && d.stocks.length > 0 && _isCacheValid(d)) {
+      if (d.stocks && d.stocks.length > 0) {
+        staleCache = d; // keep reference in case fetch fails
         applyData(d, true);
-      } else {
-        localStorage.removeItem(CACHE_KEY); // expired or invalid — discard
       }
     }
   } catch(e) { localStorage.removeItem(CACHE_KEY); }
@@ -1304,10 +1299,15 @@ async function loadData() {
     applyData(d, false);
   } catch(e) {
     if (!allStocks.length) {
-      allStocks  = generateMockData();
-      updateTime = new Date().toLocaleString('zh-HK');
-      document.getElementById('hdr-time').textContent = '更新: ' + updateTime + ' (示範)';
-      renderAll();
+      if (staleCache) {
+        // Keep last known real data — just update the timestamp label
+        applyData(staleCache, true);
+      } else {
+        allStocks  = generateMockData();
+        updateTime = new Date().toLocaleString('zh-HK');
+        document.getElementById('hdr-time').textContent = '更新: ' + updateTime + ' (離線)';
+        renderAll();
+      }
     }
   } finally {
     if (dot) dot.style.animationPlayState = 'paused';
@@ -1398,6 +1398,66 @@ function renderAll() {
   if (sdwLoaded) sdwComputeSummary();
   renderCaiStockSelect();
   updateTicker();
+}
+
+// ── Table sort wiring ─────────────────────────────────────────────────────────
+// Wires click-to-sort on any table whose <th> elements carry data-col attributes.
+// sortState: { col, dir } persists per table so repeated clicks toggle asc/desc.
+// getValue(row, col): extracts a numeric sort key from a rendered <tr> element
+//   for columns that aren't direct stock fields (e.g. sb_pct which is computed).
+//
+// Usage: wireTableSort('tbl-bshui', () => renderBshui())
+//        wireTableSort('tbl-short', () => renderShort())
+// The render function is called with the active sort so it can re-render sorted.
+
+const _tblSortState = {};   // { tableId: { col, dir } }
+
+function wireTableSort(tableId, renderFn) {
+  const tbl = document.getElementById(tableId);
+  if (!tbl || tbl._sortWired) return;
+  tbl._sortWired = true;
+  tbl.querySelectorAll('thead th[data-col]').forEach(th => {
+    th.style.cursor = 'pointer';
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      const cur = _tblSortState[tableId] || { col: null, dir: 'desc' };
+      const dir = cur.col === col && cur.dir === 'desc' ? 'asc' : 'desc';
+      _tblSortState[tableId] = { col, dir };
+      // Update arrow classes
+      tbl.querySelectorAll('thead th').forEach(h => {
+        h.classList.remove('sort-asc', 'sort-desc');
+      });
+      th.classList.add(dir === 'asc' ? 'sort-asc' : 'sort-desc');
+      renderFn();
+    });
+  });
+}
+
+// Returns current sort state for a table — used by render functions
+function getTableSort(tableId, defaultCol = 'turnover') {
+  return _tblSortState[tableId] || { col: defaultCol, dir: 'desc' };
+}
+
+// Generic numeric sort comparator for a stock field
+function stockSortCmp(a, b, col, dir) {
+  let av, bv;
+  // Computed fields not directly on the stock object
+  if (col === 'sb_pct') {
+    const sbTotalA = a.sb_total || ((a.sb_buy||0)+(a.sb_sell||0));
+    const sbTotalB = b.sb_total || ((b.sb_buy||0)+(b.sb_sell||0));
+    av = a.turnover > 0 ? sbTotalA / a.turnover : 0;
+    bv = b.turnover > 0 ? sbTotalB / b.turnover : 0;
+  } else if (col === 'ccass_consec') {
+    av = Math.abs(a.ccass_consec || 0);
+    bv = Math.abs(b.ccass_consec || 0);
+  } else if (col === 'short_dev') {
+    av = (a.short_ratio || 0) - (a.short_avg || 0);
+    bv = (b.short_ratio || 0) - (b.short_avg || 0);
+  } else {
+    av = a[col] ?? 0;
+    bv = b[col] ?? 0;
+  }
+  return dir === 'asc' ? av - bv : bv - av;
 }
 
 function toggleShortTable() {
@@ -1583,9 +1643,13 @@ function drawSbChart(sorted) {
 function renderBshui() {
   // Only stocks with SB flow today — sorted by overall market turnover high→low.
   // This answers: "of the stocks mainland money touched, which were biggest by tape?"
-  const sorted = [...allStocks]
-    .filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0)
-    .sort((a, b) => (b.turnover || 0) - (a.turnover || 0));
+  const base = [...allStocks]
+    .filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0);
+
+  // Apply active table sort (defaults to turnover desc if no header clicked yet)
+  const { col, dir } = getTableSort('tbl-bshui', 'turnover');
+  const sorted = base.sort((a, b) => stockSortCmp(a, b, col, dir));
+
   console.log(`[bshui] allStocks=${allStocks.length} sb_active=${sorted.length}`);
   const display = sorted;
   const countEl = document.getElementById('sb-stock-count');
@@ -1611,8 +1675,6 @@ function renderBshui() {
   if (sbLabel) {
     if (sbDate && sbDate !== todayStr) {
       sbLabel.innerHTML = `按總成交額排序 ｜ <span style="color:var(--gold)">⏳ 顯示 ${sbDate} 數據（今日數據尚未發布）</span>`;
-    } else if (sbDate) {
-      sbLabel.textContent = `按總成交額排序 ｜ 北水佔比 = 北水買入及賣出 ÷ 成交金額 ｜ ${sbDate}`;
     } else if (sbDate) {
       sbLabel.textContent = `按總成交額排序 ｜ 北水佔比 = 北水買入及賣出 ÷ 成交金額 ｜ ${sbDate}`;
     } else {
@@ -1744,6 +1806,9 @@ function renderBshui() {
   }).join('');
   const bodyTop = document.getElementById('body-ccass-top');
   if (bodyTop) bodyTop.innerHTML = ccassHtml || '<tr><td colspan="3" class="loading-box">—</td></tr>';
+
+  // Wire sort headers (idempotent — safe to call after every render)
+  wireTableSort('tbl-bshui', renderBshui);
 }
 
 // ══ SFC 累積沽空持倉趨勢 ═══════════════════════════════════════════════════════
@@ -2588,11 +2653,16 @@ function renderShort() {
     return { ...s, sfc_hkd: rec.hkd || 0, sfc_sh: rec.sh || 0 };
   });
 
-  // Sort by Aggregated Reportable Short Positions (HK$) — falls back to short_ratio
+  // Sort: respect active table sort; default to sfc_hkd desc (falls back to short_ratio)
+  const { col: sortCol, dir: sortDir } = getTableSort('tbl-short', 'sfc_hkd');
   const sorted = [...augmented].sort((a, b) => {
-    const aHkd = a.sfc_hkd || 0, bHkd = b.sfc_hkd || 0;
-    if (bHkd !== aHkd) return bHkd - aHkd;
-    return b.short_ratio - a.short_ratio;
+    // For default sfc_hkd sort, keep the two-level fallback to short_ratio
+    if (sortCol === 'sfc_hkd' && sortDir === 'desc') {
+      const aHkd = a.sfc_hkd || 0, bHkd = b.sfc_hkd || 0;
+      if (bHkd !== aHkd) return bHkd - aHkd;
+      return b.short_ratio - a.short_ratio;
+    }
+    return stockSortCmp(a, b, sortCol, sortDir);
   });
   const avg = sorted.reduce((a,s) => a + s.short_ratio, 0) / sorted.length;
 
@@ -2684,6 +2754,9 @@ function renderShort() {
     </tr>`;
   }).join('');
   document.getElementById('body-short').innerHTML = html;
+
+  // Wire sort headers (idempotent — safe to call after every render)
+  wireTableSort('tbl-short', renderShort);
 }
 
 // ── Short risk scatter map ────────────────────────────────────────────
@@ -4269,12 +4342,12 @@ async function updateTicker() {
   }
 }
 
-// Fetch on load, then refresh every hour
+// Fetch on load, then refresh every minute (data.json refreshes every 5 min)
 updateTicker();
-setInterval(updateTicker, 3600000);
+setInterval(updateTicker, 60 * 1000);
 
 // ── Boot ──────────────────────────────────────────────────────────────────
-document.getElementById('hdr-time').textContent = new Date().toLocaleString('zh-HK');
+// Note: hdr-time is set by applyData() / loadData() — do NOT overwrite it here
 if (lastChartData.length) setTimeout(() => drawSbChart(lastChartData), 100);
 loadData();
 // Re-fetch data.json every 5 minutes
