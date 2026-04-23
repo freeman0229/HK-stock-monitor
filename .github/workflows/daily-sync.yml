@@ -248,7 +248,19 @@ jobs:
       - name: Full SDW backfill → ccass_sdw.db
         env:
           SDW_WORKERS: "2"
-        run: python ccass_sdw_library.py
+          SDW_WORKER_TIMEOUT: "5400"
+        run: |
+          # Upload DB to R2 on exit (including cancellation via SIGTERM)
+          _upload_db() {
+            echo "Uploading DB to R2 on exit..."
+            [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
+              --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || true
+          }
+          trap _upload_db EXIT
+          export AWS_ACCESS_KEY_ID="${{ secrets.R2_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.R2_SECRET_ACCESS_KEY }}"
+          export AWS_DEFAULT_REGION="auto"
+          python ccass_sdw_library.py
       - name: Upload DB to R2
         if: always()
         env:
@@ -302,7 +314,17 @@ jobs:
         env:
           SDW_WORKERS: "2"
           SDW_WORKER_TIMEOUT: "5400"
-        run: python ccass_sdw_library.py --update
+        run: |
+          _upload_db() {
+            echo "Uploading DB to R2 on exit..."
+            [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
+              --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || true
+          }
+          trap _upload_db EXIT
+          export AWS_ACCESS_KEY_ID="${{ secrets.R2_ACCESS_KEY_ID }}"
+          export AWS_SECRET_ACCESS_KEY="${{ secrets.R2_SECRET_ACCESS_KEY }}"
+          export AWS_DEFAULT_REGION="auto"
+          python ccass_sdw_library.py --update
       - name: Upload DB to R2
         if: always()
         env:
