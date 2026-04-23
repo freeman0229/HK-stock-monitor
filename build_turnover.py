@@ -163,7 +163,7 @@ def fetch(d: date) -> str | None:
 #
 # Source column order (12 columns):
 #   [*/%] CODE  NAME_EN  NAME_ZH  CUR  PRV  BID  ASK  HIGH  LOW  CLOSING  SHARES  TURNOVER
-#   g1           g2       g3       skip g4   skip skip skip  skip g5       g6      g7
+#   g1           g2       g3       skip skip skip skip g4    g5   g6       g7      g8
 #
 # * or % may appear before CODE — stripped by the pattern.
 # TRADING SUSPENDED / 暫停買賣 lines have no numeric data — skipped before regex.
@@ -177,11 +177,11 @@ _PAT = re.compile(
     r"[\d,.NA-]+\s+"                       # BID  (skip)
     r"[\d,.NA-]+\s+"                       # ASK  (skip)
     r"(?:[\d,.NA-]+\s+)?"                  # optional extra col (some ETF/warrant rows have 9 numeric fields)
-    r"[\d,.NA-]+\s+"                       # 最高 / HIGH  (skip)
-    r"[\d,.NA-]+\s+"                       # 最低 / LOW   (skip)
-    r"([\d,.NA-]+)\s+"                     # g4  收市 / CLOSING  (may be '-' when no trading)
-    r"([\d,]+)\s+"                         # g5  成交股數 → vol
-    r"([\d,]+)\s*$"                        # g6  成交金額 → tv
+    r"([\d,.NA-]+)\s+"                     # g4  最高 / HIGH
+    r"([\d,.NA-]+)\s+"                     # g5  最低 / LOW
+    r"([\d,.NA-]+)\s+"                     # g6  收市 / CLOSING  (may be '-' when no trading)
+    r"([\d,]+)\s+"                         # g7  成交股數 → vol
+    r"([\d,]+)\s*$"                        # g8  成交金額 → tv
 )
 
 def _num(s: str) -> float:
@@ -232,9 +232,11 @@ def parse(body: str) -> dict:
         # Strip ◆ bullet markers used in some ETF names (Big5 encoding artifact)
         name_zh_raw = re.sub(r"^◆+|◆+$", "", name_zh_raw).strip()
         name_zh     = name_zh_raw if _has_cjk(name_zh_raw) else name_en
-        close       = _num(m.group(4))
-        vol         = int(m.group(5).replace(",", ""))
-        tv          = int(m.group(6).replace(",", ""))
+        high        = _num(m.group(4))
+        low         = _num(m.group(5))
+        close       = _num(m.group(6))
+        vol         = int(m.group(7).replace(",", ""))
+        tv          = int(m.group(8).replace(",", ""))
         if vol <= 0:
             continue
         # Keep higher-vol record if code appears twice
@@ -243,8 +245,8 @@ def parse(body: str) -> dict:
                 "name_en":    name_en,
                 "name_zh":    name_zh,
                 "prev_close": 0.0,
-                "high":       0.0,
-                "low":        0.0,
+                "high":       high,
+                "low":        low,
                 "close":      close,
                 "vol":        vol,
                 "tv":         tv,

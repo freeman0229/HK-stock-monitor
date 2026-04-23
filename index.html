@@ -1219,15 +1219,15 @@ const isValidName = s => {
 };
 
 // ── Load data.json ────────────────────────────────────────────────────────
-const CACHE_KEY = 'hk_dashboard_data_v4';   // v3: SB-only filter restored
-const CHART_CACHE_KEY = 'hk_chart_data_v4';  // v3: all stocks, no SB filter
+const CACHE_KEY       = 'hk_dashboard_data_v5';
+const CHART_CACHE_KEY = 'hk_chart_data_v5';
+const CACHE_TTL_MS    = 4 * 60 * 60 * 1000; // 4 hours — stale after this
 
 // Restore last chart data immediately so chart renders on first paint
 try {
   const cc = localStorage.getItem(CHART_CACHE_KEY);
   if (cc) {
     const parsed = JSON.parse(cc);
-    // Only use cache if it has real non-zero data
     if (parsed.length && parsed.some(s => s.sb_buy > 0 || s.sb_sell > 0)) {
       lastChartData = parsed;
     } else {
@@ -1236,14 +1236,18 @@ try {
   }
 } catch(e) {}
 
+function _isCacheValid(d) {
+  if (!d || !d.update_time) return false;
+  const updated = new Date(d.update_time.replace(' ', 'T') + '+08:00');
+  return (Date.now() - updated.getTime()) < CACHE_TTL_MS;
+}
+
 function applyData(d, stale) {
   allStocks  = (d.stocks || []).map(s => ({
     ...s,
     name_chi:    cleanName(s.name_chi),
     name:        cleanName(s.name),
-    // main.py writes short_avg5 — alias to short_avg for frontend consistency
     short_avg:   s.short_avg  || s.short_avg5 || 0,
-    // Cap short_ratio at 100% — values above indicate near-zero traded volume
     short_ratio: Math.min(s.short_ratio || 0, 100),
   }));
   updateTime = d.update_time || '';
@@ -1252,6 +1256,14 @@ function applyData(d, stale) {
   const staleMark = stale ? ' ⏳' : '';
   document.getElementById('hdr-time').textContent =
     updateTime ? '更新: ' + updateTime + staleMark : '';
+
+  // Reset SDW state so fresh data reseeds correctly
+  if (!stale) {
+    sdwLoaded = false;
+    sdwData   = {};
+    sdwDates  = [];
+    stkRankCache = null;
+  }
 
   // Data sanity check
   const sbStocks = allStocks.filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0);
@@ -1270,14 +1282,18 @@ async function loadData() {
   const dot = document.querySelector('.live-dot');
   if (dot) dot.style.animationPlayState = 'running';
 
-  // 1. Show cached data immediately if available and valid
+  // 1. Show cached data immediately if available, valid, and not too stale
   try {
     const cached = localStorage.getItem(CACHE_KEY);
     if (cached) {
       const d = JSON.parse(cached);
-      if (d.stocks && d.stocks.length > 0) applyData(d, true);
+      if (d.stocks && d.stocks.length > 0 && _isCacheValid(d)) {
+        applyData(d, true);
+      } else {
+        localStorage.removeItem(CACHE_KEY); // expired or invalid — discard
+      }
     }
-  } catch(e) { /* ignore bad cache */ }
+  } catch(e) { localStorage.removeItem(CACHE_KEY); }
 
   // 2. Fetch fresh data.json
   try {
