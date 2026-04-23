@@ -1298,6 +1298,7 @@ async function loadData() {
     localStorage.setItem(CACHE_KEY, JSON.stringify(d));
     applyData(d, false);
   } catch(e) {
+    console.error('[loadData] fetch failed:', e);
     if (!allStocks.length) {
       if (staleCache) {
         // Keep last known real data — just update the timestamp label
@@ -4940,8 +4941,9 @@ async function stkEnsureSdw(code5) {
 // ── Data assembly ─────────────────────────────────────────────────────────────
 async function stkBuildSeries(code5, fromDs, toDs) {
   await stkEnsureRankHistory();
+  const currentYear = new Date().getFullYear();
   const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
-    .flatMap(y => [y, y+1]))];
+    .flatMap(y => [y, y+1]).filter(y => y <= currentYear))];
   for (const y of years) await stkEnsureSfc(y);
   await stkEnsureSdw(code5);
 
