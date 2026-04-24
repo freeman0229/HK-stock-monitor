@@ -1142,6 +1142,8 @@ let updateTime = '';
 let sbDate = '';          // date of southbound data (may be yesterday)
 let sbSummary = {};       // market-wide SSE+SZSE totals from sc_top10_library
 let lastChartData = [];   // cache last good chart render
+let northboundFlow = [];  // Source 1: sc_top10 raw — 北水淨流入 / 個股明細 (unfiltered)
+let ccassHoldings  = [];  // Source 2: mutualmarket raw — 北水持股比例 (unfiltered)
 
 // ── Tabs ────────────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -1178,8 +1180,10 @@ const elHtml = (id, v) => { const e = document.getElementById(id); if (e) e.inne
 
 function insightBadge(s) {
   if (!s) return '<span class="na-txt">—</span>';
-  const up = ['🔥','🐉','⭐','🎯','📊','🏦'].some(e => s.startsWith(e));
-  const dn = ['⚠️','⚠','🚨','📉','❄'].some(e => s.startsWith(e));
+  // 📈 換手急升 / 🔼 換手上升 / 🏦 北水增持|大戶增持 / 🔥 挾倉風險 / 🐉 異常亢奮 → bullish (red)
+  const up = ['🔥','🐉','⭐','🎯','🏦','📈','🔼'].some(e => s.startsWith(e));
+  // ⚠️ 沽空倉位急增 / 🚨 北水流出|不尋常沽空 / 📉 空頭平倉 / 📊 沽空倉位大減 → bearish (green)
+  const dn = ['⚠️','⚠','🚨','📉','❄','📊'].some(e => s.startsWith(e));
   const cls = up ? 'ins-buy' : (dn ? 'ins-sell' : 'ins-warn');
   return `<span class="insight ${cls}">${s}</span>`;
 }
@@ -1248,6 +1252,32 @@ function applyData(d, stale) {
   updateTime = d.update_time || '';
   sbDate     = d.sb_date || '';
   sbSummary  = d.sb_summary || {};
+
+  // ── Isolated sources — read directly, no universe filtering ──────────────
+  // Source 1: sc_top10_library → 北水淨流入 / 個股明細
+  northboundFlow = (d.northbound_flow || []).map(s => ({
+    ...s,
+    name_chi: cleanName(s.name_chi),
+    name:     cleanName(s.name),
+  }));
+  // Fallback: if data.json is from an older run that doesn't have northbound_flow yet,
+  // reconstruct from allStocks (stocks with sb_buy/sell > 0). Remove once all runs
+  // have been updated.
+  if (!northboundFlow.length) {
+    northboundFlow = allStocks.filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0);
+  }
+
+  // Source 2: mutualmarket ?t=hk → 北水持股比例
+  ccassHoldings = (d.ccass_holdings || []).map(s => ({
+    ...s,
+    name_chi: cleanName(s.name_chi),
+  }));
+  // Fallback: reconstruct from allStocks if key missing (older data.json)
+  if (!ccassHoldings.length) {
+    ccassHoldings = allStocks
+      .filter(s => (s.pct_listed || 0) > 0)
+      .sort((a, b) => (b.pct_listed || 0) - (a.pct_listed || 0));
+  }
   const staleMark = stale ? ' (最後數據)' : '';
   document.getElementById('hdr-time').textContent =
     updateTime ? '更新: ' + updateTime + staleMark : '';
@@ -1261,9 +1291,8 @@ function applyData(d, stale) {
   }
 
   // Data sanity check
-  const sbStocks = allStocks.filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0);
-  if (sbStocks.length > 20) {
-    console.warn(`[data check] ${sbStocks.length} SB stocks — max possible is 20 (10 SSE + 10 SZSE). Check sc_top10_library output.`);
+  if (northboundFlow.length > 20) {
+    console.warn(`[data check] ${northboundFlow.length} northbound stocks — max possible is 20 (10 SSE + 10 SZSE). Check sc_top10_library output.`);
   }
   const missingPct = allStocks.filter(s => s.pct_listed == null || s.pct_listed === 0).length;
   if (missingPct > allStocks.length * 0.5) {
@@ -1298,13 +1327,17 @@ async function loadData() {
     localStorage.setItem(CACHE_KEY, JSON.stringify(d));
     applyData(d, false);
   } catch(e) {
-    console.error('[loadData] fetch failed:', e);
     if (!allStocks.length) {
       if (staleCache) {
         // Keep last known real data — just update the timestamp label
         applyData(staleCache, true);
       } else {
         allStocks  = generateMockData();
+        // Reconstruct isolated sources from mock data for offline demo
+        northboundFlow = allStocks.filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0);
+        ccassHoldings  = allStocks
+          .filter(s => (s.pct_listed || 0) > 0)
+          .sort((a, b) => (b.pct_listed || 0) - (a.pct_listed || 0));
         updateTime = new Date().toLocaleString('zh-HK');
         document.getElementById('hdr-time').textContent = '更新: ' + updateTime + ' (離線)';
         renderAll();
@@ -1346,7 +1379,7 @@ function generateMockData() {
     const sbn = i < SB_TOP ? (i % 3 === 2 ? -flowMag : flowMag) : 0;
     const cd  = Math.round((Math.random()-0.4)*5e6);
     const cc  = Math.round(Math.random()*8)-2;
-    const insightPool = ['🔥 挾倉風險', '🐉 異常亢奮', '🏦 大戶增持', '🏦 北水增持', '🚨 北水流出', '🚨 不尋常沽空', '📉 空頭平倉', '⚠️ 沽空倉位急增 +1.8pp', '📊 沽空倉位大減 -2.1pp', '', '', ''];
+    const insightPool = ['🔥 挾倉風險', '🐉 異常亢奮', '🏦 大戶增持', '🏦 北水增持', '🚨 北水流出', '🚨 不尋常沽空', '📉 空頭平倉', '⚠️ 沽空倉位急增 +1.8pp', '📊 沽空倉位大減 -2.1pp', '📈 換手急升', '🔼 換手上升', '', '', ''];
     // Mock exchange ranks: dual-listed stocks (i < 8) appear on both; last 2 are single-exchange
     // Realistic mock: net buy → buy > sell; net sell → sell > buy
     const absMag = Math.abs(sbn);
@@ -1642,10 +1675,9 @@ function drawSbChart(sorted) {
 }
 
 function renderBshui() {
-  // Only stocks with SB flow today — sorted by overall market turnover high→low.
-  // This answers: "of the stocks mainland money touched, which were biggest by tape?"
-  const base = [...allStocks]
-    .filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0);
+  // Use the isolated northbound_flow source from sc_top10_library (max 20 stocks).
+  // This data is NOT filtered by ccass_universe — it is the raw sc_top10 output.
+  const base = [...northboundFlow];
 
   // Apply active table sort (defaults to turnover desc if no header clicked yet)
   const { col, dir } = getTableSort('tbl-bshui', 'turnover');
@@ -1697,18 +1729,26 @@ function renderBshui() {
   document.getElementById('sb-consec').textContent = topConsecVal >= 2 ? topConsecVal + '日' : '';
   document.getElementById('sb-consec-name').textContent = topConsecVal >= 2 ? topConsec.name_chi : '';
 
-  // Total market northbound net
+  // Total market northbound net — prefer sbSummary (SSE+SZSE aggregate from sc_top10_library)
+  // Fall back to summing sb_net across allStocks when the aggregate is unavailable.
   const sbTotalNetEl  = document.getElementById('sb-total-net');
   const sbTotalSubEl  = document.getElementById('sb-total-net-sub');
-  if (sbTotalNetEl && sbSummary && sbSummary.net != null) {
-    const net = sbSummary.net;
+  if (sbTotalNetEl) {
+    const hasSummary = sbSummary && sbSummary.net != null;
+    const net = hasSummary
+      ? sbSummary.net
+      : northboundFlow.reduce((a, s) => a + (s.sb_net || 0), 0);
     sbTotalNetEl.className = 'sum-val ' + (net >= 0 ? 'up' : 'dn');
     sbTotalNetEl.textContent = (net >= 0 ? '+' : '') + fmtM(net);
     if (sbTotalSubEl) {
-      const sseNet  = sbSummary.sse_net  || 0;
-      const szseNet = sbSummary.szse_net || 0;
-      const fmt = v => (v >= 0 ? '+' : '') + fmtM(v);
-      sbTotalSubEl.textContent = `滬: ${fmt(sseNet)} ｜ 深: ${fmt(szseNet)}`;
+      if (hasSummary) {
+        const sseNet  = sbSummary.sse_net  || 0;
+        const szseNet = sbSummary.szse_net || 0;
+        const fmt = v => (v >= 0 ? '+' : '') + fmtM(v);
+        sbTotalSubEl.textContent = `滬: ${fmt(sseNet)} ｜ 深: ${fmt(szseNet)}`;
+      } else {
+        sbTotalSubEl.textContent = display.length ? `Top ${display.length} 股合計（估算）` : '';
+      }
     }
   }
 
@@ -1773,22 +1813,20 @@ function renderBshui() {
       <td class="num-r mob-hide ${netClass}">${s.sb_buy > 0 || s.sb_sell > 0 ? sign(s.sb_net)+fmtM(s.sb_net) : '<span class="na-txt">—</span>'}</td>
       <td class="num-r mob-hide">${s.sb_buy ? fmtM(s.sb_buy) : '<span class="na-txt">—</span>'}</td>
       <td class="num-r mob-hide">${s.sb_sell ? fmtM(s.sb_sell) : '<span class="na-txt">—</span>'}</td>
-      <td class="num-r mob-hide ${s.ccass_consec>0||(s.ccass_consec===0&&(s.pct_delta||0)>0)?'up-txt':s.ccass_consec<0||(s.ccass_consec===0&&(s.pct_delta||0)<0)?'dn-txt':''}">${fmtConsec(s)}</td>
+      <td class="num-r mob-hide ${(s.ccass_consec||0)>0||((s.ccass_consec||0)===0&&(s.pct_delta||0)>0)?'up-txt':(s.ccass_consec||0)<0||((s.ccass_consec||0)===0&&(s.pct_delta||0)<0)?'dn-txt':''}">${fmtConsec(s)}</td>
       <td>${insightBadge(s.insight)}</td>
     </tr>`;
   }).join('');
   document.getElementById('body-bshui').innerHTML = html || '<tr><td colspan="9" class="loading-box">無北水數據</td></tr>';
 
   // Update ticker
-  const sbNet = display.reduce((a,s) => a+s.sb_net, 0);
+  const sbNet = northboundFlow.reduce((a,s) => a + (s.sb_net || 0), 0);
   const sbStr = (sbNet>=0?'▲':'▼') + fmtM(Math.abs(sbNet));
   ['tick-sb','tick-sb2'].forEach(id => { const el=document.getElementById(id); if(el) { el.className='tv '+(sbNet>=0?'up-c':'dn-c'); el.textContent=sbStr; } });
 
-  // Refresh 北水持股比例 (CCASS aggregate pct) table in same panel
-  const ccassTop = [...allStocks]
-    .filter(s => s.pct_listed > 0)
-    .sort((a,b) => (b.pct_listed||0) - (a.pct_listed||0))
-    .slice(0, 10);
+  // Refresh 北水持股比例 — use the isolated ccass_holdings source from mutualmarket ?t=hk.
+  // This is the raw 港股通(滬+深) mainland holding % per stock, NOT filtered by ccass_universe.
+  const ccassTop = ccassHoldings.slice(0, 10);  // already sorted pct_listed desc by main.py
   const ccassHtml = ccassTop.map((s,i) => {
     const bar = Math.min(100, Math.round(s.pct_listed));
     const col = s.pct_listed >= 20 ? '#c0252d' : s.pct_listed >= 10 ? '#e07020' : 'var(--muted)';
@@ -2764,7 +2802,7 @@ function renderShort() {
 // X = DTC  |  Y = vol_ratio  |  bubble = short_ratio
 // Tier 1 active  : short_ratio > shortHi + DTC >= 3 + vol_ratio >= 1.8 + turnover > 0
 // Tier 2 buildup : short_ratio > shortHi + DTC >= 3 + turnover > 0, vol_ratio < 1.8
-// ── 挾倉風險評分 (0–12) ─────────────────────────────────────────────────────
+// ── 挾倉風險評分 (0–14) ─────────────────────────────────────────────────────
 // squeeze_score is computed in main.py and written to data.json.
 // squeezeScoreBreakdown() here mirrors that logic for tooltip display only.
 const SQUEEZE_THRESHOLDS = {
@@ -2986,7 +3024,7 @@ function drawShortRiskMap(stocks) {
     const score = s.squeeze_score || 0;
     const risk  = squeezeRisk(score);
     const bd    = squeezeScoreBreakdown(s);
-    TIP.innerHTML=`<b>${s.name_chi||s.code} (${s.code})</b> <span style="color:${risk.color};font-weight:500">${risk.label} ${score}/12</span><br>`+
+    TIP.innerHTML=`<b>${s.name_chi||s.code} (${s.code})</b> <span style="color:${risk.color};font-weight:500">${risk.label} ${score}/14</span><br>`+
       `DTC ${(s.days_to_cover||0).toFixed(1)}日(+${bd.dtcS}${bd.dtcB?'+1':''})　沽空 ${s.short_ratio.toFixed(1)}%(+${bd.srS}${bd.srB?'+1':''})<br>`+
       `集中度 ${(s.concentration||0).toFixed(1)}%(+${bd.concS})　成交量 <span style="color:${c.stroke}">${(s.vol_ratio||0).toFixed(2)}x</span>`;
     TIP.style.left=Math.min(mx+12,W-240)+'px';
@@ -3526,18 +3564,21 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
   const stockType= info.stock_type  || '';
   const typeLabel = { bluechip:'藍籌', general:'一般', stable:'穩健', etf:'ETF' }[stockType] || stockType;
   const sizeLabel = (() => {
-    const tv24 = info.tv_ratio > 0 ? (info.turnover || 0) / (info.tv_ratio || 1) : 0;
+    // tv_ratio = turnover / tv_avg24. Recover tv_avg24; fall back to raw turnover.
+    const tv24 = info.tv_ratio > 0
+      ? (info.turnover || 0) / info.tv_ratio
+      : (info.turnover || 0);   // when tv_ratio=0 use today's turnover as proxy
     if (tv24 >= 1e9) return '超大型'; if (tv24 >= 2e8) return '中型'; return '小型';
   })();
 
-  // Stock header: code name industry type size
+  // Stock header: code name [industry] [type — only when different from industry] [size]
   const detHdr = document.getElementById('sdw-det-hdr');
   if (detHdr) {
     detHdr.innerHTML =
       `<span style="font-size:13px;color:var(--muted);font-family:monospace">${code}</span>` +
       `<span style="font-size:17px;font-weight:500;color:var(--text)">${info.name_chi||code}</span>` +
       (industry ? `<span style="font-size:12px;padding:3px 10px;border-radius:20px;border:0.5px solid var(--border);color:var(--muted)">${industry}</span>` : '') +
-      (typeLabel? `<span style="font-size:12px;padding:3px 10px;border-radius:20px;background:var(--text);color:var(--card);border:0.5px solid var(--text)">${typeLabel}</span>` : '') +
+      (typeLabel && typeLabel !== industry ? `<span style="font-size:12px;padding:3px 10px;border-radius:20px;background:var(--text);color:var(--card);border:0.5px solid var(--text)">${typeLabel}</span>` : '') +
       (sizeLabel? `<span style="font-size:12px;padding:3px 10px;border-radius:20px;border:0.5px solid var(--border);color:var(--muted)">${sizeLabel}</span>` : '');
   }
 
@@ -4893,8 +4934,10 @@ let stkSfcCache   = {};     // { year: sfc_YYYY.json data }
 let stkSdwCache   = {};     // { code5: sdw_{code}.json data }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function stkFridays(allDates) {
-  return allDates.filter(d => new Date(d).getDay() === 5);
+// Plot every available trading day — weekly Friday-only sampling was discarding
+// 80% of data and producing a near-empty chart for the early months of the library.
+function stkAllDates(allDates) {
+  return allDates; // no filtering — use every date rank_history has
 }
 
 function stkBuildRankFlat() {
@@ -4941,16 +4984,15 @@ async function stkEnsureSdw(code5) {
 // ── Data assembly ─────────────────────────────────────────────────────────────
 async function stkBuildSeries(code5, fromDs, toDs) {
   await stkEnsureRankHistory();
-  const currentYear = new Date().getFullYear();
   const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
-    .flatMap(y => [y, y+1]).filter(y => y <= currentYear))];
+    .flatMap(y => [y, y+1]))];
   for (const y of years) await stkEnsureSfc(y);
   await stkEnsureSdw(code5);
 
   const flat    = stkBuildRankFlat();
   const allDates = Object.keys(flat).filter(d => d >= fromDs && d <= toDs).sort();
-  const fridays  = stkFridays(allDates);
-  if (!fridays.length) return null;
+  const tradingDays = stkAllDates(allDates);
+  if (!tradingDays.length) return null;
 
   // SFC flat by date
   const sfcFlat = {};
@@ -4967,9 +5009,9 @@ async function stkBuildSeries(code5, fromDs, toDs) {
 
   const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[];
 
-  for (const ds of fridays) {
+  for (const ds of tradingDays) {
     const rec = flat[ds]?.[code5] || flat[ds]?.[code5.replace(/^0+/,'')];
-    labels.push(ds.slice(0,7));
+    labels.push(ds);  // full YYYY-MM-DD so every point has a unique label
     closeArr.push(rec?.close  ?? null);
     vwapArr .push(rec?.vwap   ?? null);
     volArr  .push(rec?.vol    ?? null);
@@ -5009,7 +5051,12 @@ function stkDrawCharts(series) {
   const afterFitY = scale => { scale.width = YW; };
   const xHide = { ticks:{display:false}, grid:{color:gc}, border:{display:false} };
   const xShow = { ticks:{font:{size:10},color:'#888',maxRotation:0,
-    callback:(v,i) => i % Math.max(1, Math.floor(N/8)) === 0 ? series.labels[i] : '' },
+    callback:(v,i) => {
+      if (i % Math.max(1, Math.floor(N/8)) !== 0) return '';
+      const lbl = series.labels[i] || '';
+      // series.labels are now YYYY-MM-DD — show MM-DD for compactness
+      return lbl.length === 10 ? lbl.slice(5) : lbl;
+    }},
     grid:{color:gc}, border:{display:false} };
 
   let activeIdx = null;
@@ -5087,6 +5134,9 @@ function stkDrawCharts(series) {
   }
 
   // Panel 1 — 換手率
+  // Guard: if all turn values are null/0 the chart y-range collapses to [0,0]
+  const validTurn = series.turn.filter(v => v != null && v > 0);
+  const maxTurn   = validTurn.length ? Math.max(...validTurn) : null;
   const c1 = new Chart(document.getElementById('stkC1'), {
     type:'line', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[{
@@ -5098,13 +5148,15 @@ function stkDrawCharts(series) {
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
       scales:{x:xHide,
-        y:{afterFit:afterFitY, ticks:{callback:v=>v+'%',font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
+        y:{afterFit:afterFitY,
+           ...(maxTurn ? {min:0, suggestedMax: maxTurn * 1.2} : {min:0, max:1}),
+           ticks:{callback:v=>v+'%',font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
         yR:{position:'right', afterFit:afterFitR, ticks:{display:false},grid:{display:false},border:{display:false}},
       }}
   });
 
   // Panel 2 — Price + VWAP + Volume
-  const maxVol = Math.max(...series.vol.filter(v=>v!=null));
+  const maxVol = Math.max(...series.vol.filter(v => v != null && v > 0), 1);
   const c2 = new Chart(document.getElementById('stkC2'), {
     type:'bar', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[

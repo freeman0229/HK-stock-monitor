@@ -339,15 +339,15 @@ def save_rank_history(date: datetime, results: list):
     store[date.strftime("%Y%m%d")] = {
         r["code"]: {
             "rank":             r["rank"],
-            "close":            r.get("close", 0.0),
-            "vol":              r.get("vol", 0),
-            "tv":               r.get("turnover", 0),
-            "vwap":             r.get("vwap", 0.0),
+            "close":            r.get("close") or None,          # None → chart skips point
+            "vol":              r.get("vol") or None,             # None → volume bar hidden
+            "tv":               r.get("turnover") or None,
+            "vwap":             r.get("vwap") or None,            # None → chart skips point
             "short_ratio":      r.get("short_ratio", 0.0),
             "sfc_pct":          r.get("sfc_pct", 0.0),
             "concentration":    r.get("concentration", 0.0),
             "lockup_threshold": r.get("lockup_threshold", 60.0),
-            "turnover_24d":     r.get("turnover_24d", 0.0),
+            "turnover_24d":     r.get("turnover_24d") or None,    # None when SDW unavailable
             "pct_listed":       r.get("pct_listed", 0.0),
         }
         for r in results
@@ -621,7 +621,10 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     #   ⚠️  NOT the same as 已發行股份/權證/單位 (最近更新數目) — total issued shares
     #   總數 ≤ 已發行股份 since not all issued shares are held in CCASS
     # Used for: 換手率 (N-day vol / 總數 × 100) and 持倉集中度 (top5_sh / 總數 × 100)
-    _sdw_total_sh_map = sdw_get_total_sh_bulk(today_ds) if _SDW_AVAILABLE else {}
+    # _sdw_best_date: most recent Friday date in the SDW DB on or before today.
+    # Initialised here so every downstream block can reference it safely even if
+    # the DB query below fails.  None means SDW is unavailable / DB is empty.
+    _sdw_best_date: str | None = None
 
     # Bulk-load SDW holders for all stocks to avoid one DB open per stock in the loop.
     # Try today first; fall back to the most recent available SDW date if today
@@ -657,6 +660,16 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                          len(_sdw_holders_map), _sdw_best_date)
         except Exception as _e:
             log.warning("SDW bulk holder load failed: %s — falling back to per-stock", _e)
+
+    # Bulk-load SDW total_sh using the same best-available date as holders.
+    # sdw_get_total_sh_bulk(today_ds) returns 0 for every stock on Mon–Thu because
+    # the SDW DB is only updated on Fridays. Using _sdw_best_date (most recent Friday
+    # on or before today) ensures we always have real total_sh values, which are
+    # essential for: turnover_24d, concentration, sfc_pct, top10_pct, lockup_threshold.
+    _sdw_total_sh_date = _sdw_best_date or today_ds
+    _sdw_total_sh_map = sdw_get_total_sh_bulk(_sdw_total_sh_date) if _SDW_AVAILABLE else {}
+    if _SDW_AVAILABLE:
+        log.info("SDW total_sh: %d stocks from %s", len(_sdw_total_sh_map), _sdw_total_sh_date)
 
     # Bulk-load previous SDW snapshot for WoW top10 delta calculation.
     _sdw_prev_holders_map: dict[str, list] = {}
@@ -717,7 +730,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                     sfc_sh  = pos["sh"]           # 累積沽空股數 (Shares)
                     sfc_hkd = pos.get("hkd", 0.0) # 累積沽空金額 (HK$)
                     if _SDW_AVAILABLE:
-                        total_sh = sdw_get_total_sh(code, today_ds)  # 總數 (CCASS Grand Total)
+                        total_sh = sdw_get_total_sh(code, _sdw_total_sh_date)  # 總數 (CCASS Grand Total)
                         sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
                     else:
                         sfc_pct = 0.0
@@ -1088,12 +1101,55 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     log.info("rank_history.json updated for %s", today_ds)
 
     if not suppress_telegram:
+        # ── Isolated Source 1: northbound flow (sc_top10_library) ────────────
+        # Max 20 stocks (10 SSE + 10 SZSE). Written as-is — NOT filtered by
+        # ccass_universe. Used exclusively by 北水淨流入 and 個股明細 in the frontend.
+        _insight_by_code = {r["code"]: r["insight"] for r in results}
+        northbound_flow = []
+        for code, sb in sb_map.items():
+            _ne, _nc = _get_names(code)
+            northbound_flow.append({
+                "code":        code,
+                "name":        _ne,
+                "name_chi":    _nc,
+                "sb_buy":      sb["sb_buy"],
+                "sb_sell":     sb["sb_sell"],
+                "sb_net":      sb["sb_net"],
+                "sb_total":    sb.get("sb_total", 0),
+                "sb_net_prev": int(sb_prev_map.get(code, 0)),
+                "sb_consec":   int(sb_consec_map.get(code, 0)),
+                "turnover":    quote_map.get(code, {}).get("tv", 0),
+                "insight":     _insight_by_code.get(code),
+            })
+        # Sort by abs(sb_net) desc so chart renders largest bars first
+        northbound_flow.sort(key=lambda x: abs(x["sb_net"]), reverse=True)
+
+        # ── Isolated Source 2: CCASS northbound holdings (mutualmarket ?t=hk) ─
+        # All ~917 stocks from the 港股通(滬+深) page. Written as-is — NOT
+        # filtered by ccass_universe. Used exclusively by 北水持股比例 in the frontend.
+        ccass_holdings = sorted(
+            [
+                {
+                    "code":        row.stock_code,
+                    "name_chi":    ccass_name_map.get(row.stock_code, row.stock_code),
+                    "shareholding": int(row.shareholding),
+                    "pct_listed":  round(float(row.pct_listed), 4),
+                }
+                for row in df_ccass.itertuples()
+                if row.pct_listed > 0
+            ],
+            key=lambda x: x["pct_listed"],
+            reverse=True,
+        )
+        log.info("ccass_holdings: %d stocks written to data.json", len(ccass_holdings))
         output = {
-            "update_time": trading_day.strftime("%Y-%m-%d %H:%M"),
-            "sb_date":     sb_date_used,
-            "sb_summary":  get_sb_summary(sb_date_used),
-            "name_map":    load_store(NAME_MAP_FILE),
-            "stocks":      results,
+            "update_time":      trading_day.strftime("%Y-%m-%d %H:%M"),
+            "sb_date":          sb_date_used,
+            "sb_summary":       get_sb_summary(sb_date_used),
+            "northbound_flow":  northbound_flow,   # Source 1: sc_top10 — 北水淨流入/個股明細
+            "ccass_holdings":   ccass_holdings,    # Source 2: mutualmarket — 北水持股比例
+            "name_map":         load_store(NAME_MAP_FILE),
+            "stocks":           results,
         }
         with open("data.json", "w", encoding="utf-8") as f:
             json.dump(output, f, ensure_ascii=False, separators=(",", ":"))
