@@ -863,7 +863,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             out.update(load_fn(y).get("by_date", {}))
         return out
 
-    _years = list(range(2024, trading_day.year + 1))  # last 2 years sufficient for 24-day history
+    _years = list(range(2026, trading_day.year + 1))  # data collection started 2026-02-02
 
     def _flat_by_date_recent(load_fn, years, n_days=30):
         """Like _flat_by_date but keeps only the most recent n_days dates.

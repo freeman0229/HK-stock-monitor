@@ -1278,7 +1278,7 @@ function applyData(d, stale) {
       .filter(s => (s.pct_listed || 0) > 0)
       .sort((a, b) => (b.pct_listed || 0) - (a.pct_listed || 0));
   }
-  const staleMark = stale ? ' (最後數據)' : '';
+  const staleMark = stale ? ' (離線)' : '';
   document.getElementById('hdr-time').textContent =
     updateTime ? '更新: ' + updateTime + staleMark : '';
 
@@ -1306,42 +1306,45 @@ async function loadData() {
   const dot = document.querySelector('.live-dot');
   if (dot) dot.style.animationPlayState = 'running';
 
-  // 1. Show cached data immediately if available (valid or stale — always prefer real data)
+  // 1. Show cached data immediately if available — gives instant render while fetch runs
   let staleCache = null;
   try {
     const cached = localStorage.getItem(CACHE_KEY);
     if (cached) {
       const d = JSON.parse(cached);
       if (d.stocks && d.stocks.length > 0) {
-        staleCache = d; // keep reference in case fetch fails
-        applyData(d, true);
+        staleCache = d;
+        applyData(d, true);  // renders immediately; will be overwritten by live fetch below
       }
     }
   } catch(e) { localStorage.removeItem(CACHE_KEY); }
 
-  // 2. Fetch fresh data.json
+  // 2. Always attempt live fetch — even if staleCache populated allStocks above.
+  // On success: overwrite with fresh data and clear any stale/offline label.
+  // On failure: keep staleCache data but update label to show it's stale.
+  let fetchOk = false;
   try {
     const r = await fetch('data.json', { cache: 'no-cache' });
     if (!r.ok) throw new Error(r.status);
     const d = await r.json();
     localStorage.setItem(CACHE_KEY, JSON.stringify(d));
-    applyData(d, false);
+    applyData(d, false);   // clears stale mark — sets clean "更新: ..." label
+    fetchOk = true;
   } catch(e) {
-    if (!allStocks.length) {
-      if (staleCache) {
-        // Keep last known real data — just update the timestamp label
-        applyData(staleCache, true);
-      } else {
-        allStocks  = generateMockData();
-        // Reconstruct isolated sources from mock data for offline demo
-        northboundFlow = allStocks.filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0);
-        ccassHoldings  = allStocks
-          .filter(s => (s.pct_listed || 0) > 0)
-          .sort((a, b) => (b.pct_listed || 0) - (a.pct_listed || 0));
-        updateTime = new Date().toLocaleString('zh-HK');
-        document.getElementById('hdr-time').textContent = '更新: ' + updateTime + ' (離線)';
-        renderAll();
-      }
+    // fetch failed — keep whatever data we have but mark it clearly
+    if (staleCache) {
+      // Real data from a previous run — show it with a stale notice
+      applyData(staleCache, true);
+    } else {
+      // No cache at all — fall back to mock data for offline demo
+      allStocks      = generateMockData();
+      northboundFlow = allStocks.filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0);
+      ccassHoldings  = allStocks
+        .filter(s => (s.pct_listed || 0) > 0)
+        .sort((a, b) => (b.pct_listed || 0) - (a.pct_listed || 0));
+      updateTime = new Date().toLocaleString('zh-HK');
+      document.getElementById('hdr-time').textContent = '更新: ' + updateTime + ' (離線)';
+      renderAll();
     }
   } finally {
     if (dot) dot.style.animationPlayState = 'paused';
