@@ -1410,7 +1410,10 @@ async function loadData() {
     }
 
     const d = await r.json();
-    localStorage.setItem(CACHE_KEY, JSON.stringify(d));
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch(e) {
+      console.warn('[loadData] cache write failed (quota):', e.message);
+      localStorage.removeItem(CACHE_KEY);
+    }
     applyData(d, false);
     fetchOk = true;
 
@@ -3439,7 +3442,7 @@ function renderSdwPanel() {
   const ds      = (sdwData[_selDs]||{})[sdwCurCode]
     ? _selDs
     : ([...sdwDates].reverse().find(d => (sdwData[d]||{})[sdwCurCode]) || _selDs);
-  const topN    = parseInt(document.getElementById('sdw-top-n').value) || 20;
+  const topN    = sdwTopN || 5;
   const raw = (sdwData[ds] || {})[sdwCurCode];
   const holders = raw ? (Array.isArray(raw) ? raw : (raw.p || [])) : [];
 
@@ -3660,6 +3663,8 @@ function drawSdwChart(code, selectedDs) {
     canvas.addEventListener('mousemove', e => {
       const { series, PAD, n, xAt } = canvas._sdwConc || {};
       if (!series) return;
+      const tip2 = canvas._sdwConcTip;
+      if (!tip2) return;
       const rect = canvas.getBoundingClientRect();
       const mx   = (e.clientX - rect.left) * (canvas.width / rect.width);
       let best = null, bestDx = Infinity;
@@ -3667,11 +3672,11 @@ function drawSdwChart(code, selectedDs) {
         const dx = Math.abs(mx - xAt(i));
         if (dx < bestDx) { bestDx = dx; best = s; }
       });
-      if (!best || bestDx > canvas.width / n) { tip.style.display = 'none'; return; }
-      tip.innerHTML = `<b>${best.ds}</b><br>前5大合計 <span style="color:#c0252d;font-weight:600">${best.top5sum.toFixed(2)}%</span>`;
-      tip.style.left = (e.clientX + 14) + 'px';
-      tip.style.top  = (e.clientY - 60) + 'px';
-      tip.style.display = 'block';
+      if (!best || bestDx > canvas.width / n) { tip2.style.display = 'none'; return; }
+      tip2.innerHTML = `<b>${best.ds}</b><br>前5大合計 <span style="color:#c0252d;font-weight:600">${best.top5sum.toFixed(2)}%</span>`;
+      tip2.style.left = (e.clientX + 14) + 'px';
+      tip2.style.top  = (e.clientY - 60) + 'px';
+      tip2.style.display = 'block';
     });
     canvas.addEventListener('mouseleave', () => { canvas._sdwConcTip.style.display = 'none'; });
   }
@@ -3931,20 +3936,22 @@ function drawGroupHistoryChart(code) {
     canvas.addEventListener('mousemove', e => {
       const { series, PAD, cW, n } = canvas._sdwGroup || {};
       if (!series) return;
+      const tip2 = canvas._sdwGroupTip;
+      if (!tip2) return;
       const rect    = canvas.getBoundingClientRect();
       const mx      = (e.clientX - rect.left) * (canvas.width / rect.width);
       const groupW  = cW / n;
       const idx     = Math.floor((mx - PAD.left) / groupW);
       const s       = series[Math.max(0, Math.min(n - 1, idx))];
-      if (!s) { tip.style.display = 'none'; return; }
-      tip.innerHTML =
+      if (!s) { tip2.style.display = 'none'; return; }
+      tip2.innerHTML =
         `<b>${s.ds}</b><br>` +
         `<span style="color:#c0252d">大戶 ${s.dahu.toFixed(1)}%</span><br>` +
         `<span style="color:#1a7a3c">北水 ${s.bei.toFixed(1)}%</span><br>` +
         `<span style="color:#b8860b">散戶 ${s.san.toFixed(1)}%</span>`;
-      tip.style.left = (e.clientX + 14) + 'px';
-      tip.style.top  = (e.clientY - 80) + 'px';
-      tip.style.display = 'block';
+      tip2.style.left = (e.clientX + 14) + 'px';
+      tip2.style.top  = (e.clientY - 80) + 'px';
+      tip2.style.display = 'block';
     });
     canvas.addEventListener('mouseleave', () => { canvas._sdwGroupTip.style.display = 'none'; });
   }
