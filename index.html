@@ -1410,10 +1410,7 @@ async function loadData() {
     }
 
     const d = await r.json();
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch(e) {
-      console.warn('[loadData] cache write failed (quota):', e.message);
-      localStorage.removeItem(CACHE_KEY);
-    }
+    localStorage.setItem(CACHE_KEY, JSON.stringify(d));
     applyData(d, false);
     fetchOk = true;
 
@@ -5162,14 +5159,21 @@ async function stkEnsureSdw(code5) {
 
 // ── Data assembly ─────────────────────────────────────────────────────────────
 async function stkBuildSeries(code5, fromDs, toDs) {
-  await stkEnsureRankHistory();
+  // Use turnover_YYYY.json as date backbone and price/volume source
+  // rank_history is now only 2 days — not suitable as a historical data source
   const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
-    .flatMap(y => [y, y+1]))];
-  for (const y of years) await stkEnsureSfc(y);
+    .flatMap(y => [y-1, y, y+1]).filter(y => y >= 2025))];
+  for (const y of years) {
+    await loadTvYear(y);
+    await stkEnsureSfc(y);
+  }
   await stkEnsureSdw(code5);
 
-  const flat    = stkBuildRankFlat();
-  const allDates = Object.keys(flat).filter(d => d >= fromDs && d <= toDs).sort();
+  // Build date list from turnover files
+  const allDates = [...new Set(
+    years.flatMap(y => Object.keys(tvCache[y] || {}))
+  )].filter(d => d >= fromDs && d <= toDs).sort();
+
   const tradingDays = stkAllDates(allDates);
   if (!tradingDays.length) return null;
 
@@ -5188,16 +5192,40 @@ async function stkBuildSeries(code5, fromDs, toDs) {
 
   const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[];
 
-  for (const ds of tradingDays) {
-    const rec = flat[ds]?.[code5] || flat[ds]?.[code5.replace(/^0+/,'')];
-    labels.push(ds);  // full YYYY-MM-DD so every point has a unique label
-    closeArr.push(rec?.close  ?? null);
-    vwapArr .push(rec?.vwap   ?? null);
-    volArr  .push(rec?.vol    ?? null);
-    turnArr .push(rec?.turnover_24d != null ? +rec.turnover_24d.toFixed(2) : null);
+  // Pre-build vol array for turnover_24d computation
+  const allVolByDate = {};
+  for (const y of years) {
+    for (const [ds, stocks] of Object.entries(tvCache[y] || {})) {
+      const rec = stocks[code5];
+      if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
+    }
+  }
+  const sortedVolDates = Object.keys(allVolByDate).sort();
 
-    // top10_pct from sdw data — compute client-side
-    const sdwEntry = sdwByDate[ds];
+  for (let i = 0; i < tradingDays.length; i++) {
+    const ds   = tradingDays[i];
+    const year = ds.slice(0, 4);
+    const tvRec = tvCache[+year]?.[ds]?.[code5];
+
+    labels.push(ds);
+    closeArr.push(tvRec?.close > 0 ? tvRec.close : null);
+    vwapArr .push(tvRec?.vwap  > 0 ? tvRec.vwap  : null);
+    volArr  .push(tvRec?.vol   > 0 ? tvRec.vol   : null);
+
+    // Compute turnover_24d: vol of last 24 days / total_sh (from SDW)
+    // Approximate: use rolling 24-day vol sum / latest SDW total_sh
+    const dsIdx = sortedVolDates.indexOf(ds);
+    const win24 = sortedVolDates.slice(Math.max(0, dsIdx - 23), dsIdx + 1);
+    const vol24 = win24.reduce((s, d) => s + (allVolByDate[d] || 0), 0);
+    // Get total_sh from SDW — use nearest available date
+    const sdwDates = Object.keys(sdwByDate).sort();
+    const nearestSdw = sdwDates.filter(d => d <= ds).slice(-1)[0];
+    const totalSh = nearestSdw ? (sdwByDate[nearestSdw]?.total_sh || 0) : 0;
+    turnArr.push(totalSh > 0 && vol24 > 0 ? +(vol24 / totalSh * 100).toFixed(2) : null);
+
+    // top10_pct from sdw data — use nearest Friday on or before ds
+    const nearestSdwForTop10 = sdwDates.filter(d => d <= ds).slice(-1)[0];
+    const sdwEntry = nearestSdwForTop10 ? sdwByDate[nearestSdwForTop10] : null;
     if (sdwEntry && sdwEntry.total_sh > 0) {
       const holders = sdwEntry.p || [];
       const top10sh = holders.slice(0,10).reduce((s,h)=>s+(h.sh||0),0);
@@ -5206,7 +5234,7 @@ async function stkBuildSeries(code5, fromDs, toDs) {
       top10Arr.push(null);
     }
 
-    // sfc_pct
+    // sfc_pct — weekly, use nearest date on or before ds
     const sfcRec = sfcFlat[ds]?.[code5] || sfcFlat[ds]?.[code5.replace(/^0+/,'')];
     sfcArr.push(sfcRec?.pct != null ? +sfcRec.pct.toFixed(2) : null);
   }
