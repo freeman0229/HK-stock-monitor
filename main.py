@@ -329,22 +329,12 @@ RANK_HISTORY_FILE = "rank_history.json"
 def save_rank_history(date: datetime, results: list):
     store = load_store(RANK_HISTORY_FILE)
     ds_key = date.strftime("%Y%m%d")
-    store[ds_key] = {
-        r["code"]: {
-            "rank":             r["rank"],
-            "close":            r.get("close") or None,
-            "vol":              r.get("vol") or None,
-            "tv":               r.get("turnover") or None,
-            "vwap":             r.get("vwap") or None,
-            "short_ratio":      r.get("short_ratio", 0.0),
-            "sfc_pct":          r.get("sfc_pct", 0.0),
-            "concentration":    r.get("concentration", 0.0),
-            "lockup_threshold": r.get("lockup_threshold", 60.0),
-            "turnover_24d":     r.get("turnover_24d") or None,
-            "pct_listed":       r.get("pct_listed", 0.0),
-        }
-        for r in results
-    }
+    # Only store rank — all other fields (short_ratio, concentration, etc.)
+    # are never read back from rank_history; their history comes from dedicated libraries.
+    store[ds_key] = {r["code"]: r["rank"] for r in results}
+    # Keep only the 2 most recent days — get_prev_ranks() only ever reads yesterday.
+    for old_key in sorted(store.keys())[:-2]:
+        del store[old_key]
     save_store(RANK_HISTORY_FILE, store)
 
 def get_prev_ranks(exclude_date: datetime = None) -> dict:
@@ -980,10 +970,8 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             "insight": insight,
             "squeeze_score": squeeze_score,
             "dtc_avg_10d":   dtc_avg_10d,
-            "sdw_holders":  [{"pid": h["pid"], "name": h["name"],
-                               "sh":  h["sh"],  "pct":  h["pct"]}
-                             for h in _holders],
-            "sdw_total_sh": int(_total_sh_conc),
+            # sdw_holders omitted from data.json — too large for localStorage quota.
+            # The SDW panel lazy-fetches per-stock sdw_{code}.json files on demand instead.
         })
 
     # ── 11. Persist ───────────────────────────────────────────────────────────

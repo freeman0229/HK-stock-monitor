@@ -266,13 +266,16 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
-      - name: Commit chart files
+      - name: Upload SDW chart files to R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
         run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          git add sdw_*.json
-          git diff --staged --quiet || \
-            (git commit -m "SDW charts: $(date +'%Y-%m-%d')" && git push)
+          aws s3 sync . s3://hk-stock-monitor/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
+            --exclude "*" --include "sdw_*.json" \
+            --no-progress
 
   # ── SDW weekly (Friday only: 21:00, 23:00, 01:00+1 HKT — three retry runs) ──
   # Runs --update: fetches only the latest Friday not yet in the DB.
@@ -331,13 +334,16 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
-      - name: Commit chart files
+      - name: Upload SDW chart files to R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
         run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          git add sdw_*.json
-          git diff --staged --quiet || \
-            (git commit -m "SDW charts: $(date +'%Y-%m-%d')" && git push)
+          aws s3 sync . s3://hk-stock-monitor/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
+            --exclude "*" --include "sdw_*.json" \
+            --no-progress
 
   # ── SFC weekly (Saturday 10:00 HKT) ──────────────────────────────────────────
   sfc-weekly:
@@ -624,13 +630,16 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
-      - name: Commit chart files
+      - name: Upload SDW chart files to R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
         run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          git add sdw_*.json
-          git diff --staged --quiet || \
-            (git commit -m "SDW charts: $(date +'%Y-%m-%d')" && git push)
+          aws s3 sync . s3://hk-stock-monitor/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
+            --exclude "*" --include "sdw_*.json" \
+            --no-progress
 
   # ── SDW migrate JSON → SQLite (one-time) ─────────────────────────────────────
   # Place all ccass_sdw_*.json files in the repo root, then run this job.

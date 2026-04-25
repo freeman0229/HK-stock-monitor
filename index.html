@@ -1284,6 +1284,7 @@ const isValidName = s => {
 
 // ── Load data.json ────────────────────────────────────────────────────────
 const CACHE_KEY       = 'hk_dashboard_data_v5';
+const SDW_BASE_URL    = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
 const CHART_CACHE_KEY = 'hk_chart_data_v5';
 // CACHE_TTL_MS / _isCacheValid removed — cache is now kept indefinitely as
 // last-known-good data, shown until a fresh data.json fetch succeeds.
@@ -3249,7 +3250,7 @@ async function fetchSdwCodeHistory(code) {
   const code5 = norm5(code);
   if (sdwCodeCache[code5]) return;   // already fetched
   try {
-    const r = await fetch(`sdw_${code5}.json`, { cache: 'no-cache' });
+    const r = await fetch(`${SDW_BASE_URL}/sdw_${code5}.json`, { cache: 'no-cache' });
     if (!r.ok) { sdwCodeCache[code5] = true; return; }
     const lib = await r.json();
     // Merge all dates from per-stock file into global sdwData
@@ -5150,7 +5151,7 @@ async function stkEnsureSfc(year) {
 async function stkEnsureSdw(code5) {
   if (stkSdwCache[code5]) return;
   try {
-    const r = await fetch(`sdw_${code5}.json`, {cache:'no-cache'});
+    const r = await fetch(`${SDW_BASE_URL}/sdw_${code5}.json`, {cache:'no-cache'});
     if (!r.ok) return;
     stkSdwCache[code5] = await r.json();
   } catch(e) {}
