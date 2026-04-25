@@ -3554,7 +3554,7 @@ function drawSdwChart(code, selectedDs) {
 
   // Collect time series: last 1 year only
   const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
-  const series = sdwDates
+  const series = [...new Set(sdwDates)].sort()
     .filter(ds => ds >= cutoff && (sdwData[ds]||{})[code])
     .map(ds => {
       const _raw = sdwData[ds][code];
@@ -3836,7 +3836,7 @@ function drawGroupHistoryChart(code) {
   ctx.clearRect(0, 0, W, H);
 
   const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
-  const dates  = sdwDates.filter(d => d >= cutoff && (sdwData[d]||{})[code]);
+  const dates  = [...new Set(sdwDates)].filter(d => d >= cutoff && (sdwData[d]||{})[code]).sort();
 
   if (dates.length < 2) {
     ctx.fillStyle = '#aaa'; ctx.font = '12px sans-serif';

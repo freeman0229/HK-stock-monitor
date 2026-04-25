@@ -329,8 +329,7 @@ RANK_HISTORY_FILE = "rank_history.json"
 def save_rank_history(date: datetime, results: list):
     store = load_store(RANK_HISTORY_FILE)
     ds_key = date.strftime("%Y%m%d")
-    # Only store rank — all other fields (short_ratio, concentration, etc.)
-    # are never read back from rank_history; their history comes from dedicated libraries.
+    # Only store rank — all other fields are never read back from rank_history.
     store[ds_key] = {r["code"]: r["rank"] for r in results}
     # Keep only the 2 most recent days — get_prev_ranks() only ever reads yesterday.
     for old_key in sorted(store.keys())[:-2]:
@@ -652,11 +651,10 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                         continue
                     sfc_sh  = pos["sh"]
                     sfc_hkd = pos.get("hkd", 0.0)
-                    if _SDW_AVAILABLE:
-                        total_sh = sdw_get_total_sh(code, _sdw_total_sh_date)
-                        sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
-                    else:
-                        sfc_pct = 0.0
+                    # Use bulk-loaded total_sh map (avoids per-stock DB call, works without SDW)
+                    _code5   = normalize_code(code)
+                    total_sh = _sdw_total_sh_map.get(_code5, 0) or _sdw_total_sh_map.get(code, 0)
+                    sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
 
                     sfc_hist = sfc_get_history(code, 5, _latest_sfc_ds)
                     sfc_prev_pct    = sfc_hist[0].get("pct", 0.0) if sfc_hist else 0.0
