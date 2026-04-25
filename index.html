@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>港股策略板</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -25,6 +26,7 @@
   --label:   #888;
   --header-h:52px;
   --tab-h:   44px;
+  --hover:   #f5f2ee; /* subtle hover bg, matches --bg */
 }
 
 body {
@@ -70,7 +72,10 @@ body {
   width: 7px; height: 7px; background: var(--green); border-radius: 50%;
   display: inline-block; margin-right: 5px;
   animation: pulse 2s infinite;
+  transition: background .4s;
 }
+.live-dot.stale { background: #f0b429; } /* amber when data is cached/offline */
+.live-dot.error { background: var(--up); animation: none; } /* red+static on hard error */
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
 /* ── Ticker strip ── */
@@ -89,6 +94,7 @@ body {
   gap: 0;
   animation: scroll 40s linear infinite;
 }
+#ticker:hover .ticker-inner { animation-play-state: paused; }
 @keyframes scroll { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
 .tick-item { padding: 0 20px; border-right: 1px solid #333; display: flex; gap: 8px; align-items: center; }
 .tick-item .tn { color: #aaa; }
@@ -407,6 +413,46 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── Offline banner ── */
+#offline-banner {
+  display: none;
+  background: #fff8e1;
+  border-bottom: 2px solid #f0b429;
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #7a5400;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  /* Flows in document naturally below tabs — no sticky needed */
+}
+#offline-banner.visible { display: flex; }
+.offline-reason { flex: 1; min-width: 0; }
+.offline-reason b { color: #c0252d; }
+.offline-retry {
+  border: 1px solid #f0b429;
+  background: #fff;
+  color: #7a5400;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+  transition: background .15s;
+}
+.offline-retry:hover { background: #fef3c7; }
+.offline-dismiss {
+  color: #bbb;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0 2px;
+}
+.offline-dismiss:hover { color: #888; }
 /* ── Footer ── */
 #footer {
   display: flex;
@@ -442,6 +488,15 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 /* ── Short risk map ── */
 #panel-short .summary-bar { grid-template-columns: repeat(3, 1fr); }
 @media (max-width: 700px) { #panel-short .summary-bar { grid-template-columns: repeat(2, 1fr); } }
+/* ── SDW metrics + short 5-col responsive ── */
+@media (max-width: 1023px) {
+  #sdw-det-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+  #panel-short .summary-bar[style*="repeat(5"] { grid-template-columns: repeat(3, 1fr) !important; }
+}
+@media (max-width: 480px) {
+  #sdw-det-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  #panel-short .summary-bar { grid-template-columns: repeat(2, 1fr) !important; }
+}
 
 /* ── SFC chart pills ── */
 .sfc-pill {
@@ -611,7 +666,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <div id="header">
   <div class="logo"><img src="data:image/png;base64,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" alt="Tardigrade Analytics" style="height:36px;width:auto;margin-right:10px;vertical-align:middle;border-radius:4px">港股策略板 <span>HK Stock Strategy Dashboard</span></div>
   <div class="header-meta">
-    <span><span class="live-dot"></span>數據更新中</span>
+    <span><span class="live-dot"></span><span id="live-label">數據更新中</span></span>
     <span id="hdr-time">--</span>
   </div>
 </div>
@@ -640,6 +695,14 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn" data-tab="cai">保力加通道</button>
   <button class="tab-btn" data-tab="stock">個股綜合分析</button>
   <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
+</div>
+
+<!-- Offline / stale data banner -->
+<div id="offline-banner" role="alert">
+  <span>⚠️</span>
+  <span class="offline-reason" id="offline-reason">數據載入失敗</span>
+  <button class="offline-retry" onclick="loadData()">重試</button>
+  <button class="offline-dismiss" onclick="document.getElementById('offline-banner').classList.remove('visible')" title="關閉">×</button>
 </div>
 
 <!-- ═══ Panel 1: 北水追蹤 ════════════════════════════════════════════════════ -->
@@ -820,9 +883,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       請執行：<code style="background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border)">python sfc_library.py</code>
     </div>
     <div id="sfc-chart-wrap" style="display:none">
-      <canvas id="sfcCanvas"></canvas>
-      <div id="sfc-sub-wrap" style="display:none;border-top:1px solid #f0ede8;margin-top:3px;">
-        <canvas id="sfcSubCanvas"></canvas>
+      <canvas id="sfcCanvas" style="display:block;width:100%"></canvas>
+      <div id="sfc-sub-wrap" style="display:none;border-top:1px solid #f0ede8;margin-top:3px;min-height:85px;">
+        <canvas id="sfcSubCanvas" style="display:block;width:100%"></canvas>
       </div>
       <div id="sfc-legend" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:11px;color:var(--muted)"></div>
     </div>
@@ -836,8 +899,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
              border-radius:4px;padding:4px 12px;font-size:12px;cursor:pointer;
              font-family:'Noto Sans TC',sans-serif;transition:all .2s;">展開明細 ▼</button>
   </div>
-  <div id="short-tbl-wrap" style="display:none">
-  <div class="tbl-wrap">
+  <div id="short-tbl-wrap" class="tbl-wrap" style="display:none">
     <table id="tbl-short">
       <thead>
         <tr>
@@ -859,7 +921,6 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <tr><td colspan="12"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
       </tbody>
     </table>
-  </div>
   </div>
 </div>
 
@@ -912,7 +973,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <!-- Stock header: code name industry type size -->
       <div id="sdw-det-hdr" style="display:flex;align-items:baseline;gap:10px;margin-bottom:16px;flex-wrap:wrap"></div>
       <!-- 7 metric cards -->
-      <div id="sdw-det-metrics" style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin-bottom:14px"></div>
+      <div id="sdw-det-metrics" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-bottom:14px"></div>
       <!-- 持倉比例 bars -->
       <div style="font-size:12px;font-weight:500;color:var(--muted);margin-bottom:8px">持倉比例</div>
       <div id="sdw-group-bars"></div>
@@ -923,7 +984,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div style="font-size:13px;font-weight:500;color:var(--text)">持倉比例趨勢（週度）</div>
       <div id="sdw-group-sub" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
     </div>
-    <canvas id="sdwGroupCanvas" style="width:100%;display:block"></canvas>
+    <canvas id="sdwGroupCanvas" style="width:100%;display:block;min-height:200px"></canvas>
     <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);justify-content:center"></div>
 
     <!-- sdw concentration chart (持倉集中度趨勢 — SECOND) -->
@@ -931,7 +992,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div style="font-size:13px;font-weight:500;color:var(--text)">持倉集中度趨勢</div>
       <div id="sdw-chart-sub" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
     </div>
-    <canvas id="sdwCanvas" style="width:100%;display:block;margin-bottom:12px"></canvas>
+    <canvas id="sdwCanvas" style="width:100%;display:block;min-height:200px;margin-bottom:12px"></canvas>
 
     <!-- Top-5 table -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin:16px 0 7px">
@@ -1191,10 +1252,9 @@ function insightBadge(s) {
 const fmtConsec = s => {
   const c = s.ccass_consec || 0;
   const p = s.ccass_streak_pct || 0;
-  const d = s.pct_delta || 0;
+  const d = (s.pct_delta != null ? s.pct_delta : 0);
   if (c === 0 && d === 0) return '—';
   if (c === 0 && d !== 0) {
-    // Single day change — no streak yet
     const pStr = (d > 0 ? '+' : '') + d.toFixed(2) + 'pp';
     return `${d > 0 ? '▲' : '▼'}1 (${pStr})`;
   }
@@ -1246,7 +1306,7 @@ function applyData(d, stale) {
     ...s,
     name_chi:    cleanName(s.name_chi),
     name:        cleanName(s.name),
-    short_avg:   s.short_avg  || s.short_avg5 || 0,
+    short_avg:   s.short_avg  ?? 0,
     short_ratio: Math.min(s.short_ratio || 0, 100),
   }));
   updateTime = d.update_time || '';
@@ -1281,6 +1341,14 @@ function applyData(d, stale) {
   const staleMark = stale ? ' (離線)' : '';
   document.getElementById('hdr-time').textContent =
     updateTime ? '更新: ' + updateTime + staleMark : '';
+  // Reflect data freshness on the live dot + label
+  const _dot   = document.querySelector('.live-dot');
+  const _label = document.getElementById('live-label');
+  if (_dot) {
+    _dot.classList.toggle('stale', !!stale);
+    _dot.classList.remove('error');
+  }
+  if (_label) _label.textContent = stale ? '數據已快取' : '數據更新中';
 
   // Reset SDW state so fresh data reseeds correctly
   if (!stale) {
@@ -1303,10 +1371,12 @@ function applyData(d, stale) {
 }
 
 async function loadData() {
-  const dot = document.querySelector('.live-dot');
+  const dot    = document.querySelector('.live-dot');
+  const banner = document.getElementById('offline-banner');
+  const reason = document.getElementById('offline-reason');
   if (dot) dot.style.animationPlayState = 'running';
 
-  // 1. Show cached data immediately if available — gives instant render while fetch runs
+  // 1. Show cached data immediately — gives instant render while live fetch runs
   let staleCache = null;
   try {
     const cached = localStorage.getItem(CACHE_KEY);
@@ -1314,29 +1384,68 @@ async function loadData() {
       const d = JSON.parse(cached);
       if (d.stocks && d.stocks.length > 0) {
         staleCache = d;
-        applyData(d, true);  // renders immediately; will be overwritten by live fetch below
+        applyData(d, true);
       }
     }
   } catch(e) { localStorage.removeItem(CACHE_KEY); }
 
-  // 2. Always attempt live fetch — even if staleCache populated allStocks above.
-  // On success: overwrite with fresh data and clear any stale/offline label.
-  // On failure: keep staleCache data but update label to show it's stale.
+  // 2. Live fetch — diagnose failures precisely so the user knows what to fix
   let fetchOk = false;
   try {
+    // Detect file:// protocol early — fetch('data.json') always fails there
+    if (location.protocol === 'file:') {
+      throw Object.assign(new Error('file-protocol'),
+        { _hint: '請透過 HTTP 伺服器開啟（如 GitHub Pages 或 python -m http.server），而非直接開啟本地檔案。' });
+    }
+
     const r = await fetch('data.json', { cache: 'no-cache' });
-    if (!r.ok) throw new Error(r.status);
+    if (r.status === 404) {
+      throw Object.assign(new Error('404'),
+        { _hint: 'data.json 尚未生成。請先執行 <code>python main.py</code> 並部署至伺服器。' });
+    }
+    if (!r.ok) {
+      throw Object.assign(new Error(`HTTP ${r.status}`),
+        { _hint: `伺服器返回 HTTP ${r.status}。請檢查部署狀態。` });
+    }
+
     const d = await r.json();
     localStorage.setItem(CACHE_KEY, JSON.stringify(d));
-    applyData(d, false);   // clears stale mark — sets clean "更新: ..." label
+    applyData(d, false);
     fetchOk = true;
+
+    // Clear any stale banner on success
+    if (banner) banner.classList.remove('visible');
+
   } catch(e) {
-    // fetch failed — keep whatever data we have but mark it clearly
+    const isOffline  = !navigator.onLine;
+    const isFileProto = location.protocol === 'file:';
+    // Build human-readable reason
+    let msg;
+    if (e._hint) {
+      msg = e._hint;
+    } else if (isOffline) {
+      msg = '目前離線，無法獲取最新數據。請檢查網路連線後重試。';
+    } else if (isFileProto) {
+      msg = '請透過 HTTP 伺服器開啟（如 GitHub Pages 或 <code>python -m http.server</code>）。';
+    } else if (e instanceof SyntaxError) {
+      msg = 'data.json 格式損壞（JSON 解析失敗）。請重新執行 <code>python main.py</code>。';
+    } else {
+      msg = `無法連接至數據源（${e.message || '網絡錯誤'}）。請稍後重試。`;
+    }
+
+    // Log for debugging
+    console.warn('[loadData] fetch failed:', e.message || e, '| staleCache:', !!staleCache);
+
+    // Show the banner
+    if (banner && reason) {
+      reason.innerHTML = msg;
+      banner.classList.add('visible');
+    }
+
+    // Render whatever we have
     if (staleCache) {
-      // Real data from a previous run — show it with a stale notice
       applyData(staleCache, true);
     } else {
-      // No cache at all — fall back to mock data for offline demo
       allStocks      = generateMockData();
       northboundFlow = allStocks.filter(s => s.sb_buy > 0 || s.sb_sell > 0 || s.sb_total > 0);
       ccassHoldings  = allStocks
@@ -1542,14 +1651,16 @@ function drawSbChart(sorted) {
   const stocks = sorted;
   if (!stocks.length) return;
 
+  const dpr = window.devicePixelRatio || 1;
   const W = Math.max(300, window.innerWidth - 48);
   const H = PAD_TOP + stocks.length * ROW_H + PAD_BOT;
 
-  canvas.width  = W;
-  canvas.height = H;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
   canvas.style.width  = W + 'px';
   canvas.style.height = H + 'px';
   const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
 
   const chartW = W - PAD_LEFT - PAD_RIGHT;
@@ -1675,6 +1786,7 @@ function drawSbChart(sorted) {
   ctx.fillText(maxM, zeroX + chartW/2 * 0.92, H - 6);
   ctx.fillText('-'+maxM, zeroX - chartW/2 * 0.92, H - 6);
 
+  _wireSbChartTip();
 }
 
 function renderBshui() {
@@ -2128,18 +2240,23 @@ async function drawSfcChart() {
     const subWrap   = document.getElementById('sfc-sub-wrap');
     wrap.style.display = 'block';
     await new Promise(r => requestAnimationFrame(r));
+    const dpr  = window.devicePixelRatio || 1;
     const W    = (wrap.clientWidth || 680);
     const H    = Math.max(260, Math.min(380, W * 0.45));
     const H_sub = 85;
-    canvas.width  = W;
-    canvas.height = H;
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
     const inStockMode = sfcMode === 'stock' && sfcCurCode;
     subWrap.style.display   = inStockMode ? 'block' : 'none';
-    subCanvas.width  = W;
-    subCanvas.height = H_sub;
+    subCanvas.width  = W * dpr;
+    subCanvas.height = H_sub * dpr;
+    subCanvas.style.width  = W + 'px';
+    subCanvas.style.height = H_sub + 'px';
     const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, W, H);
-    // No SFC data — draw instructional message
     if (!sfcLoaded || !sfcDates.length) {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = '#bbb'; ctx.font = '14px sans-serif';
@@ -2404,8 +2521,10 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
   const pctSeries = series.filter(s => s.pct > 0);
   if (subCanvas && pctSeries.length >= 2) {
     const sCtx   = subCanvas.getContext('2d');
-    const sW     = subCanvas.width;
-    const sH     = subCanvas.height;
+    const _sfcDpr = window.devicePixelRatio || 1;
+    const sW     = subCanvas.width  / _sfcDpr;
+    const sH     = subCanvas.height / _sfcDpr;
+    sCtx.scale(_sfcDpr, _sfcDpr);
     // Same left/right as main chart — guarantees x-alignment
     const SP     = { top: 8, right: P.right, bottom: 22, left: P.left,
                      get cW() { return sW - this.left - this.right; },
@@ -2481,7 +2600,10 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
 
   function _getOrCreateTip(cvs) {
     if (!cvs._sfcTip) {
+      const existing = cvs.parentElement.querySelector('._sfc-stock-tip');
+      if (existing) { cvs._sfcTip = existing; return existing; }
       const tip = document.createElement('div');
+      tip.className = '_sfc-stock-tip';
       tip.style.cssText = 'display:none;position:absolute;background:#1a1a1a;color:#fff;font-size:12px;' +
         'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
       cvs.parentElement.style.position = 'relative';
@@ -2535,16 +2657,19 @@ function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
 }
 
 // ── Tooltip helper ────────────────────────────────────────────────────────────
-function _sfcWireTip(canvas, pts, xFn, yFn, stepW, labelFn) {
-  if (!canvas._sfcTip) {
-    const tip = document.createElement('div');
-    tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
+let _sfcSharedTip = null;
+function _sfcGetSharedTip() {
+  if (!_sfcSharedTip) {
+    _sfcSharedTip = document.createElement('div');
+    _sfcSharedTip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
       'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.6';
-    
-    document.body.appendChild(tip);
-    canvas._sfcTip = tip;
+    document.body.appendChild(_sfcSharedTip);
   }
-  const tip = canvas._sfcTip;
+  return _sfcSharedTip;
+}
+function _sfcWireTip(canvas, pts, xFn, yFn, stepW, labelFn) {
+  const tip = _sfcGetSharedTip();
+  if (!canvas._sfcTip) canvas._sfcTip = tip;
 
   // Clone function references onto canvas for mousemove
   canvas._sfcPts   = pts;
@@ -3093,22 +3218,22 @@ const SDW_COLORS  = [
 // without waiting for any extra fetch.
 function loadSdwFromDataJson() {
   if (!allStocks.length) return false;
-  const today = allStocks[0].ccass_trade_date ||
-                new Date().toISOString().slice(0, 10);
-  // Seed sdwData with the latest snapshot from data.json
+  let seeded = 0;
   allStocks.forEach(s => {
     if (!s.sdw_holders || !s.sdw_holders.length) return;
-    if (!sdwData[today]) sdwData[today] = {};
-    sdwData[today][norm5(s.code)] = {
+    const ds = s.ccass_trade_date || new Date().toISOString().slice(0, 10);
+    if (!sdwData[ds]) sdwData[ds] = {};
+    sdwData[ds][norm5(s.code)] = {
       p:         s.sdw_holders,
       total_sh:  s.sdw_total_sh  || 0,
       issued_sh: 0,
     };
+    seeded++;
   });
   if (!Object.keys(sdwData).length) return false;
-  sdwDates  = Object.keys(sdwData).sort();
+  sdwDates = [...new Set([...sdwDates, ...Object.keys(sdwData)])].sort();
   sdwLoaded = true;
-  return true;
+  return seeded > 0;
 }
 
 // ── Lazy-fetch sdw_{code}.json for chart history ──────────────────────────────
@@ -3362,6 +3487,7 @@ function renderSdwPanel() {
 
   // ── Table ────────────────────────────────────────────────────────────────
   const rows = holders.slice(0, topN).map((h, i) => {
+    const _rowAttr = 'data-sdw-row="1"';
     const prev    = prevMap[h.pid];
     const dSh     = prev ? h.sh  - prev.sh  : null;
     const dPct    = prev ? h.pct - prev.pct : null;
@@ -3378,7 +3504,7 @@ function renderSdwPanel() {
     const barW    = Math.round((h.pct / maxPct) * 60);
     const barCol  = i === 0 ? '#c0252d' : i < 3 ? '#e07020' : '#3b82f6';
 
-    return `<tr>
+    return `<tr ${_rowAttr}>
       <td class="rank">${i+1}</td>
       <td>
         <span class="name-cell">${cleanName(h.name)}</span>
@@ -3411,11 +3537,15 @@ function renderSdwPanel() {
 function drawSdwChart(code, selectedDs) {
   const canvas = document.getElementById('sdwCanvas');
   if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
   const W   = canvas.parentElement.clientWidth || 600;
   const H   = 200;
-  canvas.width  = W;
-  canvas.height = H;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
   const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
 
   // Collect time series: last 1 year only
@@ -3520,9 +3650,10 @@ function drawSdwChart(code, selectedDs) {
     const tip = document.createElement('div');
     tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
       'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
-    
-    document.body.appendChild(tip);
-    canvas._sdwConcTip = tip;
+    // Reuse existing tip element if already created for this canvas key
+    const existing = document.getElementById('_sdw-conc-tip');
+    if (existing) { canvas._sdwConcTip = existing; }
+    else { tip.id = '_sdw-conc-tip'; document.body.appendChild(tip); canvas._sdwConcTip = tip; }
     canvas.style.cursor = 'crosshair';
 
     canvas.addEventListener('mousemove', e => {
@@ -3649,11 +3780,16 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
     </div>` : '';
   document.getElementById('sdw-group-bars').innerHTML += lockupNote;
 
-  // Top-5 table (no 組別 column)
+  // NOTE: body-sdw table rows are written by renderSdwPanel above.
+  // renderDetailCard owns only: sdw-det-hdr, sdw-det-metrics, sdw-group-bars.
+  // The top-N table below is kept for the renderDetailCard-only call path
+  // but guarded to avoid clobbering renderSdwPanel's already-written rows.
   const _topN = sdwTopN;
   const top5 = holders.slice(0, _topN);
   const others = holders.slice(_topN).reduce((a,h) => a + (h.pct||0), 0);
-  document.getElementById('body-sdw').innerHTML =
+  const _bodyEl = document.getElementById('body-sdw');
+  const _alreadyPopulated = _bodyEl && _bodyEl.querySelectorAll('tr[data-sdw-row]').length > 0;
+  if (!_alreadyPopulated) document.getElementById('body-sdw').innerHTML =
     top5.map((h,i) => {
       const prev    = prevHolders ? prevHolders.find(p => p.pid === h.pid) : null;
       const dSh     = prev ? h.sh  - prev.sh  : null;
@@ -3682,11 +3818,15 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
 function drawGroupHistoryChart(code) {
   const canvas = document.getElementById('sdwGroupCanvas');
   if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
   const W = canvas.parentElement.clientWidth || 600;
   const H = 200;
-  canvas.width  = W;
-  canvas.height = H;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
   const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
 
   const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
@@ -3775,12 +3915,16 @@ function drawGroupHistoryChart(code) {
   // ── Hover tooltip ─────────────────────────────────────────────────────────
   canvas._sdwGroup = { series, PAD, cW, n };
   if (!canvas._sdwGroupTip) {
-    const tip = document.createElement('div');
-    tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
-      'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
-    
-    document.body.appendChild(tip);
-    canvas._sdwGroupTip = tip;
+    const existing = document.getElementById('_sdw-group-tip');
+    if (existing) { canvas._sdwGroupTip = existing; }
+    else {
+      const tip = document.createElement('div');
+      tip.id = '_sdw-group-tip';
+      tip.style.cssText = 'display:none;position:fixed;background:#1a1a1a;color:#fff;font-size:12px;' +
+        'padding:6px 10px;border-radius:5px;pointer-events:none;white-space:nowrap;z-index:200;line-height:1.8';
+      document.body.appendChild(tip);
+      canvas._sdwGroupTip = tip;
+    }
     canvas.style.cursor = 'crosshair';
 
     canvas.addEventListener('mousemove', e => {
@@ -3862,9 +4006,9 @@ function caiChannel(data, period, mult) {
   const result = [];
   for (let i = 0; i < data.length; i++) {
     if (i < period - 1) { result.push(null); continue; }
-    const window = data.slice(i - period + 1, i + 1);
-    const ma = window.reduce((a,v) => a+v, 0) / period;
-    const variance = window.reduce((a,v) => a + (v-ma)**2, 0) / period;
+    const win = data.slice(i - period + 1, i + 1);
+    const ma = win.reduce((a,v) => a+v, 0) / period;
+    const variance = win.reduce((a,v) => a + (v-ma)**2, 0) / period;
     const std = Math.sqrt(variance);
     result.push({ ma, upper: ma + mult*std, lower: ma - mult*std, std });
   }
@@ -3919,7 +4063,7 @@ async function updateCaiCards() {
 
     const year   = new Date().getFullYear();
     const byDate = await loadTvYear(year);
-    if (!byDate) return;
+    if (!byDate || !Object.keys(byDate).length) return;
 
     const dates = Object.keys(byDate).sort();
     const today = dates[dates.length - 1];
@@ -3972,7 +4116,7 @@ function caiBuildDropdown(q) {
   if (!matches.length) { dd.style.display = 'none'; return; }
   dd.innerHTML = matches.map(s =>
     `<div style="padding:6px 10px;cursor:pointer;" onmousedown="caiSetStock('${s.code}')"
-      onmouseover="this.style.background='var(--hover)'" onmouseout="this.style.background=''">
+      onmouseover="this.style.background='var(--red-lt)'" onmouseout="this.style.background=''">
       <span style="color:var(--muted);font-size:11px;margin-right:6px">${s.code}</span>${s.name_chi}
     </div>`
   ).join('');
@@ -4273,27 +4417,31 @@ async function drawCai() {
   void atrHistory;
 }
 
-// ── SbChart hover tooltip ────────────────────────────────────────────────────
-(function() {
-  const TIP = document.createElement('div');
-  TIP.id = 'sb-chart-tip';
-  Object.assign(TIP.style, {
-    position:'fixed', display:'none', pointerEvents:'none',
-    background:'var(--card)', border:'1px solid var(--border)',
-    borderRadius:'6px', padding:'6px 10px', fontSize:'12px',
-    color:'var(--text)', boxShadow:'0 2px 8px rgba(0,0,0,0.15)',
-    zIndex:'9999', lineHeight:'1.6', whiteSpace:'nowrap',
-  });
-  document.body.appendChild(TIP);
-
-  document.addEventListener('mousemove', function(e) {
-    const canvas = document.getElementById('sbChart');
-    if (!canvas || !lastChartData.length) { TIP.style.display='none'; return; }
+// ── SbChart hover tooltip ─────────────────────────────────────────────────────
+let _sbChartTip = null;
+function _getSbTip() {
+  if (!_sbChartTip) {
+    _sbChartTip = document.createElement('div');
+    _sbChartTip.id = 'sb-chart-tip';
+    Object.assign(_sbChartTip.style, {
+      position:'fixed', display:'none', pointerEvents:'none',
+      background:'var(--card)', border:'1px solid var(--border)',
+      borderRadius:'6px', padding:'6px 10px', fontSize:'12px',
+      color:'var(--text)', boxShadow:'0 2px 8px rgba(0,0,0,0.15)',
+      zIndex:'9999', lineHeight:'1.6', whiteSpace:'nowrap',
+    });
+    document.body.appendChild(_sbChartTip);
+  }
+  return _sbChartTip;
+}
+function _wireSbChartTip() {
+  const canvas = document.getElementById('sbChart');
+  if (!canvas || canvas._sbTipWired) return;
+  canvas._sbTipWired = true;
+  canvas.addEventListener('mousemove', function(e) {
+    const TIP = _getSbTip();
+    if (!lastChartData.length) { TIP.style.display='none'; return; }
     const rect = canvas.getBoundingClientRect();
-    if (e.clientX < rect.left || e.clientX > rect.right ||
-        e.clientY < rect.top  || e.clientY > rect.bottom) {
-      TIP.style.display = 'none'; return;
-    }
     const layout = getLayout();
     const ROW_H   = layout === 'portrait' ? 44 : layout === 'landscape' ? 32 : 36;
     const PAD_TOP = 12;
@@ -4314,17 +4462,16 @@ async function drawCai() {
       `北水淨流入 <span style="color:${netCol};font-weight:600">${netStr}</span>` +
       (consecStr ? `  ${consecStr}` : '');
     TIP.style.display = 'block';
-    const tipW = 200, tipH = 60;
+    const tipW = 220, tipH = 60;
     const tx = Math.min(e.clientX + 14, window.innerWidth  - tipW - 8);
     const ty = Math.min(e.clientY + 14, window.innerHeight - tipH - 8);
     TIP.style.left = tx + 'px';
     TIP.style.top  = ty + 'px';
   });
-
-  document.getElementById('sbChart')?.addEventListener('mouseleave', () => {
-    TIP.style.display = 'none';
+  canvas.addEventListener('mouseleave', () => {
+    _getSbTip().style.display = 'none';
   });
-})();
+}
 
 // ── Tencent Finance index fetcher (via Cloudflare Worker proxy) ──────────────
 // Worker proxies qt.gtimg.cn and adds CORS headers.
@@ -4398,6 +4545,22 @@ loadData();
 // Re-fetch data.json every 5 minutes
 setInterval(loadData, 5 * 60 * 1000);
 
+// Auto-retry when browser comes back online
+window.addEventListener('online', () => {
+  console.info('[network] online — retrying loadData');
+  loadData();
+});
+window.addEventListener('offline', () => {
+  const dot   = document.querySelector('.live-dot');
+  const label = document.getElementById('live-label');
+  const banner = document.getElementById('offline-banner');
+  const reason = document.getElementById('offline-reason');
+  if (dot)    { dot.classList.add('stale'); dot.classList.remove('error'); }
+  if (label)  label.textContent = '數據已快取';
+  if (reason) reason.innerHTML  = '目前離線，數據顯示為快取版本。網路恢復後將自動重新載入。';
+  if (banner) banner.classList.add('visible');
+});
+
 // Eagerly load SFC data at boot so table and chart work without requiring a tab click.
 (async () => {
   const ok = await loadSfcData();
@@ -4420,14 +4583,19 @@ setInterval(loadData, 5 * 60 * 1000);
 
   if (ok) computeSfcCards();   // populate summary cards from sfcData
 })();
+let _resizeTimer = null;
 window.addEventListener('resize', () => {
-  setTimeout(() => {
-    if (document.querySelector('.tab-btn[data-tab="cai"]').classList.contains('active')) drawCai();
-  if (document.querySelector('.tab-btn[data-tab="hsi"]')?.classList.contains('active')) initHsiPanel();
-    if (document.querySelector('.tab-btn[data-tab="bshui"]').classList.contains('active')) renderBshui();
-    if (document.querySelector('.tab-btn[data-tab="short"]').classList.contains('active')) { drawShortRiskMap(allStocks); drawSfcChart(); renderSqueezeTop10(allStocks); }
-    if (document.querySelector('.tab-btn[data-tab="ccass"]').classList.contains('active')) renderSdwPanel();
-  }, 200);
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => {
+    const activeTab = () => t => document.querySelector(`.tab-btn[data-tab="${t}"]`)?.classList.contains('active');
+    const is = t => document.querySelector(`.tab-btn[data-tab="${t}"]`)?.classList.contains('active');
+    if (is('cai'))   drawCai();
+    if (is('hsi'))   initHsiPanel();
+    if (is('bshui')) renderBshui();
+    if (is('short')) { drawShortRiskMap(allStocks); drawSfcChart(); renderSqueezeTop10(allStocks); }
+    if (is('ccass')) renderSdwPanel(); // redraws sdwCanvas + sdwGroupCanvas
+    if (is('stock') && stkCode) stkRenderCharts();
+  }, 250);
 });
 
 // ══ HSI 週線預測通道 ══════════════════════════════════════════════════════════
@@ -4892,17 +5060,21 @@ function _updateHsiVlineBar(chartLabels, weekly, lastDs) {
     item('現價',      lastRec.c.toLocaleString()) +
     item('變動',      chgStr, cc) +
     item('週數',      weeks) +
-    `<button onclick="hsiVlineIdx=null;document.getElementById('hsi-vline-bar').innerHTML='<span style=\\'color:var(--muted)\\'>— 點擊圖表設定基準線</span>';if(window.hsiChartInst)hsiChartInst.update(\\'none\\');" ` +
+    `<button onclick="hsiVlineIdx=null;document.getElementById('hsi-vline-bar').innerHTML='<span style=\\'color:var(--muted)\\'>— 點擊圖表設定基準線</span>';if(hsiChartInst)hsiChartInst.update(\\'none\\');" ` +
     `style="margin-left:auto;font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);cursor:pointer">清除</button>`;
 }
 
 async function initHsiPanel() {
   // Wait for Chart.js to load if not yet available
   if (typeof Chart === 'undefined') {
+    // Chart.js not yet available — poll until it loads (max 3s)
     await new Promise(resolve => {
-      const script = document.querySelector('script[src*="chart.umd.js"]');
-      if (script) { script.addEventListener('load', resolve); }
-      else { setTimeout(resolve, 500); }
+      let attempts = 0;
+      const check = () => {
+        if (typeof Chart !== 'undefined' || attempts++ > 30) return resolve();
+        setTimeout(check, 100);
+      };
+      check();
     });
   }
   if (!hsiData) {
@@ -5317,6 +5489,5 @@ function initStockPanel() {
 
 
 </script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 </body>
 </html>
