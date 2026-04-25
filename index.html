@@ -1410,7 +1410,10 @@ async function loadData() {
     }
 
     const d = await r.json();
-    localStorage.setItem(CACHE_KEY, JSON.stringify(d));
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch(e) {
+      console.warn('[loadData] cache write failed (quota):', e.message);
+      localStorage.removeItem(CACHE_KEY);
+    }
     applyData(d, false);
     fetchOk = true;
 
