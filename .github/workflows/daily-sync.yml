@@ -2,8 +2,8 @@ name: Daily Sync
 
 on:
   schedule:
+    - cron: '0 11 * * 1-5'   # 11:00 UTC / 19:00 HKT (Mon–Fri) — early fetch
     - cron: '0 12 * * 1-5'   # 12:00 UTC / 20:00 HKT (Mon–Fri)
-    - cron: '0 14 * * 1-5'   # 14:00 UTC / 22:00 HKT (Mon–Fri) — SFC check
     - cron: '0 13 * * 5'   # 13:00 UTC / 21:00 HKT (Friday)  — SDW weekly run 1
     - cron: '0 15 * * 5'   # 15:00 UTC / 23:00 HKT (Friday)  — SDW weekly run 2
     - cron: '0 17 * * 5'   # 17:00 UTC / 01:00 HKT (Saturday) — SDW weekly run 3
@@ -18,7 +18,7 @@ on:
         type: choice
         options:
           - daily
-          - sfc-check
+          - early-fetch
           - sfc-weekly
           - di-weekly
           - both-weekly
@@ -43,13 +43,53 @@ on:
 
 jobs:
 
+  # ── Early fetch (Mon–Fri 19:00 HKT) ──────────────────────────────────────────
+  # Stock Connect top-10 and CCASS southbound data are published ~18:xx HKT.
+  # Fetching at 19:00 gives main.py fresh data when it runs at 20:00.
+  early-fetch:
+    name: Early fetch — Stock Connect + CCASS southbound
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: early-fetch
+      cancel-in-progress: true
+    permissions:
+      contents: write
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 11 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'early-fetch')
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+
+      - name: Update Stock Connect top10 (today + repair incomplete history)
+        run: python sc_top10_library.py --update
+
+      - name: Update CCASS southbound holdings (today)
+        run: python ccass_library.py --update --fix-names
+
+      - name: Commit
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          for f in sc_top10_20*.json ccass_20*.json; do
+            [ -f "$f" ] && git add "$f"
+          done
+          git diff --staged --quiet || \
+            (git commit -m "Early fetch: $(date +'%Y-%m-%d %H:%M')" && git push)
+
   # ── Daily analysis (Mon–Fri 20:00 HKT) ─────────────────────────────────────
+  # Depends on early-fetch (19:00) having already committed sc_top10 + ccass data.
   daily:
     name: Daily analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 45
     concurrency:
-      group: daily-${{ github.ref }}
+      group: daily
       cancel-in-progress: true
     permissions:
       contents: write
@@ -62,19 +102,13 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - run: playwright install chromium
+        # Note: playwright not needed here — sc_top10 + ccass run in early-fetch job at 19:00
 
-      - name: Fetch today's turnover data
+      - name: Fetch today's turnover + short selling data
         run: python build_turnover.py
-
-      - name: Fetch today's short selling data
-        run: python build_short.py
-
-      - name: Update Stock Connect top10 (today + repair incomplete history)
-        run: python sc_top10_library.py --update
-
-      - name: Update CCASS southbound holdings (today)
-        run: python ccass_library.py --update --fix-names
+        # build_turnover.py parses both the quotation table AND adj_short section
+        # from the same HKEX page, writing turnover_{Y}.json AND short_{Y}.json.
+        # build_short.py is redundant here — removed.
 
       - name: Download SDW DB from R2
         env:
@@ -98,52 +132,12 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in ccass_20*.json sc_top10_20*.json short_20*.json turnover_20*.json; do
+          for f in short_20*.json turnover_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
+          # sc_top10_20*.json and ccass_20*.json committed by early-fetch at 19:00
           git diff --staged --quiet || \
             (git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')" && git push)
-
-  # ── SFC nightly check (Mon–Fri 22:00 HKT) ────────────────────────────────────
-  sfc-check:
-    name: SFC nightly check
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    concurrency:
-      group: sfc-check-${{ github.ref }}
-      cancel-in-progress: true
-    permissions:
-      contents: write
-    if: |
-      (github.event_name == 'schedule' && github.event.schedule == '0 14 * * 1-5') ||
-      (github.event_name == 'workflow_dispatch' && inputs.job == 'sfc-check')
-
-    steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
-        with: { python-version: '3.11', cache: 'pip' }
-      - run: pip install -r requirements.txt
-      - name: Restore SFC cache
-        uses: actions/cache@v4
-        with:
-          path: sfc_cache
-          key: sfc-cache-${{ github.run_id }}
-          restore-keys: sfc-cache-
-      - name: Fetch any new SFC reports
-        run: python sfc_library.py
-      - name: Save SFC cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: sfc_cache
-          key: sfc-cache-${{ github.run_id }}
-      - name: Commit
-        run: |
-          git config --global user.name "Bot"
-          git config --global user.email "bot@github.com"
-          for f in sfc_20*.json; do [ -f "$f" ] && git add "$f"; done
-          git diff --staged --quiet || \
-            (git commit -m "SFC check: $(date +'%Y-%m-%d %H:%M')" && git push)
 
   # ── CCASS full build (manual) ────────────────────────────────────────────────
   ccass-build:
@@ -151,7 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 320
     concurrency:
-      group: ccass-build-${{ github.ref }}
+      group: ccass-build
       cancel-in-progress: true
     permissions:
       contents: write
@@ -179,7 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 320
     concurrency:
-      group: sc-top10-build-${{ github.ref }}
+      group: sc-top10-build
       cancel-in-progress: true
     permissions:
       contents: write
@@ -223,7 +217,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     concurrency:
-      group: sdw-build-${{ github.ref }}
+      group: sdw-build
       cancel-in-progress: true
     permissions:
       contents: write
@@ -280,14 +274,15 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "SDW charts: $(date +'%Y-%m-%d')" && git push)
 
-  # ── SDW weekly (Mon–Fri 21:00 + 23:00 HKT) ──────────────────────────────────
+  # ── SDW weekly (Friday only: 21:00, 23:00, 01:00+1 HKT — three retry runs) ──
   # Runs --update: fetches only the latest Friday not yet in the DB.
+  # Three runs cover HKEX SDW publishing delays; idempotent so reruns are safe.
   sdw-weekly:
     name: SDW weekly update → ccass_sdw.db
     runs-on: ubuntu-latest
     timeout-minutes: 150
     concurrency:
-      group: sdw-weekly-${{ github.ref }}
+      group: sdw-weekly
       cancel-in-progress: false
     permissions:
       contents: write
@@ -350,7 +345,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: sfc-weekly-${{ github.ref }}
+      group: sfc-weekly
       cancel-in-progress: true
     permissions:
       contents: write
@@ -370,10 +365,14 @@ jobs:
           key: sfc-cache-${{ github.run_id }}
           restore-keys: sfc-cache-
       - name: Update CCASS participant list
-        run: python ccass_participant_library.py --update
+        run: |
+          python ccass_participant_library.py --update || \
+          echo "Warning: participant update failed, continuing"
 
       - name: Update CCASS universe
-        run: python ccass_universe.py
+        run: |
+          python ccass_universe.py || \
+          echo "Warning: universe update failed, continuing"
 
       - name: Update SFC library
         run: python sfc_library.py
@@ -397,14 +396,16 @@ jobs:
 
   # ── Turnover + short full rebuild (manual) ───────────────────────────────────
   # Re-fetches every trading day from START_DATE. Use --rebuild to overwrite existing.
-  # turnover_{YYYY}.json: name_en, name_zh, prev_close, close, vol, tv
+  # build_turnover.py writes BOTH turnover_{Y}.json AND short_{Y}.json (same source page).
+  # build_short.py --rebuild is also run to backfill any edge-case date gaps.
+  # turnover_{YYYY}.json: name_en, name_zh, prev_close, close, vol, tv, high, low
   # short_{YYYY}.json:    name, sv (股數SH), st (金額$)
   turnover-build:
     name: Turnover + short full rebuild (2026-02-02 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     concurrency:
-      group: turnover-build-${{ github.ref }}
+      group: turnover-build
       cancel-in-progress: true
     permissions:
       contents: write
@@ -433,15 +434,16 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "Turnover+short rebuild: $(date +'%Y-%m-%d %H:%M')" && git push)
 
-  # ── Short selling full rebuild (manual) ──────────────────────────────────────
-  # Re-fetches every date from START_DATE using next trading day's file.
+  # ── Short selling full rebuild (manual, standalone) ─────────────────────────
+  # Use when you need to rebuild ONLY short_{Y}.json without touching turnover.
+  # For a full rebuild of both, use turnover-build instead (it runs both scripts).
   # short_{YYYY}.json: name, sv (股數SH), st (金額$)
   short-build:
     name: Short selling library full rebuild (2026-02-02 to today)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     concurrency:
-      group: short-build-${{ github.ref }}
+      group: short-build
       cancel-in-progress: true
     permissions:
       contents: write
@@ -473,7 +475,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 320
     concurrency:
-      group: sfc-build-${{ github.ref }}
+      group: sfc-build
       cancel-in-progress: true
     permissions:
       contents: write
@@ -515,7 +517,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     concurrency:
-      group: di-weekly-${{ github.ref }}
+      group: di-weekly
       cancel-in-progress: true
     permissions:
       contents: write
@@ -556,7 +558,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: ccass-universe-${{ github.ref }}
+      group: ccass-universe
       cancel-in-progress: true
     permissions:
       contents: write
@@ -585,7 +587,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     concurrency:
-      group: sdw-backfill-${{ github.ref }}
+      group: sdw-backfill
       cancel-in-progress: true
     permissions:
       contents: write
@@ -638,7 +640,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: sdw-migrate-json-${{ github.ref }}
+      group: sdw-migrate-json
       cancel-in-progress: true
     permissions:
       contents: write
@@ -669,7 +671,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
-      group: hsi-weekly-${{ github.ref }}
+      group: hsi-weekly
       cancel-in-progress: true
     permissions:
       contents: write
@@ -703,7 +705,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 320
     concurrency:
-      group: rank-history-backfill-${{ github.ref }}
+      group: rank-history-backfill
       cancel-in-progress: true
     permissions:
       contents: write
@@ -742,6 +744,7 @@ jobs:
           print('\n'.join(days))
           sys.stderr.write(f'Generated {len(days)} trading days\n')
           " > /tmp/trading_days.txt
+          [ -s /tmp/trading_days.txt ] || { echo "ERROR: trading day generation failed"; exit 1; }
 
           COUNT=0
           while IFS= read -r DAY; do
