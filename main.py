@@ -17,7 +17,8 @@ from turnover_library import load_year as tv_load_year, load_recent as tv_load_r
 from sc_top10_library import get_top10, get_top10_history, get_sb_summary
 try:
     from sfc_library import get_short_position as sfc_get_position, \
-    all_report_fridays as sfc_fridays, get_position_history as sfc_get_history
+    all_report_fridays as sfc_fridays, get_position_history as sfc_get_history, \
+    all_stored_dates as sfc_stored_dates
     _SFC_AVAILABLE = True
 except ImportError:
     _SFC_AVAILABLE = False
@@ -329,11 +330,22 @@ RANK_HISTORY_FILE = "rank_history.json"
 def save_rank_history(date: datetime, results: list):
     store = load_store(RANK_HISTORY_FILE)
     ds_key = date.strftime("%Y%m%d")
-    # Only store rank — all other fields are never read back from rank_history.
-    store[ds_key] = {r["code"]: r["rank"] for r in results}
-    # Keep only the 2 most recent days — get_prev_ranks() only ever reads yesterday.
-    for old_key in sorted(store.keys())[:-2]:
-        del store[old_key]
+    store[ds_key] = {
+        r["code"]: {
+            "rank":             r["rank"],
+            "close":            r.get("close") or None,
+            "vol":              r.get("vol") or None,
+            "tv":               r.get("turnover") or None,
+            "vwap":             r.get("vwap") or None,
+            "short_ratio":      r.get("short_ratio", 0.0),
+            "sfc_pct":          r.get("sfc_pct", 0.0),
+            "concentration":    r.get("concentration", 0.0),
+            "lockup_threshold": r.get("lockup_threshold", 60.0),
+            "turnover_24d":     r.get("turnover_24d") or None,
+            "pct_listed":       r.get("pct_listed", 0.0),
+        }
+        for r in results
+    }
     save_store(RANK_HISTORY_FILE, store)
 
 def get_prev_ranks(exclude_date: datetime = None) -> dict:
@@ -642,9 +654,12 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     sfc_map = {}
     if _SFC_AVAILABLE:
         try:
-            _sfc_fridays = [d for d in sfc_fridays() if d is not None and d <= trading_day.date()]
+            # Use only dates with actual stored data — sfc_fridays() includes
+            # future/unpublished Fridays which have no data yet (SFC publishes 1-2 weeks late)
+            _sfc_stored   = sfc_stored_dates()
+            _sfc_fridays  = sorted(d for d in _sfc_stored if d <= trading_day.date().isoformat())
             if _sfc_fridays:
-                _latest_sfc_ds = max(_sfc_fridays).isoformat()
+                _latest_sfc_ds = _sfc_fridays[-1]
                 for code in stock_codes:
                     pos = sfc_get_position(code, _latest_sfc_ds)
                     if not pos or pos.get("sh", 0) <= 0:
@@ -968,8 +983,10 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             "insight": insight,
             "squeeze_score": squeeze_score,
             "dtc_avg_10d":   dtc_avg_10d,
-            # sdw_holders omitted from data.json — too large for localStorage quota.
-            # The SDW panel lazy-fetches per-stock sdw_{code}.json files on demand instead.
+            "sdw_holders":  [{"pid": h["pid"], "name": h["name"],
+                               "sh":  h["sh"],  "pct":  h["pct"]}
+                             for h in _holders],
+            "sdw_total_sh": int(_total_sh_conc),
         })
 
     # ── 11. Persist ───────────────────────────────────────────────────────────
