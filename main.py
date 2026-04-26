@@ -656,8 +656,9 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         try:
             # Use only dates with actual stored data — sfc_fridays() includes
             # future/unpublished Fridays which have no data yet (SFC publishes 1-2 weeks late)
+            _today_str    = trading_day.date().isoformat()
             _sfc_stored   = sfc_stored_dates()
-            _sfc_fridays  = sorted(d for d in _sfc_stored if d <= trading_day.date().isoformat())
+            _sfc_fridays  = sorted(d for d in _sfc_stored if d and isinstance(d, str) and d <= _today_str)
             if _sfc_fridays:
                 _latest_sfc_ds = _sfc_fridays[-1]
                 for code in stock_codes:
