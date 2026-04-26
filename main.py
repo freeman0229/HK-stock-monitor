@@ -936,6 +936,11 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             delta_turnover_24d=delta_turnover_24d,
         )
 
+        # Debug: log northbound signals to verify pct_delta values
+        if insight in ("🚨 北水流出", "🏦 北水增持"):
+            log.info("NB signal %s: code=%s pct_delta=%.4f pct_listed=%.4f sb_net=%d ccass_consec=%d",
+                     insight, code, pct_delta, pct_listed, sb.get("sb_net", 0), ccass_consec)
+
         prev_rank   = prev_ranks.get(code)
         rank_new    = prev_rank is None
         rank_change = 0 if rank_new else prev_rank - i
