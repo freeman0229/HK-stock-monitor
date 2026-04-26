@@ -5257,9 +5257,8 @@ async function stkBuildSeries(code5, fromDs, toDs) {
     const totalSh = nearestSdw ? (sdwByDate[nearestSdw]?.total_sh || 0) : 0;
     turnArr.push(totalSh > 0 && vol24 > 0 ? +(vol24 / totalSh * 100).toFixed(2) : null);
 
-    // top10_pct from sdw data — use nearest Friday on or before ds
-    const nearestSdwForTop10 = sdwDates.filter(d => d <= ds).slice(-1)[0];
-    const sdwEntry = nearestSdwForTop10 ? sdwByDate[nearestSdwForTop10] : null;
+    // top10_pct — only show on exact SDW Friday dates (weekly data)
+    const sdwEntry = sdwByDate[ds];  // exact date match only
     if (sdwEntry && sdwEntry.total_sh > 0) {
       const holders = sdwEntry.p || [];
       const top10sh = holders.slice(0,10).reduce((s,h)=>s+(h.sh||0),0);
@@ -5268,20 +5267,14 @@ async function stkBuildSeries(code5, fromDs, toDs) {
       top10Arr.push(null);
     }
 
-    // sfc_pct — weekly, use nearest Friday on or before ds
-    const sfcFridays = Object.keys(sfcFlat).filter(d => d <= ds).sort();
-    const nearestSfc = sfcFridays[sfcFridays.length - 1];
-    if (nearestSfc) {
-      const sfcDay = sfcFlat[nearestSfc];
-      const sfcRec = sfcDay?.[code5] || sfcDay?.[code5.replace(/^0+/,'')];
-      const sfcTotal = sfcDay?.['__total__'];
-      if (sfcRec?.sh > 0 && sfcTotal?.sh > 0) {
-        sfcArr.push(+(sfcRec.sh / sfcTotal.sh * 100).toFixed(2));
-      } else if (sfcRec?.pct != null) {
-        sfcArr.push(+sfcRec.pct.toFixed(2));
-      } else {
-        sfcArr.push(null);
-      }
+    // sfc_pct — only show on exact SFC report dates (weekly data)
+    const sfcDay   = sfcFlat[ds];  // exact date match only
+    const sfcRec   = sfcDay?.[code5] || sfcDay?.[code5.replace(/^0+/,'')];
+    const sfcTotal = sfcDay?.['__total__'];
+    if (sfcRec?.sh > 0 && sfcTotal?.sh > 0) {
+      sfcArr.push(+(sfcRec.sh / sfcTotal.sh * 100).toFixed(2));
+    } else if (sfcRec?.pct != null) {
+      sfcArr.push(+sfcRec.pct.toFixed(2));
     } else {
       sfcArr.push(null);
     }
