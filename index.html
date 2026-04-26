@@ -786,11 +786,11 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <!-- ═══ Panel 2: 累積沽空 ════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-short">
   <div class="summary-bar" style="grid-template-columns:repeat(5,1fr)">
-    <div class="sum-card"><div class="sum-label">日沽空 TOP</div><div class="sum-val up" id="sh-vol-top-name">--</div><div class="sum-sub" id="sh-vol-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">日沽空 TOP</div><div class="sum-val up" id="sh-vol-top-name">--</div><div class="sum-sub" id="sh-vol-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-vol-top-val">--</div></div>
     <div class="sum-card"><div class="sum-label">日沽空比率 TOP</div><div class="sum-val up" id="sh-ratio-top-name">--</div><div class="sum-sub" id="sh-ratio-top-val">--</div></div>
-    <div class="sum-card"><div class="sum-label">累積沽空 TOP</div><div class="sum-val gold" id="sh-sfc-top-name">--</div><div class="sum-sub" id="sh-sfc-top-val">--</div></div>
-    <div class="sum-card"><div class="sum-label">沽空增加最多</div><div class="sum-val up" id="sh-inc-top-name">--</div><div class="sum-sub" id="sh-inc-top-val">--</div></div>
-    <div class="sum-card"><div class="sum-label">空頭平倉最多</div><div class="sum-val dn" id="sh-dec-top-name">--</div><div class="sum-sub" id="sh-dec-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">累積沽空 TOP</div><div class="sum-val gold" id="sh-sfc-top-name">--</div><div class="sum-sub" id="sh-sfc-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-sfc-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">沽空增加最多</div><div class="sum-val up" id="sh-inc-top-name">--</div><div class="sum-sub" id="sh-inc-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-inc-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">空頭平倉最多</div><div class="sum-val dn" id="sh-dec-top-name">--</div><div class="sum-sub" id="sh-dec-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-dec-top-val">--</div></div>
   </div>
 
   <!-- ── Risk map ── -->
@@ -932,21 +932,25 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="sum-card">
       <div class="sum-label">持倉最集中</div>
       <div class="sum-val" id="sdw-conc-name">--</div>
+      <div class="sum-sub" id="sdw-conc-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div>
       <div class="sum-sub" id="sdw-conc-val">--</div>
     </div>
     <div class="sum-card">
       <div class="sum-label">最大單一持倉</div>
       <div class="sum-val up" id="sdw-max-name">--</div>
+      <div class="sum-sub" id="sdw-max-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div>
       <div class="sum-sub" id="sdw-max-pct">--</div>
     </div>
     <div class="sum-card">
       <div class="sum-label">本週增持最多</div>
       <div class="sum-val up" id="sdw-inc-name">--</div>
+      <div class="sum-sub" id="sdw-inc-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div>
       <div class="sum-sub" id="sdw-inc-val">--</div>
     </div>
     <div class="sum-card">
       <div class="sum-label">本週減持最多</div>
       <div class="sum-val dn" id="sdw-dec-name">--</div>
+      <div class="sum-sub" id="sdw-dec-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div>
       <div class="sum-sub" id="sdw-dec-val">--</div>
     </div>
   </div>
@@ -1184,7 +1188,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <span><span style="display:inline-block;width:16px;height:2px;background:#378ADD;vertical-align:middle;margin-right:3px"></span>收市價</span>
         <span><span style="display:inline-block;width:16px;height:2px;border-top:2px dashed rgba(192,37,45,0.7);vertical-align:middle;margin-right:3px"></span>VWAP</span>
         <span><span style="display:inline-block;width:16px;height:2px;background:#534AB7;vertical-align:middle;margin-right:3px"></span>Top10持倉</span>
-        <span><span style="display:inline-block;width:16px;height:2px;border-top:2px dashed #c0252d;vertical-align:middle;margin-right:3px"></span>SFC賣空</span>
+        <span><span style="display:inline-block;width:8px;height:8px;background:#c0252d;border-radius:50%;vertical-align:middle;margin-right:3px"></span>SFC賣空</span>
         <span><span style="display:inline-block;width:16px;height:8px;background:rgba(128,128,128,0.2);vertical-align:middle;margin-right:3px;border-radius:1px"></span>成交量</span>
       </div>
     </div>
@@ -2083,10 +2087,13 @@ function computeSfcCards() {
   const staleTag   = isStale ? ` <span style="font-size:10px;color:var(--muted)">(${latestDs.slice(5).replace('-','/')})</span>` : '';
 
   elHtml('sh-sfc-top-name', (sfcTopName || sfcCache.sfcTopName || '數據待更新') + (sfcTopName ? staleTag : ''));
+  el('sh-sfc-top-code',     topSfc ? topSfc.code : '');
   el('sh-sfc-top-val',      sfcTopVal  || sfcCache.sfcTopVal  || 'SFC 每週五發布');
   elHtml('sh-inc-top-name', (sfcIncName || sfcCache.sfcIncName || '數據待更新') + (sfcIncName ? staleTag : ''));
+  el('sh-inc-top-code',     topInc ? topInc.code : '');
   el('sh-inc-top-val',      sfcIncVal  || sfcCache.sfcIncVal  || 'SFC 每週五發布');
   elHtml('sh-dec-top-name', (sfcDecName || sfcCache.sfcDecName || '數據待更新') + (sfcDecName ? staleTag : ''));
+  el('sh-dec-top-code',     topDec ? topDec.code : '');
   el('sh-dec-top-val',      sfcDecVal  || sfcCache.sfcDecVal  || 'SFC 每週五發布');
 
   // Re-render the 累積沽空排行 table now that sfcData is loaded
@@ -2860,6 +2867,7 @@ function renderShort() {
   // el/elHtml are global helpers defined at module level
 
   el('sh-vol-top-name',   topVol   ? topVol.name_chi   : '--');
+  el('sh-vol-top-code',   topVol   ? topVol.code          : '');
   el('sh-vol-top-val',    topVol   ? fmtM(topVol.short_st) : '--');
   el('sh-ratio-top-name', topRatio ? topRatio.name_chi : '--');
   el('sh-ratio-top-val',  topRatio ? fmtPct(topRatio.short_ratio) : '--');
@@ -3370,10 +3378,10 @@ function sdwComputeSummary() {
 function applySdwSummary(sdwSum) {
   if (!sdwSum) return;
   const { max_conc, max_holder, max_inc, max_dec } = sdwSum;
-  if (max_conc)   { el('sdw-conc-name', cleanName(max_conc.name)); el('sdw-conc-val', `前5大 ${max_conc.conc.toFixed(1)}%`); }
-  if (max_holder) { el('sdw-max-name', cleanName(max_holder.name)); el('sdw-max-pct', `${cleanName(max_holder.holder||'').slice(0,18)} ${max_holder.pct.toFixed(2)}%`); }
-  if (max_inc)    { el('sdw-inc-name', cleanName(max_inc.name)); el('sdw-inc-val', `Top10 +${max_inc.delta.toFixed(2)}pp`); }
-  if (max_dec)    { el('sdw-dec-name', cleanName(max_dec.name)); el('sdw-dec-val', `Top10 ${max_dec.delta.toFixed(2)}pp`); }
+  if (max_conc)   { el('sdw-conc-name', cleanName(max_conc.name)); el('sdw-conc-code', max_conc.code||''); el('sdw-conc-val', `前5大 ${max_conc.conc.toFixed(1)}%`); }
+  if (max_holder) { el('sdw-max-name', cleanName(max_holder.name)); el('sdw-max-code', max_holder.code||''); el('sdw-max-pct', `${cleanName(max_holder.holder||'').slice(0,18)} ${max_holder.pct.toFixed(2)}%`); }
+  if (max_inc)    { el('sdw-inc-name', cleanName(max_inc.name)); el('sdw-inc-code', max_inc.code||''); el('sdw-inc-val', `Top10 +${max_inc.delta.toFixed(2)}pp`); }
+  if (max_dec)    { el('sdw-dec-name', cleanName(max_dec.name)); el('sdw-dec-code', max_dec.code||''); el('sdw-dec-val', `Top10 ${max_dec.delta.toFixed(2)}pp`); }
 }
 
 // ── Stock search dropdown ───────────────────────────────────────────────────
@@ -5431,8 +5439,8 @@ function stkDrawCharts(series) {
   const c3 = new Chart(document.getElementById('stkC3'), {
     type:'line', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[
-      {label:'Top10持倉', data:series.top10, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, tension:0.3, fill:false, spanGaps:false, yAxisID:'yT'},
-      {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:1.5, borderDash:[4,3], pointRadius:2, tension:0.3, fill:false, spanGaps:true,  yAxisID:'yS'},
+      {label:'Top10持倉', data:series.top10, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, stepped:'before', fill:false, spanGaps:true, yAxisID:'yT'},
+      {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:0, borderDash:[4,3], pointRadius:3, pointBackgroundColor:'#c0252d', showLine:false, spanGaps:false, yAxisID:'yS'},
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
