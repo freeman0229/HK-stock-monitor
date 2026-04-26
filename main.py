@@ -645,8 +645,6 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     sfc_map = {}
     if _SFC_AVAILABLE:
         try:
-            # Use only dates with actual stored data — sfc_fridays() includes
-            # future/unpublished Fridays which have no data yet (SFC publishes 1-2 weeks late)
             _today_str    = trading_day.date().isoformat()
             _sfc_stored   = sfc_stored_dates()
             _sfc_fridays  = sorted(d for d in _sfc_stored if d and isinstance(d, str) and d <= _today_str)
@@ -1028,12 +1026,54 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     )
     log.info("ccass_holdings: %d stocks written to data.json", len(ccass_holdings))
 
+    # ── SDW summary cards (pre-computed server-side) ──────────────────────────
+    _sdw_summary = {"date": _sdw_best_date, "prev_date": _sdw_prev_date if _SDW_AVAILABLE else None,
+                    "max_conc": None, "max_holder": None, "max_inc": None, "max_dec": None}
+    if _SDW_AVAILABLE and _sdw_holders_map:
+        _uni_names = _universe_names
+        _sc_max_pct = 0.0;  _sc_max_pct_code = None; _sc_max_pct_holder = None
+        _sc_max_conc = 0.0; _sc_max_conc_code = None
+        _sc_max_inc = None; _sc_max_inc_val = -999.0
+        _sc_max_dec = None; _sc_max_dec_val =  999.0
+        for _sc_code, _sc_holders in _sdw_holders_map.items():
+            if not _sc_holders: continue
+            _sc_total = _sdw_total_sh_map.get(_sc_code, 0)
+            _sc_name = _uni_names.get(_sc_code, {}).get("zh") or _sc_code
+            _sc_top_pct = _sc_holders[0].get("pct", 0.0) if _sc_holders else 0.0
+            if _sc_top_pct > _sc_max_pct:
+                _sc_max_pct = _sc_top_pct; _sc_max_pct_code = _sc_code
+                _sc_max_pct_holder = _sc_holders[0].get("name", "")
+            if _sc_total > 0:
+                _sc_top5sh = sum(h.get("sh", 0) for h in _sc_holders[:5])
+                _sc_conc = _sc_top5sh / _sc_total * 100
+                if _sc_conc > _sc_max_conc:
+                    _sc_max_conc = _sc_conc; _sc_max_conc_code = _sc_code
+            _sc_prev = _sdw_prev_holders_map.get(_sc_code, [])
+            if _sc_prev:
+                _sc_now10  = sum(h.get("pct", 0) for h in _sc_holders[:10])
+                _sc_prev10 = sum(h.get("pct", 0) for h in _sc_prev[:10])
+                _sc_delta  = round(_sc_now10 - _sc_prev10, 2)
+                if _sc_delta > _sc_max_inc_val:
+                    _sc_max_inc_val = _sc_delta; _sc_max_inc = {"code": _sc_code, "name": _sc_name, "delta": _sc_delta}
+                if _sc_delta < _sc_max_dec_val:
+                    _sc_max_dec_val = _sc_delta; _sc_max_dec = {"code": _sc_code, "name": _sc_name, "delta": _sc_delta}
+        if _sc_max_pct_code:
+            _sc_name = _uni_names.get(_sc_max_pct_code, {}).get("zh") or _sc_max_pct_code
+            _sdw_summary["max_holder"] = {"code": _sc_max_pct_code, "name": _sc_name,
+                                           "holder": _sc_max_pct_holder, "pct": round(_sc_max_pct, 2)}
+        if _sc_max_conc_code:
+            _sc_name = _uni_names.get(_sc_max_conc_code, {}).get("zh") or _sc_max_conc_code
+            _sdw_summary["max_conc"] = {"code": _sc_max_conc_code, "name": _sc_name, "conc": round(_sc_max_conc, 1)}
+        if _sc_max_inc: _sdw_summary["max_inc"] = _sc_max_inc
+        if _sc_max_dec: _sdw_summary["max_dec"] = _sc_max_dec
+
     output = {
         "update_time":      trading_day.strftime("%Y-%m-%d %H:%M"),
         "sb_date":          sb_date_used,
         "sb_summary":       get_sb_summary(sb_date_used),
         "northbound_flow":  northbound_flow,
         "ccass_holdings":   ccass_holdings,
+        "sdw_summary":      _sdw_summary,
         # name_map removed — JS never reads it from data.json (saved separately as name_map.json)
         "stocks":           results,
     }

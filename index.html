@@ -1314,6 +1314,9 @@ function applyData(d, stale) {
   sbDate     = d.sb_date || '';
   sbSummary  = d.sb_summary || {};
 
+  // Apply pre-computed SDW summary cards immediately (no need to wait for SDW panel load)
+  if (d.sdw_summary) applySdwSummary(d.sdw_summary);
+
   // ── Isolated sources — read directly, no universe filtering ──────────────
   // Source 1: sc_top10_library → 北水淨流入 / 個股明細
   northboundFlow = (d.northbound_flow || []).map(s => ({
@@ -3363,6 +3366,16 @@ function sdwComputeSummary() {
   el('sdw-conc-val',  maxConcCode ? `前5大 ${maxConc.toFixed(1)}%` : '--');
 }
 
+// ── Pre-computed SDW summary from data.json (avoids client-side all-stock scan) ──
+function applySdwSummary(sdwSum) {
+  if (!sdwSum) return;
+  const { max_conc, max_holder, max_inc, max_dec } = sdwSum;
+  if (max_conc)   { el('sdw-conc-name', cleanName(max_conc.name)); el('sdw-conc-val', `前5大 ${max_conc.conc.toFixed(1)}%`); }
+  if (max_holder) { el('sdw-max-name', cleanName(max_holder.name)); el('sdw-max-pct', `${cleanName(max_holder.holder||'').slice(0,18)} ${max_holder.pct.toFixed(2)}%`); }
+  if (max_inc)    { el('sdw-inc-name', cleanName(max_inc.name)); el('sdw-inc-val', `Top10 +${max_inc.delta.toFixed(2)}pp`); }
+  if (max_dec)    { el('sdw-dec-name', cleanName(max_dec.name)); el('sdw-dec-val', `Top10 ${max_dec.delta.toFixed(2)}pp`); }
+}
+
 // ── Stock search dropdown ───────────────────────────────────────────────────
 function sdwBuildDropdown(query) {
   const dd  = document.getElementById('sdw-dropdown');
@@ -5244,9 +5257,23 @@ async function stkBuildSeries(code5, fromDs, toDs) {
       top10Arr.push(null);
     }
 
-    // sfc_pct — weekly, use nearest date on or before ds
-    const sfcRec = sfcFlat[ds]?.[code5] || sfcFlat[ds]?.[code5.replace(/^0+/,'')];
-    sfcArr.push(sfcRec?.pct != null ? +sfcRec.pct.toFixed(2) : null);
+    // sfc_pct — weekly, use nearest Friday on or before ds
+    const sfcFridays = Object.keys(sfcFlat).filter(d => d <= ds).sort();
+    const nearestSfc = sfcFridays[sfcFridays.length - 1];
+    if (nearestSfc) {
+      const sfcDay = sfcFlat[nearestSfc];
+      const sfcRec = sfcDay?.[code5] || sfcDay?.[code5.replace(/^0+/,'')];
+      const sfcTotal = sfcDay?.['__total__'];
+      if (sfcRec?.sh > 0 && sfcTotal?.sh > 0) {
+        sfcArr.push(+(sfcRec.sh / sfcTotal.sh * 100).toFixed(2));
+      } else if (sfcRec?.pct != null) {
+        sfcArr.push(+sfcRec.pct.toFixed(2));
+      } else {
+        sfcArr.push(null);
+      }
+    } else {
+      sfcArr.push(null);
+    }
   }
 
   return {labels, close:closeArr, vwap:vwapArr, vol:volArr, turn:turnArr, top10:top10Arr, sfc:sfcArr};
@@ -5405,7 +5432,7 @@ function stkDrawCharts(series) {
     type:'line', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[
       {label:'Top10持倉', data:series.top10, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, tension:0.3, fill:false, spanGaps:false, yAxisID:'yT'},
-      {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:1.5, borderDash:[4,3], pointRadius:0, tension:0.3, fill:false, spanGaps:false, yAxisID:'yS'},
+      {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:1.5, borderDash:[4,3], pointRadius:2, tension:0.3, fill:false, spanGaps:true,  yAxisID:'yS'},
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
