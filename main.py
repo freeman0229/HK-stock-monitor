@@ -652,7 +652,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                 _latest_sfc_ds = _sfc_fridays[-1]
                 for code in stock_codes:
                     pos = sfc_get_position(code, _latest_sfc_ds)
-                    if not pos or pos.get("sh", 0) <= 0:
+                    if not pos or not pos.get("sh") or pos["sh"] <= 0:
                         continue
                     sfc_sh  = pos["sh"]
                     sfc_hkd = pos.get("hkd", 0.0)
