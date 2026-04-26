@@ -330,22 +330,11 @@ RANK_HISTORY_FILE = "rank_history.json"
 def save_rank_history(date: datetime, results: list):
     store = load_store(RANK_HISTORY_FILE)
     ds_key = date.strftime("%Y%m%d")
-    store[ds_key] = {
-        r["code"]: {
-            "rank":             r["rank"],
-            "close":            r.get("close") or None,
-            "vol":              r.get("vol") or None,
-            "tv":               r.get("turnover") or None,
-            "vwap":             r.get("vwap") or None,
-            "short_ratio":      r.get("short_ratio", 0.0),
-            "sfc_pct":          r.get("sfc_pct", 0.0),
-            "concentration":    r.get("concentration", 0.0),
-            "lockup_threshold": r.get("lockup_threshold", 60.0),
-            "turnover_24d":     r.get("turnover_24d") or None,
-            "pct_listed":       r.get("pct_listed", 0.0),
-        }
-        for r in results
-    }
+    # Only store rank — all other fields are never read back from rank_history.
+    store[ds_key] = {r["code"]: r["rank"] for r in results}
+    # Keep only the 2 most recent days — get_prev_ranks() only ever reads yesterday.
+    for old_key in sorted(store.keys())[:-2]:
+        del store[old_key]
     save_store(RANK_HISTORY_FILE, store)
 
 def get_prev_ranks(exclude_date: datetime = None) -> dict:
@@ -936,11 +925,6 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             delta_turnover_24d=delta_turnover_24d,
         )
 
-        # Debug: log northbound signals to verify pct_delta values
-        if insight in ("🚨 北水流出", "🏦 北水增持"):
-            log.info("NB signal %s: code=%s pct_delta=%.4f pct_listed=%.4f sb_net=%d ccass_consec=%d",
-                     insight, code, pct_delta, pct_listed, sb.get("sb_net", 0), ccass_consec)
-
         prev_rank   = prev_ranks.get(code)
         rank_new    = prev_rank is None
         rank_change = 0 if rank_new else prev_rank - i
@@ -991,10 +975,8 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             "insight": insight,
             "squeeze_score": squeeze_score,
             "dtc_avg_10d":   dtc_avg_10d,
-            "sdw_holders":  [{"pid": h["pid"], "name": h["name"],
-                               "sh":  h["sh"],  "pct":  h["pct"]}
-                             for h in _holders],
-            "sdw_total_sh": int(_total_sh_conc),
+            # sdw_holders omitted from data.json — too large for localStorage quota.
+            # The SDW panel lazy-fetches per-stock sdw_{code}.json files on demand instead.
         })
 
     # ── 11. Persist ───────────────────────────────────────────────────────────
@@ -1005,22 +987,28 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         log.info("suppress_telegram=True — data.json skipped (backfill/date mode)")
         return
 
-    _insight_by_code = {r["code"]: r["insight"] for r in results}
+    _insight_by_code      = {r["code"]: r["insight"]          for r in results}
+    _pct_delta_by_code    = {r["code"]: r["pct_delta"]        for r in results}
+    _ccass_consec_by_code = {r["code"]: r["ccass_consec"]     for r in results}
+    _ccass_streak_by_code = {r["code"]: r["ccass_streak_pct"] for r in results}
     northbound_flow = []
     for code, sb in sb_map.items():
         _ne, _nc = _get_names(code)
         northbound_flow.append({
-            "code":        code,
-            "name":        _ne,
-            "name_chi":    _nc,
-            "sb_buy":      sb["sb_buy"],
-            "sb_sell":     sb["sb_sell"],
-            "sb_net":      sb["sb_net"],
-            "sb_total":    sb.get("sb_total", 0),
-            "sb_net_prev": int(sb_prev_map.get(code, 0)),
-            "sb_consec":   int(sb_consec_map.get(code, 0)),
-            "turnover":    quote_map.get(code, {}).get("tv", 0),
-            "insight":     _insight_by_code.get(code),
+            "code":             code,
+            "name":             _ne,
+            "name_chi":         _nc,
+            "sb_buy":           sb["sb_buy"],
+            "sb_sell":          sb["sb_sell"],
+            "sb_net":           sb["sb_net"],
+            "sb_total":         sb.get("sb_total", 0),
+            "sb_net_prev":      int(sb_prev_map.get(code, 0)),
+            "sb_consec":        int(sb_consec_map.get(code, 0)),
+            "turnover":         quote_map.get(code, {}).get("tv", 0),
+            "insight":          _insight_by_code.get(code),
+            "pct_delta":        _pct_delta_by_code.get(code, 0.0),
+            "ccass_consec":     _ccass_consec_by_code.get(code, 0),
+            "ccass_streak_pct": _ccass_streak_by_code.get(code, 0.0),
         })
     northbound_flow.sort(key=lambda x: abs(x["sb_net"]), reverse=True)
 
