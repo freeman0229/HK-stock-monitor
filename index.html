@@ -787,7 +787,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <div class="panel" id="panel-short">
   <div class="summary-bar" style="grid-template-columns:repeat(5,1fr)">
     <div class="sum-card"><div class="sum-label">日沽空 TOP</div><div class="sum-val up" id="sh-vol-top-name">--</div><div class="sum-sub" id="sh-vol-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-vol-top-val">--</div></div>
-    <div class="sum-card"><div class="sum-label">日沽空比率 TOP</div><div class="sum-val up" id="sh-ratio-top-name">--</div><div class="sum-sub" id="sh-ratio-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">日沽空比率 TOP</div><div class="sum-val up" id="sh-ratio-top-name">--</div><div class="sum-sub" id="sh-ratio-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-ratio-top-val">--</div></div>
     <div class="sum-card"><div class="sum-label">累積沽空 TOP</div><div class="sum-val gold" id="sh-sfc-top-name">--</div><div class="sum-sub" id="sh-sfc-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-sfc-top-val">--</div></div>
     <div class="sum-card"><div class="sum-label">沽空增加最多</div><div class="sum-val up" id="sh-inc-top-name">--</div><div class="sum-sub" id="sh-inc-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-inc-top-val">--</div></div>
     <div class="sum-card"><div class="sum-label">空頭平倉最多</div><div class="sum-val dn" id="sh-dec-top-name">--</div><div class="sum-sub" id="sh-dec-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-dec-top-val">--</div></div>
@@ -1191,7 +1191,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div style="font-size:11px;color:var(--muted);margin-top:6px;display:flex;gap:16px;flex-wrap:wrap;">
         <span><span style="display:inline-block;width:16px;height:2px;background:#378ADD;vertical-align:middle;margin-right:3px"></span>收市價</span>
         <span><span style="display:inline-block;width:16px;height:2px;border-top:2px dashed rgba(192,37,45,0.7);vertical-align:middle;margin-right:3px"></span>VWAP</span>
-        <span><span style="display:inline-block;width:16px;height:2px;background:#534AB7;vertical-align:middle;margin-right:3px"></span>Top10持倉</span>
+        <span><span style="display:inline-block;width:10px;height:12px;background:rgba(83,74,183,0.5);border:1px solid #534AB7;vertical-align:middle;margin-right:3px"></span>Top10持倉</span>
         <span><span style="display:inline-block;width:8px;height:8px;background:#c0252d;border-radius:50%;vertical-align:middle;margin-right:3px"></span>SFC賣空</span>
         <span><span style="display:inline-block;width:16px;height:8px;background:rgba(128,128,128,0.2);vertical-align:middle;margin-right:3px;border-radius:1px"></span>成交量</span>
       </div>
@@ -2874,6 +2874,7 @@ function renderShort() {
   el('sh-vol-top-code',   topVol   ? topVol.code          : '');
   el('sh-vol-top-val',    topVol   ? fmtM(topVol.short_st) : '--');
   el('sh-ratio-top-name', topRatio ? topRatio.name_chi : '--');
+  el('sh-ratio-top-code', topRatio ? topRatio.code : '');
   el('sh-ratio-top-val',  topRatio ? fmtPct(topRatio.short_ratio) : '--');
 
   // SFC cards (累積沽空 TOP, 沽空增加最多, 空頭平倉最多) are driven by computeSfcCards()
@@ -3958,12 +3959,14 @@ function drawGroupHistoryChart(code) {
     canvas.style.cursor = 'crosshair';
 
     canvas.addEventListener('mousemove', e => {
-      const { series, PAD, cW, n } = canvas._sdwGroup || {};
+      const { series, PAD, n } = canvas._sdwGroup || {};
       if (!series) return;
       const tip2 = canvas._sdwGroupTip;
       if (!tip2) return;
       const rect    = canvas.getBoundingClientRect();
       const mx      = (e.clientX - rect.left) * (canvas.width / rect.width);
+      // Recompute cW from current canvas to avoid stale value after resize/redraw
+      const cW      = canvas.width / (window.devicePixelRatio || 1) - PAD.left - PAD.right;
       const groupW  = cW / n;
       const idx     = Math.floor((mx - PAD.left) / groupW);
       const s       = series[Math.max(0, Math.min(n - 1, idx))];
@@ -5439,8 +5442,8 @@ function stkDrawCharts(series) {
   const c3 = new Chart(document.getElementById('stkC3'), {
     type:'line', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[
-      {label:'Top10持倉', data:series.top10, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, stepped:'before', fill:false, spanGaps:true, yAxisID:'yT'},
-      {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:0, borderDash:[4,3], pointRadius:3, pointBackgroundColor:'#c0252d', showLine:false, spanGaps:false, yAxisID:'yS'},
+      {label:'Top10持倉', type:'bar', data:series.top10, backgroundColor:'rgba(83,74,183,0.5)', borderColor:'#534AB7', borderWidth:1, barThickness:'flex', maxBarThickness:8, yAxisID:'yT'},
+      {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:0, pointRadius:3, pointHoverRadius:5, pointBackgroundColor:'#c0252d', showLine:false, spanGaps:false, yAxisID:'yS'},
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
