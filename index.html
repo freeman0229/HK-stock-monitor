@@ -1108,6 +1108,10 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <div class="panel" id="panel-hsi">
   <div id="hsi-loading" class="hsi-loading">載入恒生指數預測通道數據中…</div>
   <div id="hsi-content" style="display:none">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:14px">
+      <span style="font-size:18px;font-weight:700;color:var(--text)">Kan's Channel</span>
+      <span style="font-size:12px;color:var(--muted)">恒生指數波幅預測模型</span>
+    </div>
     <div class="summary-bar">
       <div class="sum-card"><div class="sum-label">最新收市</div><div class="sum-val" id="hsi-close">--</div><div class="sum-sub" id="hsi-range-val">--</div></div>
       <div class="sum-card"><div class="sum-label">預測下週高位</div><div class="sum-val up" id="hsi-ph30">--</div><div class="sum-sub" id="hsi-ph30-sub">&nbsp;</div></div>
@@ -2926,12 +2930,12 @@ function renderShort() {
       <td class="num-r">${sfcSh  > 0 ? sfcSh.toLocaleString('zh-HK') : '—'}</td>
       <td class="num-r">${sfcHkd > 0 ? fmtM(sfcHkd)                  : '—'}</td>
       <td class="num-r ${s.short_ratio > shortHi(s) ? 'up-txt' : ''}">${fmtPct(s.short_ratio)}</td>
-      <td class="num-r mob-hide ${diffClass}">${diff !== 0 ? (diff > 0 ? '+' : '') + diff.toFixed(2) + 'pp' : '—'}</td>
+      <td class="num-r mob-hide ${diffClass}">${s.short_ratio > 0 && diff !== 0 ? (diff > 0 ? '+' : '') + diff.toFixed(2) + 'pp' : '—'}</td>
       <td class="num-r mob-hide ${dtcClass}">${dtcTxt}</td>
       <td class="num-r mob-hide">${sfcPct > 0 ? sfcPct.toFixed(2) + '%' + sfcPctFlag : '—'}</td>
       <td class="num-r mob-hide ${tier.cls}">${concTxt}</td>
       <td class="num-r mob-hide">${fmtM(s.turnover)}</td>
-      <td class="${diffClass}">${trend}</td>
+      <td class="${s.short_ratio > 0 ? diffClass : ''}">${s.short_ratio > 0 ? trend : '—'}</td>
       <td>${insightBadge(s.insight)}</td>
     </tr>`;
   }).join('');
@@ -3025,14 +3029,10 @@ function drawShortRiskMap(stocks) {
   ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
 
   // Filter: stocks with meaningful short activity
+  // Only show 中風險 (score >= 6) and 高風險 (score >= 10) to reduce clutter
   const pts = stocks.filter(s =>
     s.turnover > 0 && s.short_ratio > 0 && (s.days_to_cover||0) > 0
-    && (
-      (s.concentration||0) >= 20 ||
-      (s.vol_ratio||0)     >= 2  ||
-      (s.days_to_cover||0) >= 5  ||
-      (s.short_avg > 0 && s.short_ratio >= s.short_avg * 1.5)
-    )
+    && (s.squeeze_score || 0) >= 6
   );
 
   const PAD = {top:24, right:72, bottom:50, left:56};
