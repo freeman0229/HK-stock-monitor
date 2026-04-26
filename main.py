@@ -662,9 +662,10 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                     sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
 
                     sfc_hist = sfc_get_history(code, 5, _latest_sfc_ds)
-                    sfc_prev_pct    = sfc_hist[0].get("pct", 0.0) if sfc_hist else 0.0
+                    # Use or 0.0 to guard against explicit None values in history records
+                    sfc_prev_pct    = (sfc_hist[0].get("pct") or 0.0) if sfc_hist else 0.0
                     sfc_week_delta  = round(sfc_pct - sfc_prev_pct, 4) if sfc_prev_pct > 0 else 0.0
-                    sfc_prev_hkd    = sfc_hist[0].get("hkd", 0.0) if sfc_hist else 0.0
+                    sfc_prev_hkd    = (sfc_hist[0].get("hkd") or 0.0) if sfc_hist else 0.0
                     sfc_hkd_delta   = int(round(sfc_hkd - sfc_prev_hkd, 0)) if sfc_prev_hkd > 0 else 0
 
                     sfc_map[code] = {
