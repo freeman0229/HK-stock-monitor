@@ -3257,12 +3257,14 @@ async function fetchSdwCodeHistory(code) {
     if (!r.ok) { sdwCodeCache[code5] = true; return; }
     const lib = await r.json();
     // Merge all dates from per-stock file into global sdwData
-    for (const [ds, entry] of Object.entries(lib.by_date || {})) {
+    const byDate = lib.by_date || {};
+    for (const [ds, entry] of Object.entries(byDate)) {
       if (!sdwData[ds]) sdwData[ds] = {};
       sdwData[ds][code5] = entry;
     }
-    // Extend sdwDates with any new dates
-    const newDates = (lib.dates || []).filter(d => !sdwDates.includes(d));
+    // Extend sdwDates using by_date keys (lib.dates may not exist in R2 files)
+    const allFileDates = Object.keys(byDate);
+    const newDates = allFileDates.filter(d => !sdwDates.includes(d));
     if (newDates.length) {
       sdwDates = [...new Set([...sdwDates, ...newDates])].sort();
       sdwPopulateDates();
@@ -3919,6 +3921,7 @@ function drawGroupHistoryChart(code) {
     </span>`).join('');
 
   // ── Hover tooltip ─────────────────────────────────────────────────────────
+  // Always update _sdwGroup so mousemove uses the latest series after redraws
   canvas._sdwGroup = { series, PAD, cW, n };
   if (!canvas._sdwGroupTip) {
     const existing = document.getElementById('_sdw-group-tip');
