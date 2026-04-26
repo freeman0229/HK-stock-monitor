@@ -639,7 +639,9 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         except Exception as _e:
             log.warning("SDW bulk prev holder load failed: %s", _e)
 
-    df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, today_ds,
+    # Use T-2 date as cutoff so pct_prev aligns with pct_today (both from CCASS T-2 settlement)
+    _ccass_ds = t2_date.strftime("%Y-%m-%d")
+    df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, _ccass_ds,
                                     today_pct_map=ccass_pct_map)
     ccass_delta_map      = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
     ccass_consec_map     = dict(zip(df_cs["stock_code"], df_cs["ccass_consec"]))
