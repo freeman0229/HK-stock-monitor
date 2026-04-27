@@ -3551,7 +3551,17 @@ function renderSdwPanel() {
       <td class="num-r mob-hide">${fmtDPct}</td>
     </tr>`;
   }).join('');
-  document.getElementById('body-sdw').innerHTML = rows;
+  const othersCount = holders.length - topN;
+  const othersPct   = holders.slice(topN).reduce((a,h) => a + (h.pct||0), 0);
+  const othersRow   = othersCount > 0
+    ? `<tr style="background:var(--card-alt,var(--bg))">
+        <td colspan="2" style="color:var(--muted);font-size:11px">其餘 ${othersCount} 個機構合計</td>
+        <td class="num-r" style="color:var(--muted);font-size:11px">--</td>
+        <td class="num-r" style="font-weight:600;color:var(--muted)">${othersPct.toFixed(2)}%</td>
+        <td colspan="2"></td>
+      </tr>`
+    : '';
+  document.getElementById('body-sdw').innerHTML = rows + othersRow;
 
   // ── 持倉明細 detail card ────────────────────────────────────────────────
   renderDetailCard(sdwCurCode, ds, holders, raw, _prevRaw, prevHolders);
