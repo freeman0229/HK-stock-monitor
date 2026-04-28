@@ -119,11 +119,12 @@ def get_short_ratio_history(code: str, n: int, before: str, tv_store: dict) -> l
     Requires daily_turnover_history store for volume lookup.
     Returns list of floats, newest-first. Skips days with no volume data.
     """
+    code5  = code.zfill(5)
     hist   = get_short_history(code, n * 3, before)  # fetch extra in case of gaps
     result = []
     for entry in hist:
         ds_key = entry["date"].replace("-", "")       # YYYYMMDD for tv_store
-        tv_rec = tv_store.get(ds_key, {}).get(code, 0)
+        tv_rec = tv_store.get(ds_key, {}).get(code5, 0)
         vol    = tv_rec.get("vol", 0) if isinstance(tv_rec, dict) else 0
         if vol > 0:
             result.append(round(entry["sv"] / vol * 100, 2))

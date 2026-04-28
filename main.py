@@ -483,18 +483,19 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     for _code, _rec in _lib_day.items():
         if not isinstance(_rec, dict) or _rec.get("tv", 0) <= 0:
             continue
-        _nm_entry = _nm.get(_code, {})
-        _name_en  = _rec.get("name_en") or _nm_entry.get("en") or _code
+        _code5 = normalize_code(_code)
+        _nm_entry = _nm.get(_code5, {})
+        _name_en  = _rec.get("name_en") or _nm_entry.get("en") or _code5
         _name_zh  = _rec.get("name_zh") or _nm_entry.get("zh") or _name_en
-        quote_map[_code] = {
+        quote_map[_code5] = {
             "tv":       int(_rec["tv"]),
             "vol":      int(_rec.get("vol", 0)),
             "close":    float(_rec.get("close", 0.0)),
             "name":     _name_en,
             "name_chi": _name_zh,
         }
-        if _code not in _nm:
-            _name_updates[_code] = {"en": _name_en, "zh": _name_zh}
+        if _code5 not in _nm:
+            _name_updates[_code5] = {"en": _name_en, "zh": _name_zh}
     if _name_updates:
         _update_name_map(_name_updates)
     log.info("Turnover library: %d stocks for %s", len(quote_map), today_ds)
@@ -506,7 +507,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         _short_lib_day = tv_load_year(int(short_date[:4])).get("by_date", {}).get(short_date, {})
         if _short_lib_day:
             _short_vol_map_ref = {
-                code: {"vol": int(rec.get("vol", 0))}
+                normalize_code(code): {"vol": int(rec.get("vol", 0))}
                 for code, rec in _short_lib_day.items()
                 if isinstance(rec, dict)
             }
@@ -544,9 +545,10 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         ccass_name_map = dict(zip(df_ccass["stock_code"], df_ccass["name"]))
 
     # ── 4. Full stock universe ────────────────────────────────────────────────
-    stock_universe = {c for c in (set(short_vol_map.keys()) |
-                                   set(ccass_sh_map.keys()) |
-                                   set(quote_map.keys()))
+    stock_universe = {normalize_code(c)
+                      for c in (set(short_vol_map.keys()) |
+                                set(ccass_sh_map.keys()) |
+                                set(quote_map.keys()))
                       if _universe_included(c)}
 
     def _sort_key(code):
@@ -584,7 +586,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                         (_sdw_best_date,),
                     ).fetchall()
                 for _row in _sdw_rows:
-                    _c = _row["code"]
+                    _c = normalize_code(_row["code"])
                     _sdw_holders_map.setdefault(_c, []).append({
                         "pid": _row["pid"], "name": _row["name"],
                         "sh":  _row["shares"], "pct": _row["pct"],
@@ -597,6 +599,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     _sdw_total_sh_date = _sdw_best_date or today_ds
     _sdw_total_sh_map = sdw_get_total_sh_bulk(_sdw_total_sh_date) if _SDW_AVAILABLE else {}
     if _SDW_AVAILABLE:
+        _sdw_total_sh_map = {normalize_code(k): v for k, v in _sdw_total_sh_map.items()}
         log.info("SDW total_sh: %d stocks from %s", len(_sdw_total_sh_map), _sdw_total_sh_date)
 
     _sdw_prev_holders_map: dict[str, list] = {}
@@ -618,7 +621,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                         (_sdw_prev_date,),
                     ).fetchall()
                 for _row in _sdw_prev_rows:
-                    _c = _row["code"]
+                    _c = normalize_code(_row["code"])
                     _sdw_prev_holders_map.setdefault(_c, []).append({
                         "pid": _row["pid"], "name": _row["name"],
                         "sh":  _row["shares"], "pct": _row["pct"],
@@ -657,8 +660,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                     sfc_sh  = pos["sh"]
                     sfc_hkd = pos.get("hkd", 0.0)
                     # Use bulk-loaded total_sh map (avoids per-stock DB call, works without SDW)
-                    _code5   = normalize_code(code)
-                    total_sh = _sdw_total_sh_map.get(_code5, 0) or _sdw_total_sh_map.get(code, 0)
+                    total_sh = _sdw_total_sh_map.get(code, 0)
                     sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
 
                     sfc_hist = sfc_get_history(code, 5, _latest_sfc_ds)
@@ -773,7 +775,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             out.update(load_fn(y).get("by_date", {}))
         return out
 
-    _years = list(range(2026, trading_day.year + 1))
+    _years = list(range(trading_day.year - 1, trading_day.year + 1))
 
     def _flat_by_date_recent(load_fn, years, n_days=30):
         all_dates = {}
@@ -846,27 +848,26 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         ccass_streak_pct = ccass_streak_pct_map.get(code, 0.0)
         pct_listed       = pct_listed_map.get(code, 0.0)
         pct_delta        = pct_delta_map.get(code, 0.0)
-        code5        = normalize_code(code)
-        tv_avg5_vals = _tv_hist(code5, 5, today_ds)
+        tv_avg5_vals = _tv_hist(code, 5, today_ds)
         tv_avg5      = sum(tv_avg5_vals) / len(tv_avg5_vals) if tv_avg5_vals else 0.0
 
-        vol_hist24  = _vol_hist(code5, 24, today_ds)
+        vol_hist24  = _vol_hist(code, 24, today_ds)
         _vol24_days = 1 + min(len(vol_hist24), 23)
         avg_vol24   = (today_vol + sum(vol_hist24[:23])) / _vol24_days if today_vol > 0 or vol_hist24 else 0
         days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
         vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
 
-        tv_hist24  = _tv_hist(code5, 24, today_ds)
+        tv_hist24  = _tv_hist(code, 24, today_ds)
         tv_avg24   = sum(tv_hist24) / len(tv_hist24) if tv_hist24 else 0.0
         tv_ratio   = round(turnover / tv_avg24, 2)  if tv_avg24 > 0 else 0.0
-        pct_hist24 = _pct_hist(code5, 24, today_ds)
+        pct_hist24 = _pct_hist(code, 24, today_ds)
         pct_avg24_lvl = round(sum(pct_hist24) / len(pct_hist24), 4) if pct_hist24 else 0.0
         pct_dev    = round(pct_listed - pct_avg24_lvl, 4) if pct_avg24_lvl > 0 else 0.0
 
-        _holders = _sdw_holders_map.get(code5) or _sdw_holders_map.get(code) or []
+        _holders = _sdw_holders_map.get(code) or []
         if not _holders and _SDW_AVAILABLE:
             _holders = sdw_get_holders(code, today_ds)
-        _total_sh_conc = _sdw_total_sh_map.get(code5, 0)
+        _total_sh_conc = _sdw_total_sh_map.get(code, 0)
         if _holders and _total_sh_conc > 0:
             top5_sh = sum(h.get('sh', 0) for h in _holders[:5])
             concentration = round(top5_sh / _total_sh_conc * 100, 2)
@@ -875,7 +876,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
 
         top10_sh  = sum(h.get('sh', 0) for h in _holders[:10])
         top10_pct = round(top10_sh / _total_sh_conc * 100, 2) if _total_sh_conc > 0 and top10_sh > 0 else 0.0
-        _prev_holders    = _sdw_prev_holders_map.get(code5) or _sdw_prev_holders_map.get(code) or []
+        _prev_holders    = _sdw_prev_holders_map.get(code) or []
         if not _prev_holders and _SDW_AVAILABLE:
             _prev_snap = sdw_get_holders_history(code, 1, today_ds)
             _prev_holders = _prev_snap[0] if _prev_snap else []
@@ -896,7 +897,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
 
         # ── 挾倉風險評分 (squeeze score 0–14) ──────────────────────────────────
         _sq_lo, _sq_hi, _sq_spike = THRESHOLDS.get(stock_type, THRESHOLDS["general"])[:3]
-        _sh10 = _sh_hist(code5, 10, today_ds)
+        _sh10 = _sh_hist(code, 10, today_ds)
         dtc_avg_10d = round(
             sum(h["sv"] / avg_vol24 for h in _sh10 if avg_vol24 > 0) / len(_sh10), 2
         ) if _sh10 and avg_vol24 > 0 else 0.0
