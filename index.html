@@ -5369,7 +5369,7 @@ function stkDrawCharts(series) {
       row('收市價',  c   != null ? c.toFixed(2)       : '—', '#378ADD') +
       row('VWAP',    v   != null ? v.toFixed(2)        : '—', 'rgba(192,37,45,0.9)') +
       row('成交量',  vol != null ? (vol/1e6).toFixed(0)+'M':'—','#888') +
-      row('Top10持倉', t10 != null ? t10.toFixed(1)+'%':'—', '#534AB7') +
+      row('Top10持倉', t10 != null ? t10.toFixed(1)+'%':'—', '#2a9d8f') +
       row('SFC賣空',  sfc != null ? sfc.toFixed(1)+'%' :'—', '#c0252d');
     tip.style.display = 'block';
     const wr = wrap.getBoundingClientRect();
@@ -5448,14 +5448,14 @@ function stkDrawCharts(series) {
   const c3 = new Chart(document.getElementById('stkC3'), {
     type:'line', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[
-      {label:'Top10持倉', type:'bar', data:series.top10, backgroundColor:'rgba(83,74,183,0.5)', borderColor:'#534AB7', borderWidth:1, barThickness:'flex', maxBarThickness:8, yAxisID:'yT'},
+      {label:'Top10持倉', type:'bar', data:series.top10, backgroundColor:'rgba(42,157,143,0.5)', borderColor:'#2a9d8f', borderWidth:1, barThickness:'flex', maxBarThickness:8, yAxisID:'yT'},
       {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:0, pointRadius:3, pointHoverRadius:5, pointBackgroundColor:'#c0252d', showLine:false, spanGaps:false, yAxisID:'yS'},
     ]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
       scales:{
         x:xShow,
-        yT:{position:'left',  afterFit:afterFitY, ticks:{callback:v=>Number(v).toFixed(1)+'%',font:{size:10},color:'#534AB7',maxTicksLimit:5},grid:{color:gc},border:{display:false}},
+        yT:{position:'left',  afterFit:afterFitY, ticks:{callback:v=>Number(v).toFixed(1)+'%',font:{size:10},color:'#2a9d8f',maxTicksLimit:5},grid:{color:gc},border:{display:false}},
         yS:{position:'right', afterFit:afterFitR, ticks:{callback:v=>Number(v).toFixed(1)+'%',font:{size:9}, color:'rgba(192,37,45,0.7)',maxTicksLimit:4},grid:{display:false},border:{display:false}},
       }}
   });
