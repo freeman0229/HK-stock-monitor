@@ -5324,10 +5324,11 @@ function stkDrawCharts(series) {
 
   const afterFitR = scale => { scale.width = YW; };
 
+  const _stkCanvasIds = new Set(['stkC1','stkC2','stkC3']);
   const crossPlugin = {
     id: 'stkCross',
     afterDraw(chart) {
-      if (!stkCharts.includes(chart)) return;  // only apply to stock charts
+      if (!_stkCanvasIds.has(chart.canvas?.id)) return;
       if (activeIdx === null) return;
       const {ctx, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
