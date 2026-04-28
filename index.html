@@ -3700,19 +3700,16 @@ function drawSdwChart(code, selectedDs) {
       const tip2 = canvas._sdwConcTip;
       if (!tip2) return;
       const rect = canvas.getBoundingClientRect();
-      const mx   = (e.clientX - rect.left) * (canvas.width / rect.width);
-      // Recompute xAt from current canvas to avoid stale closure after redraw
-      const _cW  = canvas.width / (window.devicePixelRatio || 1) - PAD.left - PAD.right;
-      const _dpr = window.devicePixelRatio || 1;
-      const xAt2 = i => (PAD.left + (n > 1 ? i/(n-1) : 0.5) * _cW) * _dpr;
-      let best = null, bestDx = Infinity;
-      series.forEach((s, i) => {
-        const dx = Math.abs(mx - xAt2(i));
-        if (dx < bestDx) { bestDx = dx; best = s; }
-      });
-      // Use half average spacing as threshold — generous enough for sparse data
-      const avgSpacing = n > 1 ? (canvas.width - (canvas._sdwConc?.PAD?.left||0) - (canvas._sdwConc?.PAD?.right||0)) / (n - 1) : canvas.width;
-      if (!best || bestDx > avgSpacing * 0.6) { tip2.style.display = 'none'; return; }
+      const mx   = e.clientX - rect.left;
+      // Use rect.width for consistent CSS coordinate space
+      const _cW  = rect.width - PAD.left - PAD.right;
+      // Map mouse to nearest point index using i/(n-1) spacing
+      const frac = Math.max(0, Math.min(1, (mx - PAD.left) / _cW));
+      const xAt2 = i => PAD.left + (n > 1 ? i/(n-1) : 0.5) * _cW;
+      // Map to nearest index using fraction
+      const nearIdx = Math.max(0, Math.min(n-1, Math.round(frac * (n-1))));
+      const best = series[nearIdx];
+      if (!best) { tip2.style.display = 'none'; return; }
       tip2.innerHTML = `<b>${best.ds}</b><br>前5大合計 <span style="color:#c0252d;font-weight:600">${best.top5sum.toFixed(2)}%</span>`;
       tip2.style.left = (e.clientX + 14) + 'px';
       tip2.style.top  = (e.clientY - 60) + 'px';
@@ -3981,17 +3978,10 @@ function drawGroupHistoryChart(code) {
       const tip2 = canvas._sdwGroupTip;
       if (!tip2) return;
       const rect    = canvas.getBoundingClientRect();
-      const mx      = (e.clientX - rect.left) * (canvas.width / rect.width);
-      // Recompute from current canvas dimensions
-      const _cW2     = canvas.width / (window.devicePixelRatio || 1) - PAD.left - PAD.right;
-      const _groupW2 = _cW2 / n;
-      // Find nearest bar center using same formula as drawing
-      let best = 0, bestDx = Infinity;
-      for (let i = 0; i < n; i++) {
-        const bx = PAD.left + i * _groupW2 + _groupW2 / 2;
-        const dx = Math.abs(mx - bx);
-        if (dx < bestDx) { bestDx = dx; best = i; }
-      }
+      const mx      = e.clientX - rect.left;
+      // Map mouse to bar index: bars drawn at i*groupW...(i+1)*groupW
+      const _cW2    = rect.width - PAD.left - PAD.right;
+      const best    = Math.max(0, Math.min(n - 1, Math.floor((mx - PAD.left) / (_cW2 / n))));
       const s = series[best];
       if (!s) { tip2.style.display = 'none'; return; }
       tip2.innerHTML =
