@@ -1181,7 +1181,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <div id="stock-content" style="display:none;">
     <div id="stock-title" style="font-size:14px;font-weight:500;color:var(--text);margin-bottom:10px;"></div>
     <div style="position:relative;" id="stock-charts-wrap">
-      <div id="stock-tip" style="position:absolute;background:#1a1a1a;color:#eee;font-size:11px;padding:8px 10px;border-radius:6px;pointer-events:none;display:none;white-space:nowrap;z-index:99;line-height:1.9;"></div>
+      <div id="stock-tip" style="position:absolute;background:#1a1a1a;color:#eee;font-size:11px;padding:8px 10px;border-radius:6px;pointer-events:none;display:none;white-space:nowrap;z-index:99;line-height:1.9;top:0;right:0;"></div>
       <div style="font-size:10px;color:var(--muted);margin-bottom:2px;">換手率 (%)</div>
       <div style="position:relative;width:100%;height:88px;min-height:88px;"><canvas id="stkC1" role="img" aria-label="換手率 weekly chart">換手率.</canvas></div>
       <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">收市價 / VWAP &amp; 成交量</div>
@@ -5325,7 +5325,8 @@ function stkDrawCharts(series) {
   const afterFitR = scale => { scale.width = YW; };
 
   const crossPlugin = {
-    afterDatasetsDraw(chart) {
+    id: 'stkCross',
+    afterDraw(chart) {
       if (activeIdx === null) return;
       const {ctx, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
@@ -5372,11 +5373,17 @@ function stkDrawCharts(series) {
       row('Top10持倉', t10 != null ? t10.toFixed(1)+'%':'—', '#2a9d8f') +
       row('SFC賣空',  sfc != null ? sfc.toFixed(1)+'%' :'—', '#c0252d');
     tip.style.display = 'block';
-    const wr = wrap.getBoundingClientRect();
-    const tx = Math.min(e.clientX - wr.left + 14, wr.width - 170);
-    const ty = Math.max(e.clientY - wr.top  - 100, 4);
-    tip.style.left = tx+'px';
-    tip.style.top  = ty+'px';
+    const wr  = wrap.getBoundingClientRect();
+    const cx  = e.clientX - wr.left;
+    const tipW = 170;
+    // Flip to left of cursor when in right half to avoid blocking data
+    const tx = cx > wr.width / 2
+      ? cx - tipW - 14
+      : cx + 14;
+    const ty = Math.max(e.clientY - wr.top - 100, 4);
+    tip.style.left = Math.max(0, tx) + 'px';
+    tip.style.right = 'auto';
+    tip.style.top  = ty + 'px';
   }
 
   function bindHover(chart) {
