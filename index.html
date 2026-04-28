@@ -3703,7 +3703,8 @@ function drawSdwChart(code, selectedDs) {
       const mx   = (e.clientX - rect.left) * (canvas.width / rect.width);
       // Recompute xAt from current canvas to avoid stale closure after redraw
       const _cW  = canvas.width / (window.devicePixelRatio || 1) - PAD.left - PAD.right;
-      const xAt2 = i => PAD.left + (n > 1 ? i/(n-1) : 0.5) * _cW * (window.devicePixelRatio || 1);
+      const _dpr = window.devicePixelRatio || 1;
+      const xAt2 = i => (PAD.left + (n > 1 ? i/(n-1) : 0.5) * _cW) * _dpr;
       let best = null, bestDx = Infinity;
       series.forEach((s, i) => {
         const dx = Math.abs(mx - xAt2(i));
@@ -3901,9 +3902,11 @@ function drawGroupHistoryChart(code) {
   const PAD = { top:16, right:48, bottom:28, left:44 };
   const cW  = W - PAD.left - PAD.right;
   const cH  = H - PAD.top  - PAD.bottom;
-  const n   = series.length;
-  const yAt = v => PAD.top + cH - (v / 100) * cH;
-  const xAt = i => PAD.left + (n > 1 ? i/(n-1) : 0.5) * cW;
+  const n      = series.length;
+  const groupW = cW / n;
+  const yAt    = v => PAD.top + cH - (v / 100) * cH;
+  // xAt points to center of each group — same formula as bar drawing
+  const xAt    = i => PAD.left + i * groupW + groupW / 2;
 
   // Grid: fixed 0–100%
   ctx.strokeStyle = '#f0ede8'; ctx.lineWidth = 1;
@@ -3916,7 +3919,6 @@ function drawGroupHistoryChart(code) {
   });
 
   // Grouped bars — thin (3 bars per date group)
-  const groupW = cW / n;
   const bw     = Math.max(1.5, Math.min(3, groupW / 4));
   const gTW    = bw * 3 + 2;
   series.forEach((s, gi) => {
@@ -3980,12 +3982,13 @@ function drawGroupHistoryChart(code) {
       if (!tip2) return;
       const rect    = canvas.getBoundingClientRect();
       const mx      = (e.clientX - rect.left) * (canvas.width / rect.width);
-      // Recompute cW from current canvas to avoid stale value after resize/redraw
-      const cW      = canvas.width / (window.devicePixelRatio || 1) - PAD.left - PAD.right;
-      // Use same spacing formula as xAt: i/(n-1)*cW — find nearest bar
+      // Recompute from current canvas dimensions
+      const _cW2     = canvas.width / (window.devicePixelRatio || 1) - PAD.left - PAD.right;
+      const _groupW2 = _cW2 / n;
+      // Find nearest bar center using same formula as drawing
       let best = 0, bestDx = Infinity;
       for (let i = 0; i < n; i++) {
-        const bx = PAD.left + (n > 1 ? i/(n-1) : 0.5) * cW;
+        const bx = PAD.left + i * _groupW2 + _groupW2 / 2;
         const dx = Math.abs(mx - bx);
         if (dx < bestDx) { bestDx = dx; best = i; }
       }
