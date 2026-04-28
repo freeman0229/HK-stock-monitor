@@ -5327,6 +5327,7 @@ function stkDrawCharts(series) {
   const crossPlugin = {
     id: 'stkCross',
     afterDraw(chart) {
+      if (!stkCharts.includes(chart)) return;  // only apply to stock charts
       if (activeIdx === null) return;
       const {ctx, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
@@ -5339,6 +5340,10 @@ function stkDrawCharts(series) {
       ctx.restore();
     }
   };
+  // Register globally — Chart.js 4.x ignores inline plugins array
+  if (!Chart.registry.plugins.get('stkCross')) {
+    Chart.register(crossPlugin);
+  }
 
   function getIdx(chart, e) {
     const rect = chart.canvas.getBoundingClientRect();
@@ -5406,7 +5411,7 @@ function stkDrawCharts(series) {
   const validTurn = series.turn.filter(v => v != null && v > 0);
   const maxTurn   = validTurn.length ? Math.max(...validTurn) : null;
   const c1 = new Chart(document.getElementById('stkC1'), {
-    type:'line', plugins:[crossPlugin],
+    type:'line', plugins:[],
     data:{labels:series.labels,datasets:[{
       label:'換手率',data:series.turn,
       borderColor:'#b8860b',borderWidth:1.5,
@@ -5426,7 +5431,7 @@ function stkDrawCharts(series) {
   // Panel 2 — Price + VWAP + Volume
   const maxVol = Math.max(...series.vol.filter(v => v != null && v > 0), 1);
   const c2 = new Chart(document.getElementById('stkC2'), {
-    type:'bar', plugins:[crossPlugin],
+    type:'bar', plugins:[],
     data:{labels:series.labels,datasets:[
       {type:'bar',   label:'成交量', data:series.vol,  backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yV',order:3,spanGaps:false},
       {type:'line',  label:'收市價', data:series.close, borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3,fill:false,yAxisID:'yP',order:1,spanGaps:false},
@@ -5453,7 +5458,7 @@ function stkDrawCharts(series) {
 
   // Panel 3 — Top10 (left) + SFC (right, separate scale)
   const c3 = new Chart(document.getElementById('stkC3'), {
-    type:'line', plugins:[crossPlugin],
+    type:'line', plugins:[],
     data:{labels:series.labels,datasets:[
       {label:'Top10持倉', type:'bar', data:series.top10, backgroundColor:'rgba(42,157,143,0.5)', borderColor:'#2a9d8f', borderWidth:1, barThickness:'flex', maxBarThickness:8, yAxisID:'yT'},
       {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:0, pointRadius:3, pointHoverRadius:5, pointBackgroundColor:'#c0252d', showLine:false, spanGaps:false, yAxisID:'yS'},
