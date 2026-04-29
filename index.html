@@ -38,6 +38,25 @@ FIX LOG
   with norm5(s.code), sdwCodes built with norm5() applied to each key. Also fixed the same
   raw-code nameMap bug in sdwSelectCode().
   Location: sdwBuildDropdown() and sdwSelectCode().
+
+[Fix 7 — 2026-04-29] 個股綜合分析 SFC賣空% chart showed tiny values (~0.1–0.3%) instead
+  of the real short ratio (~5–30%). Root cause: stkBuildSeries used sfcRec.sh / sfcTotal.sh
+  which computes this stock's share of total *market* short volume — not its own ratio.
+  sfcTotal is __total__.sh = sum of ALL stocks' short shares market-wide, so the result is
+  always near zero. Fixed by removing that path entirely and always using sfcRec.pct which
+  = sfc_sh / CCASS_total_sh * 100 (總數), consistent with data.json sfc_pct shown in the
+  main table. sfcTotal variable also removed as no longer needed.
+  Location: stkBuildSeries(), sfc_pct calculation block (~line 5328).
+
+[Fix 8 — 2026-04-29] 個股綜合分析 crosshair disappeared after first stock selection.
+  Root cause: activeIdx was declared as a local variable inside stkDrawCharts(). crossPlugin
+  is registered globally via Chart.register() on the first call — its afterDraw() closes over
+  that first-call activeIdx. On subsequent calls (new stock / date change), stkDrawCharts()
+  creates a new local activeIdx, bindHover() sets it correctly, but the globally registered
+  crossPlugin.afterDraw() still reads the stale first-call variable (always null after
+  mouseleave), so the crosshair never draws. Fixed by moving activeIdx → stkActiveIdx at
+  module level, shared by both crossPlugin and all bindHover() calls across re-renders.
+  Location: module-level declaration + crossPlugin.afterDraw() + bindHover().
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -5200,6 +5219,11 @@ let stkInitDone   = false;
 let stkRankCache  = null;   // parsed rank_history flat by date
 let stkSfcCache   = {};     // { year: sfc_YYYY.json data }
 let stkSdwCache   = {};     // { code5: sdw_{code}.json data }
+// activeIdx must be module-level: crossPlugin is registered globally via Chart.register()
+// on first stkDrawCharts() call. On subsequent calls a new local activeIdx would be created
+// but the globally registered afterDraw() would still close over the stale first-call variable,
+// making the crosshair disappear after the first stock selection.
+let stkActiveIdx  = null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // Plot every available trading day — weekly Friday-only sampling was discarding
@@ -5326,12 +5350,12 @@ async function stkBuildSeries(code5, fromDs, toDs) {
     }
 
     // sfc_pct — only show on exact SFC report dates (weekly data)
-    const sfcDay   = sfcFlat[ds];  // exact date match only
-    const sfcRec   = sfcDay?.[code5] || sfcDay?.[code5.replace(/^0+/,'')];
-    const sfcTotal = sfcDay?.['__total__'];
-    if (sfcRec?.sh > 0 && sfcTotal?.sh > 0) {
-      sfcArr.push(+(sfcRec.sh / sfcTotal.sh * 100).toFixed(2));
-    } else if (sfcRec?.pct != null) {
+    // Use sfcRec.pct directly: = sfc_sh / CCASS_total_sh * 100 (總數, consistent with data.json sfc_pct)
+    // sfcRec.sh / sfcTotal.sh was WRONG — that gives this stock's share of total *market* short volume,
+    // not its own short ratio, producing tiny values (~0.1–0.3%) instead of the real metric (~5–30%).
+    const sfcDay = sfcFlat[ds];  // exact date match only
+    const sfcRec = sfcDay?.[code5] || sfcDay?.[code5.replace(/^0+/,'')];
+    if (sfcRec?.pct != null) {
       sfcArr.push(+sfcRec.pct.toFixed(2));
     } else {
       sfcArr.push(null);
@@ -5365,19 +5389,17 @@ function stkDrawCharts(series) {
     }},
     grid:{color:gc}, border:{display:false} };
 
-  let activeIdx = null;
-
-  const afterFitR = scale => { scale.width = YW; };
+  let afterFitR = scale => { scale.width = YW; };
 
   const _stkCanvasIds = new Set(['stkC1','stkC2','stkC3']);
   const crossPlugin = {
     id: 'stkCross',
     afterDraw(chart) {
       if (!_stkCanvasIds.has(chart.canvas?.id)) return;
-      if (activeIdx === null) return;
+      if (stkActiveIdx === null) return;
       const {ctx, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
-      const xp = x.getPixelForValue(activeIdx);
+      const xp = x.getPixelForValue(stkActiveIdx);
       ctx.save();
       ctx.setLineDash([4,3]);
       ctx.strokeStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(80,80,80,0.4)';
@@ -5440,12 +5462,12 @@ function stkDrawCharts(series) {
   function bindHover(chart) {
     chart.canvas.addEventListener('mousemove', e => {
       const idx = getIdx(chart, e);
-      activeIdx = idx;
+      stkActiveIdx = idx;
       stkCharts.forEach(c => c.update('none'));
       showTip(e, idx);
     });
     chart.canvas.addEventListener('mouseleave', () => {
-      activeIdx = null;
+      stkActiveIdx = null;
       stkCharts.forEach(c => c.update('none'));
       const tip = document.getElementById('stock-tip');
       if (tip) tip.style.display = 'none';
