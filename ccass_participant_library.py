@@ -42,6 +42,7 @@ import argparse
 import json
 import logging
 import os
+import time
 from datetime import date, timedelta
 
 import requests
@@ -50,13 +51,46 @@ from bs4 import BeautifulSoup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# Base URL — shareholdingdate is set dynamically to today at fetch time
+# Base URL — shareholdingdate is set dynamically to last trading day at fetch time
 URL_BASE = "https://www3.hkexnews.hk/sdw/search/ccass_part_list_c.htm"
 LIB_FILE = "ccass_participants.json"
 HEADERS  = {
     "User-Agent": "Mozilla/5.0 (compatible; DataBot/1.0)",
     "Referer":    "https://www.hkexnews.hk/",
 }
+
+_FETCH_RETRIES  = 3    # total attempts before giving up
+_RETRY_SLEEP    = 5    # seconds between retries
+
+# ── Trading day helper ────────────────────────────────────────────────────────
+
+# Hardcoded HK public holidays (same set used across all pipeline scripts).
+_HK_HOLIDAYS = {
+    "2025-01-01","2025-01-29","2025-01-30","2025-01-31",
+    "2025-04-04","2025-04-05","2025-04-07",
+    "2025-05-01","2025-05-05","2025-06-02","2025-07-01",
+    "2025-09-30","2025-10-01","2025-10-29","2025-12-25","2025-12-26",
+    "2026-01-01",
+    "2026-02-17","2026-02-18","2026-02-19","2026-02-20",
+    "2026-04-03","2026-04-04","2026-04-05","2026-04-06",
+    "2026-05-01","2026-05-25","2026-06-19","2026-07-01",
+    "2026-09-07","2026-10-01","2026-10-26","2026-12-25","2026-12-26",
+}
+
+def _last_trading_day() -> date:
+    """Return the most recent past HK trading day (never today).
+
+    HKEX SDW participant list only has data for *past* trading dates —
+    requesting today's date returns an empty page even on a trading day.
+    Stepping back from yesterday avoids the 'No tables found' error that
+    occurs when the pipeline runs before HKEX publishes today's data (~6pm HKT).
+    """
+    d = date.today() - timedelta(days=1)   # start from yesterday
+    for _ in range(14):                     # safety limit — no holiday run > 2 weeks
+        if d.weekday() < 5 and d.isoformat() not in _HK_HOLIDAYS:
+            return d
+        d -= timedelta(days=1)
+    raise ValueError("_last_trading_day: no trading day found within 14 days")
 
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
@@ -92,62 +126,100 @@ def fetch() -> dict | None:
     """
     Fetch the CCASS participant list page and parse the two-column table.
     Returns {participant_id: participant_name} or None on failure.
+
+    Uses the last trading day (not today) because HKEX only serves a populated
+    table for *past* dates — requesting today's date before ~6pm HKT returns
+    an empty page with no table.
+
+    Retries up to _FETCH_RETRIES times with _RETRY_SLEEP second gaps before
+    giving up, to handle transient HKEX network/bot-detection failures.
     """
-    try:
-        url = f"{URL_BASE}?sortby=partid&shareholdingdate={date.today().strftime('%Y%m%d')}"
-        r = requests.get(url, headers=HEADERS, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+    trade_ds = _last_trading_day().strftime('%Y%m%d')
+    url = f"{URL_BASE}?sortby=partid&shareholdingdate={trade_ds}"
 
-        participants = {}
+    for attempt in range(1, _FETCH_RETRIES + 1):
+        try:
+            log.info("Fetching participant list (attempt %d/%d): %s",
+                     attempt, _FETCH_RETRIES, url)
+            r = requests.get(url, headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "html.parser")
 
-        # The page has a table with two columns: ID | Name
-        # Try all tables — use the one with the most rows
-        tables = soup.find_all("table")
-        if not tables:
-            log.warning("No tables found on %s", url)
-            return None
+            participants = {}
 
-        best_table = max(tables, key=lambda t: len(t.find_all("tr")))
-        rows = best_table.find_all("tr")
-
-        for row in rows:
-            cells = [td.get_text(strip=True) for td in row.find_all("td")]
-            if len(cells) < 2:
+            # The page has a table with two columns: ID | Name
+            # Try all tables — use the one with the most rows
+            tables = soup.find_all("table")
+            if not tables:
+                log.warning("No tables found on %s (attempt %d/%d)",
+                            url, attempt, _FETCH_RETRIES)
+                if attempt < _FETCH_RETRIES:
+                    log.info("Retrying in %ds …", _RETRY_SLEEP)
+                    time.sleep(_RETRY_SLEEP)
                 continue
-            pid  = cells[0].strip()
-            name = cells[1].strip()
-            # Participant IDs are alphanumeric, typically 6–8 chars
-            if not pid or not name or pid.lower() in ("id", "participant id", "code"):
+
+            best_table = max(tables, key=lambda t: len(t.find_all("tr")))
+            rows = best_table.find_all("tr")
+
+            for row in rows:
+                cells = [td.get_text(strip=True) for td in row.find_all("td")]
+                if len(cells) < 2:
+                    continue
+                pid  = cells[0].strip()
+                name = cells[1].strip()
+                # Participant IDs are alphanumeric, typically 6–8 chars
+                if not pid or not name or pid.lower() in ("id", "participant id", "code"):
+                    continue
+                participants[pid] = name
+
+            if not participants:
+                log.warning("Parsed 0 participants from %s (attempt %d/%d)",
+                            url, attempt, _FETCH_RETRIES)
+                if attempt < _FETCH_RETRIES:
+                    log.info("Retrying in %ds …", _RETRY_SLEEP)
+                    time.sleep(_RETRY_SLEEP)
                 continue
-            participants[pid] = name
 
-        if not participants:
-            log.warning("Parsed 0 participants from %s", url)
-            return None
+            log.info("Fetched %d participants from %s", len(participants), url)
+            return participants
 
-        log.info("Fetched %d participants from %s", len(participants), url)
-        return participants
+        except Exception as e:
+            log.error("fetch failed (attempt %d/%d): %s", attempt, _FETCH_RETRIES, e)
+            if attempt < _FETCH_RETRIES:
+                log.info("Retrying in %ds …", _RETRY_SLEEP)
+                time.sleep(_RETRY_SLEEP)
 
-    except Exception as e:
-        log.error("fetch failed: %s", e)
-        return None
+    log.error("All %d fetch attempts failed for %s", _FETCH_RETRIES, url)
+    return None
 
 
 # ── Build / update ────────────────────────────────────────────────────────────
 
 def build(update_only: bool = False):
-    """Fetch and save the participant list."""
+    """Fetch and save the participant list.
+
+    If all fetch attempts fail, falls back to the existing cached library
+    (however stale) so downstream scripts can continue working.
+    """
     if update_only:
-        lib = load_lib()
         if not is_stale():
+            lib = load_lib()
             log.info("Participant list is up to date (last updated: %s)",
                      lib["meta"].get("last_updated"))
             return
 
     participants = fetch()
     if participants is None:
-        log.error("Failed to fetch participant list")
+        # All retries exhausted — fall back to stale cache if available
+        existing = load_lib()
+        if existing.get("participants"):
+            log.warning(
+                "Fetch failed — continuing with stale cache from %s (%d participants)",
+                existing["meta"].get("last_updated", "unknown"),
+                len(existing["participants"]),
+            )
+        else:
+            log.error("Fetch failed and no cached data available")
         return
 
     lib = {"meta": {}, "participants": participants}

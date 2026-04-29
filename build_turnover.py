@@ -167,21 +167,25 @@ def fetch(d: date) -> str | None:
 #
 # * or % may appear before CODE — stripped by the pattern.
 # TRADING SUSPENDED / 暫停買賣 lines have no numeric data — skipped before regex.
+#
+# NOTE: g3 (股票名稱) is OPTIONAL — some stocks (e.g. 00068 MANYCORE TECH) have
+# no Chinese name in the HKEX quotation file, so the CJK column is absent.
+# Making g3 optional ensures these rows still match and are parsed correctly.
 
 _PAT = re.compile(
-    r"^[*%\s]{0,12}(\d{1,5})\s+"          # g1  代號  (1–5 digits; * % prefix stripped)
-    r"((?:(?![\u4e00-\u9fff\u25c6]).)*)"   # g2  NAME OF STOCK — greedy, stops at first CJK or ◆
-    r"([\u4e00-\u9fff\u25c6].*?)\s*"       # g3  股票名稱 — from first CJK/◆ to currency (lazy)
+    r"^[*%\s]{0,12}(\d{1,5})\s+"           # g1  代號  (1–5 digits; * % prefix stripped)
+    r"((?:(?![\u4e00-\u9fff\u25c6]).)*)"    # g2  NAME OF STOCK — greedy, stops at first CJK or ◆
+    r"([\u4e00-\u9fff\u25c6].*?)?\s*"       # g3  股票名稱 — OPTIONAL: absent for English-only stocks
     r"(?:HKD|USD|CNY|RMB|EUR|GBP|AUD|JPY|SGD)\s+"  # CUR (skip)
-    r"[\d,.NA-]+\s+"                       # 前收市 / PRV  (skip; may be '-' for some ETFs)
-    r"[\d,.NA-]+\s+"                       # BID  (skip)
-    r"[\d,.NA-]+\s+"                       # ASK  (skip)
-    r"(?:[\d,.NA-]+\s+)?"                  # optional extra col (some ETF/warrant rows have 9 numeric fields)
-    r"([\d,.NA-]+)\s+"                     # g4  最高 / HIGH
-    r"([\d,.NA-]+)\s+"                     # g5  最低 / LOW
-    r"([\d,.NA-]+)\s+"                     # g6  收市 / CLOSING  (may be '-' when no trading)
-    r"([\d,]+)\s+"                         # g7  成交股數 → vol
-    r"([\d,]+)\s*$"                        # g8  成交金額 → tv
+    r"[\d,.NA-]+\s+"                        # 前收市 / PRV  (skip; may be '-' for some ETFs)
+    r"[\d,.NA-]+\s+"                        # BID  (skip)
+    r"[\d,.NA-]+\s+"                        # ASK  (skip)
+    r"(?:[\d,.NA-]+\s+)?"                   # optional extra col (some ETF/warrant rows have 9 numeric fields)
+    r"([\d,.NA-]+)\s+"                      # g4  最高 / HIGH
+    r"([\d,.NA-]+)\s+"                      # g5  最低 / LOW
+    r"([\d,.NA-]+)\s+"                      # g6  收市 / CLOSING  (may be '-' when no trading)
+    r"([\d,]+)\s+"                          # g7  成交股數 → vol
+    r"([\d,]+)\s*$"                         # g8  成交金額 → tv
 )
 
 def _num(s: str) -> float:
@@ -228,7 +232,8 @@ def parse(body: str) -> dict:
         if not _is_included(code):
             continue
         name_en     = m.group(2).strip()
-        name_zh_raw = m.group(3).strip()
+        # g3 is optional — None when stock has no Chinese name (e.g. 00068 MANYCORE TECH)
+        name_zh_raw = (m.group(3) or "").strip()
         # Strip ◆ bullet markers used in some ETF names (Big5 encoding artifact)
         name_zh_raw = re.sub(r"^◆+|◆+$", "", name_zh_raw).strip()
         name_zh     = name_zh_raw if _has_cjk(name_zh_raw) else name_en

@@ -1,3 +1,44 @@
+<!--
+FIX LOG
+=======
+[Fix 1 — 2026-04-28] Legend/chart colour mismatch: Top10持倉 legend swatch was purple
+  (rgba(83,74,183,0.5) / #534AB7) but chart dataset uses teal (rgba(42,157,143,0.5) / #2a9d8f).
+  Fixed legend swatch background and border to match the chart dataset colour.
+  Location: static legend HTML row inside #stock-content (stkC3 panel footer).
+
+[Fix 2 — 2026-04-28] 前5位/前10位 toggle: sdw-chart-sub subtitle hardcoded "前5大"
+  regardless of sdwTopN. Now reads topN variable so it correctly shows 前5大 or 前10大.
+  Location: renderSdwPanel(), sdw-chart-sub textContent assignment.
+
+[Fix 3 — 2026-04-28] 前5位/前10位 toggle: drawSdwChart() always plotted top-5 aggregate
+  line regardless of sdwTopN. All hardcoded `5` / `top5sum` references replaced with
+  `_chartTopN` (= sdwTopN || 5) and `topNsum`. Affected: series map, maxY, line drawing,
+  dot drawing, value label, canvas legend, and hover tooltip.
+  Location: drawSdwChart() function (~line 3583).
+
+[Fix 4 — 2026-04-28] SFC dropdown: non-ccass_universe codes (e.g. warrants like 81810)
+  appeared in search results because sfcCodeSet was built from all sfcData keys with no
+  universe filter. Fixed by adding `&& nameMap[norm5(c)]` guard in both the empty-query
+  path (top-20 by HKD) and the typed-query path (sfcCodeSet). Only codes present in
+  allStocks (ccass_universe) are now shown.
+  Location: sfcBuildDropdown(), empty-query and typed-query branches.
+
+[Fix 5 — 2026-04-28] SFC dropdown: stock names missing for some codes (showed raw code
+  instead of name) because sfcData keys may not be norm5-padded, causing nameMap[code]
+  to miss even when the stock exists in allStocks. Fixed by using norm5(code) for nameMap
+  lookup in both the ccass_universe guard and the dropdown render. Also removed rec.name
+  fallback (SFC CSV name field) since ccass_universe filter makes it redundant.
+  Location: sfcBuildDropdown(), sfcCodeSet loop and dd.innerHTML render.
+
+[Fix 6 — 2026-04-28] 大戶持倉 dropdown: all entries showed "無數據" and names fell back
+  to raw code because sdwBuildDropdown keyed nameMap by raw s.code (e.g. "2800") while
+  sdwCodes was built from sdwData keys stored as norm5 (e.g. "02800"). sdwCodes.has(code)
+  always failed for unpadded codes, making inSdw=false and _sdwRec=null for every entry.
+  Fixed by applying norm5() consistently: nameMap keyed by norm5(s.code), allStocks mapped
+  with norm5(s.code), sdwCodes built with norm5() applied to each key. Also fixed the same
+  raw-code nameMap bug in sdwSelectCode().
+  Location: sdwBuildDropdown() and sdwSelectCode().
+-->
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -1191,7 +1232,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div style="font-size:11px;color:var(--muted);margin-top:6px;display:flex;gap:16px;flex-wrap:wrap;">
         <span><span style="display:inline-block;width:16px;height:2px;background:#378ADD;vertical-align:middle;margin-right:3px"></span>收市價</span>
         <span><span style="display:inline-block;width:16px;height:2px;border-top:2px dashed rgba(192,37,45,0.7);vertical-align:middle;margin-right:3px"></span>VWAP</span>
-        <span><span style="display:inline-block;width:10px;height:12px;background:rgba(83,74,183,0.5);border:1px solid #534AB7;vertical-align:middle;margin-right:3px"></span>Top10持倉</span>
+        <span><span style="display:inline-block;width:10px;height:12px;background:rgba(42,157,143,0.5);border:1px solid #2a9d8f;vertical-align:middle;margin-right:3px"></span>Top10持倉</span>
         <span><span style="display:inline-block;width:8px;height:8px;background:#c0252d;border-radius:50%;vertical-align:middle;margin-right:3px"></span>SFC賣空</span>
         <span><span style="display:inline-block;width:16px;height:8px;background:rgba(128,128,128,0.2);vertical-align:middle;margin-right:3px;border-radius:1px"></span>成交量</span>
       </div>
@@ -2184,13 +2225,13 @@ function sfcBuildDropdown(query) {
 
   let show;
   if (!q) {
-    // Empty query — show top 20 stocks by HKD from latest SFC date
+    // Empty query — show top 20 stocks by HKD from latest SFC date, ccass_universe only
     const latestRecs = sfcData[latestDs] || {};
     const sfcTop = Object.entries(latestRecs)
-      .filter(([c]) => c !== '__total__')
+      .filter(([c]) => c !== '__total__' && nameMap[norm5(c)])  // restrict to ccass_universe
       .sort((a, b) => (b[1].hkd || 0) - (a[1].hkd || 0))
       .slice(0, 20)
-      .map(([code]) => code);
+      .map(([code]) => norm5(code));
     if (sfcTop.length) {
       show = sfcTop;
     } else {
@@ -2202,12 +2243,14 @@ function sfcBuildDropdown(query) {
     }
     if (!show.length) { dd.style.display = 'none'; return; }
   } else {
-    // Typing — filter across all SFC codes
+    // Typing — filter across SFC codes that are in ccass_universe only
     let sfcCodes;
     if (sfcDates.length) {
       const sfcCodeSet = new Set();
       sfcDates.forEach(ds => {
-        Object.keys(sfcData[ds] || {}).forEach(c => { if (c !== '__total__') sfcCodeSet.add(c); });
+        Object.keys(sfcData[ds] || {}).forEach(c => {
+          if (c !== '__total__' && nameMap[norm5(c)]) sfcCodeSet.add(norm5(c));  // ccass_universe only, normalised
+        });
       });
       sfcCodes = [...sfcCodeSet].sort();
     } else {
@@ -2222,12 +2265,12 @@ function sfcBuildDropdown(query) {
 
   dd.style.maxHeight = '280px'; dd.style.overflowY = 'auto';
   dd.innerHTML = show.map(code => {
-    const info = nameMap[code] || {};
+    const info = nameMap[norm5(code)] || {};  // norm5 ensures key matches nameMap regardless of source padding
     const rec  = (sfcData[latestDs]||{})[code] || {};
     const sub  = rec.hkd ? `HKD ${(rec.hkd/1e8).toFixed(1)}億` : '';
     return `<div class="sdw-dd-item" data-code="${code}">
       <span class="dd-code">${code}</span>
-      <span class="dd-name">${info.chi || rec.name || code}</span>
+      <span class="dd-name">${info.chi || info.eng || code}</span>
       <span class="dd-sub">${sub}</span>
     </div>`;
   }).join('');
@@ -3393,12 +3436,13 @@ function sdwBuildDropdown(query) {
   // Union of data.json stocks + any code seen in SDW data (for pre-data.json runs)
   const latestDs  = sdwDates[sdwDates.length - 1] || '';
   // Union of ALL codes across all dates — latestDs may only have partial backfill
-  const sdwCodes  = new Set(sdwDates.flatMap(ds => Object.keys(sdwData[ds] || {})));
+  // norm5 applied so sdwCodes keys always match nameMap keys and sdwData keys
+  const sdwCodes  = new Set(sdwDates.flatMap(ds => Object.keys(sdwData[ds] || {}).map(norm5)));
   const nameMap   = {};
-  allStocks.forEach(s => { nameMap[s.code] = { chi: s.name_chi, eng: s.name }; });
+  allStocks.forEach(s => { nameMap[norm5(s.code)] = { chi: s.name_chi, eng: s.name }; });
 
-  // Merge: allStocks first, then any SDW-only codes
-  const allCodes  = [...new Set([...allStocks.map(s => s.code), ...sdwCodes])];
+  // Merge: allStocks first (norm5), then any SDW-only codes — deduped
+  const allCodes  = [...new Set([...allStocks.map(s => norm5(s.code)), ...sdwCodes])];
 
   let matches = allCodes.filter(code => {
     if (!q) return sdwCodes.has(code);   // if empty, only show SDW-tracked
@@ -3443,8 +3487,8 @@ function sdwBuildDropdown(query) {
 async function sdwSelectCode(code) {
   sdwCurCode = code;
   const nameMap = {};
-  allStocks.forEach(s => { nameMap[s.code] = s.name_chi; });
-  const name = nameMap[code] || code;
+  allStocks.forEach(s => { nameMap[norm5(s.code)] = s.name_chi; });
+  const name = nameMap[norm5(code)] || code;
   document.getElementById('sdw-search').value = `${code}  ${name}`;
   document.getElementById('sdw-dropdown').style.display = 'none';
   // Show loading state immediately
@@ -3509,7 +3553,7 @@ function renderSdwPanel() {
   }
 
   document.getElementById('sdw-group-sub').textContent   = `${nameStr} ｜ 大戶 / 北水 / 散戶`;
-  document.getElementById('sdw-chart-sub').textContent   = `${nameStr} 前5大機構合計持股% ｜ 資料截至 ${ds}`;
+  document.getElementById('sdw-chart-sub').textContent   = `${nameStr} 前${topN}大機構合計持股% ｜ 資料截至 ${ds}`;
   document.getElementById('sdw-top5-label').textContent  = '持倉人明細';
   document.getElementById('sdw-tbl-sub').textContent     = `${nameStr} ｜ 共 ${holders.length} 個機構 ｜ 資料截至 ${ds}`;
 
@@ -3587,14 +3631,15 @@ function drawSdwChart(code, selectedDs) {
   ctx.clearRect(0, 0, W, H);
 
   // Collect time series: last 1 year only
+  const _chartTopN = sdwTopN || 5;
   const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
   const series = [...new Set(sdwDates)].sort()
     .filter(ds => ds >= cutoff && (sdwData[ds]||{})[code])
     .map(ds => {
       const _raw = sdwData[ds][code];
       const h = _raw ? (Array.isArray(_raw) ? _raw : (_raw.p || [])) : [];
-      const top5sum = h.slice(0, 5).reduce((s, x) => s + (x.pct||0), 0);
-      return { ds, top5sum, holders: h };
+      const topNsum = h.slice(0, _chartTopN).reduce((s, x) => s + (x.pct||0), 0);
+      return { ds, topNsum, holders: h };
     });
 
   if (series.length < 2) {
@@ -3610,8 +3655,8 @@ function drawSdwChart(code, selectedDs) {
   const cH    = H - PAD.top  - PAD.bottom;
   const n     = series.length;
 
-  // y-range: 0 to max top5sum + 10%
-  const maxY = Math.max(...series.map(s => s.top5sum)) * 1.1;
+  // y-range: 0 to max topNsum + 10%
+  const maxY = Math.max(...series.map(s => s.topNsum)) * 1.1;
   const xAt  = i => PAD.left + (i / (n-1)) * cW;
   const yAt  = v => PAD.top + cH - (v / maxY) * cH;
 
@@ -3628,15 +3673,15 @@ function drawSdwChart(code, selectedDs) {
     ctx.fillText((maxY * f).toFixed(1) + '%', PAD.left - 4, y);
   });
 
-  // ── Top-5 aggregate line (solid, bold) ──────────────────────────────────
+  // ── Top-N aggregate line (solid, bold) ──────────────────────────────────
   ctx.save();
   ctx.strokeStyle = SDW_COLORS[0];
   ctx.lineWidth   = 2.5;
   ctx.setLineDash([]);
   ctx.beginPath();
   series.forEach((s, i) => {
-    if (i === 0) ctx.moveTo(xAt(i), yAt(s.top5sum));
-    else         ctx.lineTo(xAt(i), yAt(s.top5sum));
+    if (i === 0) ctx.moveTo(xAt(i), yAt(s.topNsum));
+    else         ctx.lineTo(xAt(i), yAt(s.topNsum));
   });
   ctx.stroke();
 
@@ -3644,7 +3689,7 @@ function drawSdwChart(code, selectedDs) {
   series.forEach((s, i) => {
     const isSel = s.ds === selectedDs;
     ctx.beginPath();
-    ctx.arc(xAt(i), yAt(s.top5sum), isSel ? 5 : 3, 0, Math.PI*2);
+    ctx.arc(xAt(i), yAt(s.topNsum), isSel ? 5 : 3, 0, Math.PI*2);
     ctx.fillStyle   = isSel ? SDW_COLORS[0] : '#fff';
     ctx.strokeStyle = SDW_COLORS[0];
     ctx.lineWidth   = 2;
@@ -3655,7 +3700,7 @@ function drawSdwChart(code, selectedDs) {
       ctx.font         = 'bold 11px sans-serif';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(s.top5sum.toFixed(1) + '%', xAt(i), yAt(s.top5sum) - 5);
+      ctx.fillText(s.topNsum.toFixed(1) + '%', xAt(i), yAt(s.topNsum) - 5);
     }
   });
   ctx.restore();
@@ -3679,7 +3724,7 @@ function drawSdwChart(code, selectedDs) {
   const legend = document.getElementById('sdw-group-legend');
   legend.innerHTML = `<span class="sdw-leg-item">
     <span class="sdw-leg-dot" style="background:${SDW_COLORS[0]}"></span>
-    前5大合計%
+    前${_chartTopN}大合計%
   </span>`;
 
   // ── Hover tooltip ─────────────────────────────────────────────────────────
@@ -3710,7 +3755,7 @@ function drawSdwChart(code, selectedDs) {
       const nearIdx = Math.max(0, Math.min(n-1, Math.round(frac * (n-1))));
       const best = series[nearIdx];
       if (!best) { tip2.style.display = 'none'; return; }
-      tip2.innerHTML = `<b>${best.ds}</b><br>前5大合計 <span style="color:#c0252d;font-weight:600">${best.top5sum.toFixed(2)}%</span>`;
+      tip2.innerHTML = `<b>${best.ds}</b><br>前${_chartTopN}大合計 <span style="color:#c0252d;font-weight:600">${best.topNsum.toFixed(2)}%</span>`;
       tip2.style.left = (e.clientX + 14) + 'px';
       tip2.style.top  = (e.clientY - 60) + 'px';
       tip2.style.display = 'block';

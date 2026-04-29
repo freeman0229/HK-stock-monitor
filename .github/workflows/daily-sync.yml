@@ -30,7 +30,8 @@ on:
           - turnover-build   # rebuild turnover library from scratch
           - short-build      # rebuild short selling library from scratch
           - ccass-universe   # rebuild CCASS universe
-          - sdw-backfill     # manual: backfill a specific date range
+          - sdw-backfill     # manual: backfill a specific date range (2 workers)
+          - sdw-backfill-3w  # manual: backfill a specific date range (3 workers, test)
           - sdw-migrate-json # one-time: import old ccass_sdw_*.json files into SQLite DB
           - hsi-build        # manual: rebuild full HSI weekly history from scratch
           - rank-history-backfill  # manual: rebuild rank_history.json from 2026-02-02
@@ -618,6 +619,62 @@ jobs:
       - name: Backfill SDW for date ${{ inputs.backfill_date }}
         env:
           SDW_WORKERS: "2"
+        run: python ccass_sdw_library.py --date "${{ inputs.backfill_date }}"
+      - name: Upload DB to R2
+        if: always()
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+      - name: Export SDW chart files
+        run: python ccass_sdw_library.py --export-charts
+      - name: Upload SDW chart files to R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 sync . s3://hk-stock-monitor/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
+            --exclude "*" --include "sdw_*.json" \
+            --no-progress
+
+  # ── SDW single-date backfill — 3 workers (manual, test) ─────────────────────
+  # Same as sdw-backfill but with SDW_WORKERS=3 to test higher-concurrency throughput.
+  # Usage: workflow_dispatch → sdw-backfill-3w, backfill_date = YYYY-MM-DD
+  sdw-backfill-3w:
+    name: SDW backfill 3w ${{ inputs.backfill_date }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    concurrency:
+      group: sdw-backfill-3w
+      cancel-in-progress: true
+    permissions:
+      contents: write
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-backfill-3w'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - run: playwright install chromium
+      - name: Download DB from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "No existing DB found — starting fresh"
+      - name: Backfill SDW for date ${{ inputs.backfill_date }} (3 workers)
+        env:
+          SDW_WORKERS: "3"
         run: python ccass_sdw_library.py --date "${{ inputs.backfill_date }}"
       - name: Upload DB to R2
         if: always()
