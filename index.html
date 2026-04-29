@@ -67,6 +67,8 @@ FIX LOG
   Changed afterDraw → afterDatasetsDraw to match Bollinger. Fixed bindHover to store
   handlers on canvas._stkMove/._stkLeave and remove them before re-adding each render.
   Location: stkDrawCharts() — crossPlugin, bindHover, all 3 chart plugins:[].
+  Further revised: switched afterDatasetsDraw → afterDraw (fires last, nothing overwrites
+  the line). Removed try/catch from stkCharts.forEach to expose real errors in console.
 
 [Fix 9 — 2026-04-29] 個股綜合分析 fetching future-year JSON files causing 404 errors
   (turnover_2027.json, sfc_2027.json). Root cause: year range used flatMap(y=>[y-1,y,y+1])
@@ -5413,11 +5415,11 @@ function stkDrawCharts(series) {
 
   // ── Crosshair plugin (inline, like Bollinger — avoids global registration stale-closure bug)
   // Each stkDrawCharts() call creates a fresh plugin that correctly closes over local activeIdx.
-  // afterDatasetsDraw (not afterDraw) mirrors the working Bollinger implementation.
+  // afterDraw fires last in Chart.js render cycle — nothing can overdraw the crosshair line.
   let activeIdx = null;
 
   const crossPlugin = {
-    afterDatasetsDraw(chart) {
+    afterDraw(chart) {
       if (activeIdx === null) return;
       const {ctx, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
@@ -5481,12 +5483,12 @@ function stkDrawCharts(series) {
     if (cvs._stkLeave) cvs.removeEventListener('mouseleave', cvs._stkLeave);
     cvs._stkMove = e => {
       activeIdx = getIdx(chart, e);
-      stkCharts.forEach(c => { try { c.update('none'); } catch(_){} });
+      stkCharts.forEach(c => c.update('none'));
       showTip(e, activeIdx);
     };
     cvs._stkLeave = () => {
       activeIdx = null;
-      stkCharts.forEach(c => { try { c.update('none'); } catch(_){} });
+      stkCharts.forEach(c => c.update('none'));
       const tip = document.getElementById('stock-tip');
       if (tip) tip.style.display = 'none';
     };
