@@ -5425,9 +5425,9 @@ function stkDrawCharts(series) {
       if (!x || !chartArea) return;
       const xp = x.getPixelForValue(activeIdx);
       ctx.save();
+      ctx.strokeStyle = '#c0252d';
+      ctx.lineWidth = 1.5;
       ctx.setLineDash([4,3]);
-      ctx.strokeStyle = dark ? 'rgba(255,255,255,0.6)' : 'rgba(80,80,80,0.75)';
-      ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(xp,chartArea.top); ctx.lineTo(xp,chartArea.bottom); ctx.stroke();
       ctx.restore();
     }
