@@ -67,8 +67,16 @@ FIX LOG
   Changed afterDraw → afterDatasetsDraw to match Bollinger. Fixed bindHover to store
   handlers on canvas._stkMove/._stkLeave and remove them before re-adding each render.
   Location: stkDrawCharts() — crossPlugin, bindHover, all 3 chart plugins:[].
-  Further revised: switched afterDatasetsDraw → afterDraw (fires last, nothing overwrites
-  the line). Removed try/catch from stkCharts.forEach to expose real errors in console.
+  Further revised (final):
+  - afterDraw (not afterDatasetsDraw) — fires last, nothing overwrites the line
+  - clip reset via ctx.rect(canvas.width,height) before drawing — fixes line truncation
+  - removed id from plugin — Chart.js unregisters id'd plugins on destroy(), breaking
+    subsequent renders after tab switches (e.g. visiting Bollinger tab)
+  - c.update('none') → c.draw() — bypasses update lifecycle that caused plugin conflicts
+  - shared crossPlugin → makeCross() factory — each chart gets its own instance;
+    sharing one object across 3 charts causes Chart.js 4.x registration conflicts
+  - bindHover stores/removes handlers on canvas._stkMove/_stkLeave to prevent
+    listener accumulation across re-renders (same DOM canvas reused)
 
 [Fix 9 — 2026-04-29] 個股綜合分析 fetching future-year JSON files causing 404 errors
   (turnover_2027.json, sfc_2027.json). Root cause: year range used flatMap(y=>[y-1,y,y+1])
@@ -77,6 +85,17 @@ FIX LOG
   curYear cap so fetches never exceed the current year regardless of date range.
   Also suppresses 404 noise that was masking real JS errors in DevTools console.
   Location: stkBuildSeries(), years array calculation.
+
+[Fix 10 — 2026-04-29] 保力加通道 tooltip always appeared to right of cursor, covering
+  data when hovering right half of chart. Fixed by flipping to left side when cursor
+  is in right half — same logic as stock panel showTip().
+  Location: showCaiTip() positioning.
+
+[Fix 11 — 2026-04-29] 保力加通道 crosshair line truncated at top/bottom of each panel
+  due to Chart.js clip region active during afterDatasetsDraw. Fixed by adding canvas
+  to destructuring and resetting clip via ctx.rect(0,0,canvas.width,canvas.height)
+  before drawing — same fix applied to stock panel crosshair in Fix 8.
+  Location: Bollinger crossPlugin.afterDatasetsDraw().
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -4411,10 +4430,12 @@ async function drawCai() {
   const crossPlugin = {
     afterDatasetsDraw(chart) {
       if (caiActiveIdx===null) return;
-      const {ctx, chartArea, scales:{x}} = chart;
+      const {ctx, canvas, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
       const xp = x.getPixelForValue(caiActiveIdx);
-      ctx.save(); ctx.setLineDash([4,3]); ctx.strokeStyle='rgba(150,150,150,0.45)'; ctx.lineWidth=1;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
+      ctx.setLineDash([4,3]); ctx.strokeStyle='rgba(150,150,150,0.45)'; ctx.lineWidth=1;
       ctx.beginPath(); ctx.moveTo(xp, chartArea.top); ctx.lineTo(xp, chartArea.bottom); ctx.stroke(); ctx.restore();
     }
   };
@@ -4459,7 +4480,10 @@ async function drawCai() {
       row('成交量', vol?((vol/1e6).toFixed(1)+'M'):'—', '#888');
     tip.style.display='block';
     const wr=wrap.getBoundingClientRect();
-    tip.style.left=Math.min(e.clientX-wr.left+14, wr.width-170)+'px';
+    const cx=e.clientX-wr.left;
+    const tipW=170;
+    const tx=cx > wr.width/2 ? cx-tipW-14 : cx+14;
+    tip.style.left=Math.max(0,Math.min(tx, wr.width-tipW))+'px';
     tip.style.top =Math.max(e.clientY-wr.top-120, 4)+'px';
   }
 
@@ -5413,20 +5437,19 @@ function stkDrawCharts(series) {
 
   let afterFitR = scale => { scale.width = YW; };
 
-  // ── Crosshair plugin (inline, like Bollinger — avoids global registration stale-closure bug)
-  // Each stkDrawCharts() call creates a fresh plugin that correctly closes over local activeIdx.
-  // afterDraw fires last in Chart.js render cycle — nothing can overdraw the crosshair line.
+  // ── Crosshair plugin factory — each chart gets its own instance
+  // Sharing one plugin object across multiple charts causes Chart.js 4.x conflicts.
+  // Each stkDrawCharts() call creates fresh instances closing over local activeIdx.
+  // afterDraw fires last; clip reset ensures line isn't truncated by Chart.js clip region.
   let activeIdx = null;
 
-  const crossPlugin = {
-    id: 'stkCrossInline',
+  const makeCross = () => ({
     afterDraw(chart) {
       if (activeIdx === null) return;
       const {ctx, canvas, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
       const xp = x.getPixelForValue(activeIdx);
       ctx.save();
-      // Reset clip so line draws the full chart area height without being clipped
       ctx.beginPath();
       ctx.rect(0, 0, canvas.width, canvas.height);
       ctx.clip();
@@ -5436,7 +5459,7 @@ function stkDrawCharts(series) {
       ctx.beginPath(); ctx.moveTo(xp,chartArea.top); ctx.lineTo(xp,chartArea.bottom); ctx.stroke();
       ctx.restore();
     }
-  };
+  });
 
   function getIdx(chart, e) {
     const rect = chart.canvas.getBoundingClientRect();
@@ -5488,12 +5511,12 @@ function stkDrawCharts(series) {
     if (cvs._stkLeave) cvs.removeEventListener('mouseleave', cvs._stkLeave);
     cvs._stkMove = e => {
       activeIdx = getIdx(chart, e);
-      stkCharts.forEach(c => c.update('none'));
+      stkCharts.forEach(c => c.draw());
       showTip(e, activeIdx);
     };
     cvs._stkLeave = () => {
       activeIdx = null;
-      stkCharts.forEach(c => c.update('none'));
+      stkCharts.forEach(c => c.draw());
       const tip = document.getElementById('stock-tip');
       if (tip) tip.style.display = 'none';
     };
@@ -5506,7 +5529,7 @@ function stkDrawCharts(series) {
   const validTurn = series.turn.filter(v => v != null && v > 0);
   const maxTurn   = validTurn.length ? Math.max(...validTurn) : null;
   const c1 = new Chart(document.getElementById('stkC1'), {
-    type:'line', plugins:[crossPlugin],
+    type:'line', plugins:[makeCross()],
     data:{labels:series.labels,datasets:[{
       label:'換手率',data:series.turn,
       borderColor:'#b8860b',borderWidth:1.5,
@@ -5526,7 +5549,7 @@ function stkDrawCharts(series) {
   // Panel 2 — Price + VWAP + Volume
   const maxVol = Math.max(...series.vol.filter(v => v != null && v > 0), 1);
   const c2 = new Chart(document.getElementById('stkC2'), {
-    type:'bar', plugins:[crossPlugin],
+    type:'bar', plugins:[makeCross()],
     data:{labels:series.labels,datasets:[
       {type:'bar',   label:'成交量', data:series.vol,  backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yV',order:3,spanGaps:false},
       {type:'line',  label:'收市價', data:series.close, borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3,fill:false,yAxisID:'yP',order:1,spanGaps:false},
@@ -5553,7 +5576,7 @@ function stkDrawCharts(series) {
 
   // Panel 3 — Top10 (left) + SFC (right, separate scale)
   const c3 = new Chart(document.getElementById('stkC3'), {
-    type:'line', plugins:[crossPlugin],
+    type:'line', plugins:[makeCross()],
     data:{labels:series.labels,datasets:[
       {label:'Top10持倉', type:'bar', data:series.top10, backgroundColor:'rgba(42,157,143,0.5)', borderColor:'#2a9d8f', borderWidth:1, barThickness:'flex', maxBarThickness:8, yAxisID:'yT'},
       {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:0, pointRadius:3, pointHoverRadius:5, pointBackgroundColor:'#c0252d', showLine:false, spanGaps:false, yAxisID:'yS'},
