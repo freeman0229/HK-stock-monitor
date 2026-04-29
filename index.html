@@ -5419,14 +5419,19 @@ function stkDrawCharts(series) {
   let activeIdx = null;
 
   const crossPlugin = {
+    id: 'stkCrossInline',
     afterDraw(chart) {
       if (activeIdx === null) return;
-      const {ctx, chartArea, scales:{x}} = chart;
+      const {ctx, canvas, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
       const xp = x.getPixelForValue(activeIdx);
       ctx.save();
-      ctx.strokeStyle = '#c0252d';
-      ctx.lineWidth = 1.5;
+      // Reset clip so line draws the full chart area height without being clipped
+      ctx.beginPath();
+      ctx.rect(0, 0, canvas.width, canvas.height);
+      ctx.clip();
+      ctx.strokeStyle = dark ? 'rgba(255,255,255,0.6)' : 'rgba(80,80,80,0.75)';
+      ctx.lineWidth = 1;
       ctx.setLineDash([4,3]);
       ctx.beginPath(); ctx.moveTo(xp,chartArea.top); ctx.lineTo(xp,chartArea.bottom); ctx.stroke();
       ctx.restore();
