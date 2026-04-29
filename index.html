@@ -4443,8 +4443,8 @@ async function drawCai() {
       ctx.rect(0, 0, canvas.width, canvas.height);
       ctx.clip();
       ctx.setLineDash([4,3]);
-      ctx.strokeStyle = 'rgba(150,150,150,0.6)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#c0252d';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(xp, chartArea.top);
       ctx.lineTo(xp, chartArea.bottom);
@@ -5474,8 +5474,8 @@ function stkDrawCharts(series) {
       ctx.beginPath();
       ctx.rect(0, 0, canvas.width, canvas.height);
       ctx.clip();
-      ctx.strokeStyle = dark ? 'rgba(255,255,255,0.6)' : 'rgba(80,80,80,0.75)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#c0252d';
+      ctx.lineWidth = 1.5;
       ctx.setLineDash([4,3]);
       ctx.beginPath(); ctx.moveTo(xp,chartArea.top); ctx.lineTo(xp,chartArea.bottom); ctx.stroke();
       ctx.restore();
