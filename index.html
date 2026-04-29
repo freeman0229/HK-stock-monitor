@@ -42,11 +42,16 @@ FIX LOG
 [Fix 7 — 2026-04-29] 個股綜合分析 SFC賣空% chart showed tiny values (~0.1–0.3%) instead
   of the real short ratio (~5–30%). Root cause: stkBuildSeries used sfcRec.sh / sfcTotal.sh
   which computes this stock's share of total *market* short volume — not its own ratio.
-  sfcTotal is __total__.sh = sum of ALL stocks' short shares market-wide, so the result is
-  always near zero. Fixed by removing that path entirely and always using sfcRec.pct which
-  = sfc_sh / CCASS_total_sh * 100 (總數), consistent with data.json sfc_pct shown in the
-  main table. sfcTotal variable also removed as no longer needed.
-  Location: stkBuildSeries(), sfc_pct calculation block (~line 5328).
+  sfcTotal is __total__.sh = sum of ALL stocks' short shares market-wide (~74B shares),
+  so the result is always near zero. Three-part fix:
+  (a) index.html: two-path lookup — sfcRec.pct if present (new records), else
+      sfcRec.sh / sdwByDate[nearestSdw].total_sh (CCASS 總數, mirrors main.py).
+      sfcTotal.__total__ path removed entirely.
+  (b) sfc_library.py: added save_pct_bulk(ds, pct_map) — persists pct into
+      sfc_YYYY.json so frontend reads it directly without recomputing.
+  (c) main.py: calls sfc_save_pct_bulk() after sfc_map is built (SDW available only).
+  Historical records without pct are handled by the fallback in (a).
+  Location: stkBuildSeries() + sfc_library.py:save_pct_bulk() + main.py sfc_map block.
 
 [Fix 8 — 2026-04-29] 個股綜合分析 crosshair disappeared after first stock selection.
   Root cause: activeIdx was declared as a local variable inside stkDrawCharts(). crossPlugin
@@ -5350,13 +5355,18 @@ async function stkBuildSeries(code5, fromDs, toDs) {
     }
 
     // sfc_pct — only show on exact SFC report dates (weekly data)
-    // Use sfcRec.pct directly: = sfc_sh / CCASS_total_sh * 100 (總數, consistent with data.json sfc_pct)
-    // sfcRec.sh / sfcTotal.sh was WRONG — that gives this stock's share of total *market* short volume,
-    // not its own short ratio, producing tiny values (~0.1–0.3%) instead of the real metric (~5–30%).
+    // Priority: sfcRec.pct (pre-computed, stored in sfc_YYYY.json by sfc_library.py)
+    //         → sfcRec.sh / sdw total_sh (per-stock CCASS 總數, mirrors main.py line 664)
+    //         → null
+    // NEVER divide by sfcTotal.sh (__total__.sh = sum of ALL stocks' short shares market-wide —
+    // that gives this stock's share of total market short volume, not its own ratio).
     const sfcDay = sfcFlat[ds];  // exact date match only
     const sfcRec = sfcDay?.[code5] || sfcDay?.[code5.replace(/^0+/,'')];
-    if (sfcRec?.pct != null) {
+    if (sfcRec?.pct != null && sfcRec.pct > 0) {
       sfcArr.push(+sfcRec.pct.toFixed(2));
+    } else if (sfcRec?.sh > 0 && totalSh > 0) {
+      // Fallback: compute from raw shares using SDW total_sh (nearest available date)
+      sfcArr.push(+(sfcRec.sh / totalSh * 100).toFixed(2));
     } else {
       sfcArr.push(null);
     }

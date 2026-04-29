@@ -28,9 +28,9 @@ Structure:
 sh   = aggregated reportable short position (shares)
 hkd  = aggregated reportable short position (HKD)
 name = English stock name from SFC file
-
-Note: SFC files have never included a pct column. pct is computed
-      at runtime in main.py using SDW total shares as denominator.
+pct  = sfc_sh / CCASS_total_sh * 100 (總數) — written by main.py via save_pct_bulk()
+       after each run once SDW total_sh is available. Absent in records written before
+       this feature was added; frontend falls back to computing it from sh + SDW total_sh.
 
 Old compact schema (written by earlier versions — handled transparently):
   {n, s, v, p}  →  {name, sh, hkd, pct}
@@ -795,6 +795,51 @@ def get_total_history(n: int, before: str) -> list:
             if len(result) >= n:
                 return result
     return result
+
+def save_pct_bulk(ds: str, pct_map: dict) -> int:
+    """
+    Persist pre-computed sfc_pct values into sfc_YYYY.json for a given report date.
+
+    Called by main.py after it computes sfc_pct = sfc_sh / CCASS_total_sh * 100
+    for each stock (using SDW total_sh as denominator).  Storing pct here avoids
+    re-computing it at frontend render time and keeps data.json lean.
+
+    Args:
+        ds:      Report date as YYYY-MM-DD (must already exist in by_date).
+        pct_map: {code5: pct_float} — only codes present in sfc_YYYY.json[ds] are updated.
+
+    Returns:
+        Number of records updated.
+
+    Note: Records with pct=0.0 are skipped (no valid denominator was available).
+    Note: sfc_YYYY.json comment at line 32 previously said pct is never stored —
+          this function is the addition that changes that behaviour.
+    """
+    year = int(ds[:4])
+    p    = lib_path(year)
+    if not os.path.exists(p):
+        log.warning("save_pct_bulk: sfc_%d.json not found — skipping", year)
+        return 0
+    with open(p, encoding="utf-8") as f:
+        lib = json.load(f)
+    by_date = lib.get("by_date", {})
+    if ds not in by_date:
+        log.warning("save_pct_bulk: date %s not found in sfc_%d.json — skipping", ds, year)
+        return 0
+    week = by_date[ds]
+    updated = 0
+    for code5, pct in pct_map.items():
+        if pct <= 0:
+            continue  # skip zero — denominator was unavailable
+        if code5 in week and isinstance(week[code5], dict):
+            week[code5]["pct"] = round(float(pct), 4)
+            updated += 1
+    if updated:
+        save_year(year, lib)
+        log.info("save_pct_bulk: wrote pct for %d stocks on %s into sfc_%d.json",
+                 updated, ds, year)
+    return updated
+
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 

@@ -18,7 +18,7 @@ from sc_top10_library import get_top10, get_top10_history, get_sb_summary
 try:
     from sfc_library import get_short_position as sfc_get_position, \
     all_report_fridays as sfc_fridays, get_position_history as sfc_get_history, \
-    all_stored_dates as sfc_stored_dates
+    all_stored_dates as sfc_stored_dates, save_pct_bulk as sfc_save_pct_bulk
     _SFC_AVAILABLE = True
 except ImportError:
     _SFC_AVAILABLE = False
@@ -680,6 +680,13 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                 log.info("SFC short positions: %d stocks from %s%s",
                          len(sfc_map), _latest_sfc_ds,
                          " (pct=0, SDW unavailable)" if not _SDW_AVAILABLE else "")
+                # Persist pct into sfc_YYYY.json so frontend reads it directly
+                # (avoids recomputing at render time and keeps data.json lean)
+                if _SDW_AVAILABLE and sfc_map:
+                    sfc_save_pct_bulk(
+                        _latest_sfc_ds,
+                        {code: v["sfc_pct"] for code, v in sfc_map.items()}
+                    )
         except Exception as e:
             log.warning("SFC map build failed: %s", e)
 
