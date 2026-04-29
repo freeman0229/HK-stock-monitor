@@ -5426,7 +5426,7 @@ function stkDrawCharts(series) {
       const xp = x.getPixelForValue(activeIdx);
       ctx.save();
       ctx.setLineDash([4,3]);
-      ctx.strokeStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(80,80,80,0.4)';
+      ctx.strokeStyle = dark ? 'rgba(255,255,255,0.6)' : 'rgba(80,80,80,0.75)';
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(xp,chartArea.top); ctx.lineTo(xp,chartArea.bottom); ctx.stroke();
       ctx.restore();
