@@ -30,8 +30,8 @@ on:
           - turnover-build   # rebuild turnover library from scratch
           - short-build      # rebuild short selling library from scratch
           - ccass-universe   # rebuild CCASS universe
-          - sdw-backfill     # manual: backfill a specific date range (2 workers)
-          - sdw-backfill-3w  # manual: backfill a specific date range (3 workers, test)
+          - sdw-backfill     # manual: backfill a specific date range (2 workers, conservative)
+          - sdw-backfill-3w  # manual: backfill a specific date range (3 workers, recommended)
           - sdw-migrate-json # one-time: import old ccass_sdw_*.json files into SQLite DB
           - hsi-build        # manual: rebuild full HSI weekly history from scratch
           - rank-history-backfill  # manual: rebuild rank_history.json from 2026-02-02
@@ -216,7 +216,7 @@ jobs:
   sdw-build:
     name: SDW full backfill (all dates → SQLite DB)
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 300
     concurrency:
       group: sdw-build
       cancel-in-progress: true
@@ -242,7 +242,7 @@ jobs:
           echo "No existing DB found — starting fresh"
       - name: Full SDW backfill → ccass_sdw.db
         env:
-          SDW_WORKERS: "2"
+          SDW_WORKERS: "3"
           SDW_WORKER_TIMEOUT: "5400"
         run: |
           # Upload DB to R2 on exit (including cancellation via SIGTERM)
@@ -284,7 +284,7 @@ jobs:
   sdw-weekly:
     name: SDW weekly update → ccass_sdw.db
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 120
     concurrency:
       group: sdw-weekly
       cancel-in-progress: false
@@ -311,7 +311,7 @@ jobs:
           echo "No existing DB found — starting fresh"
       - name: Fetch latest Friday SDW data
         env:
-          SDW_WORKERS: "2"
+          SDW_WORKERS: "3"
           SDW_WORKER_TIMEOUT: "5400"
         run: |
           _upload_db() {
@@ -643,7 +643,7 @@ jobs:
             --no-progress
 
   # ── SDW single-date backfill — 3 workers (manual, test) ─────────────────────
-  # Same as sdw-backfill but with SDW_WORKERS=3 to test higher-concurrency throughput.
+  # Same as sdw-backfill but with SDW_WORKERS=3 — recommended based on 90min/2643-stock benchmark.
   # Usage: workflow_dispatch → sdw-backfill-3w, backfill_date = YYYY-MM-DD
   sdw-backfill-3w:
     name: SDW backfill 3w ${{ inputs.backfill_date }}
