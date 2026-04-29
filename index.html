@@ -53,15 +53,20 @@ FIX LOG
   Historical records without pct are handled by the fallback in (a).
   Location: stkBuildSeries() + sfc_library.py:save_pct_bulk() + main.py sfc_map block.
 
-[Fix 8 — 2026-04-29] 個股綜合分析 crosshair disappeared after first stock selection.
-  Root cause: activeIdx was declared as a local variable inside stkDrawCharts(). crossPlugin
-  is registered globally via Chart.register() on the first call — its afterDraw() closes over
-  that first-call activeIdx. On subsequent calls (new stock / date change), stkDrawCharts()
-  creates a new local activeIdx, bindHover() sets it correctly, but the globally registered
-  crossPlugin.afterDraw() still reads the stale first-call variable (always null after
-  mouseleave), so the crosshair never draws. Fixed by moving activeIdx → stkActiveIdx at
-  module level, shared by both crossPlugin and all bindHover() calls across re-renders.
-  Location: module-level declaration + crossPlugin.afterDraw() + bindHover().
+[Fix 8 — 2026-04-29] 個股綜合分析 crosshair missing after stock selection.
+  Root cause: crossPlugin was registered globally via Chart.register() — a Chart.js 4.x
+  workaround that creates stale-closure and listener-accumulation bugs:
+  (a) Stale closure: plugin closes over local activeIdx from first stkDrawCharts() call;
+      subsequent renders create fresh local activeIdx that the global plugin never sees.
+  (b) Listener accumulation: Chart.destroy() removes the Chart instance but not the DOM
+      <canvas> — each render added new mousemove/mouseleave listeners referencing stale
+      destroyed charts; c.update('none') on a destroyed chart throws silently.
+  Fix: switched to inline plugins (plugins:[crossPlugin]) exactly like the working
+  Bollinger panel. Each render creates a fresh plugin closing over the current local
+  activeIdx. Removed Chart.register(), _stkCanvasIds guard, and module-level stkActiveIdx.
+  Changed afterDraw → afterDatasetsDraw to match Bollinger. Fixed bindHover to store
+  handlers on canvas._stkMove/._stkLeave and remove them before re-adding each render.
+  Location: stkDrawCharts() — crossPlugin, bindHover, all 3 chart plugins:[].
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -5224,11 +5229,6 @@ let stkInitDone   = false;
 let stkRankCache  = null;   // parsed rank_history flat by date
 let stkSfcCache   = {};     // { year: sfc_YYYY.json data }
 let stkSdwCache   = {};     // { code5: sdw_{code}.json data }
-// activeIdx must be module-level: crossPlugin is registered globally via Chart.register()
-// on first stkDrawCharts() call. On subsequent calls a new local activeIdx would be created
-// but the globally registered afterDraw() would still close over the stale first-call variable,
-// making the crosshair disappear after the first stock selection.
-let stkActiveIdx  = null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // Plot every available trading day — weekly Friday-only sampling was discarding
@@ -5401,15 +5401,17 @@ function stkDrawCharts(series) {
 
   let afterFitR = scale => { scale.width = YW; };
 
-  const _stkCanvasIds = new Set(['stkC1','stkC2','stkC3']);
+  // ── Crosshair plugin (inline, like Bollinger — avoids global registration stale-closure bug)
+  // Each stkDrawCharts() call creates a fresh plugin that correctly closes over local activeIdx.
+  // afterDatasetsDraw (not afterDraw) mirrors the working Bollinger implementation.
+  let activeIdx = null;
+
   const crossPlugin = {
-    id: 'stkCross',
-    afterDraw(chart) {
-      if (!_stkCanvasIds.has(chart.canvas?.id)) return;
-      if (stkActiveIdx === null) return;
+    afterDatasetsDraw(chart) {
+      if (activeIdx === null) return;
       const {ctx, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
-      const xp = x.getPixelForValue(stkActiveIdx);
+      const xp = x.getPixelForValue(activeIdx);
       ctx.save();
       ctx.setLineDash([4,3]);
       ctx.strokeStyle = dark ? 'rgba(255,255,255,0.35)' : 'rgba(80,80,80,0.4)';
@@ -5418,10 +5420,6 @@ function stkDrawCharts(series) {
       ctx.restore();
     }
   };
-  // Register globally — Chart.js 4.x ignores inline plugins array
-  if (!Chart.registry.plugins.get('stkCross')) {
-    Chart.register(crossPlugin);
-  }
 
   function getIdx(chart, e) {
     const rect = chart.canvas.getBoundingClientRect();
@@ -5459,10 +5457,7 @@ function stkDrawCharts(series) {
     const wr  = wrap.getBoundingClientRect();
     const cx  = e.clientX - wr.left;
     const tipW = 170;
-    // Flip to left of cursor when in right half to avoid blocking data
-    const tx = cx > wr.width / 2
-      ? cx - tipW - 14
-      : cx + 14;
+    const tx = cx > wr.width / 2 ? cx - tipW - 14 : cx + 14;
     const ty = Math.max(e.clientY - wr.top - 100, 4);
     tip.style.left = Math.max(0, tx) + 'px';
     tip.style.right = 'auto';
@@ -5470,18 +5465,23 @@ function stkDrawCharts(series) {
   }
 
   function bindHover(chart) {
-    chart.canvas.addEventListener('mousemove', e => {
-      const idx = getIdx(chart, e);
-      stkActiveIdx = idx;
-      stkCharts.forEach(c => c.update('none'));
-      showTip(e, idx);
-    });
-    chart.canvas.addEventListener('mouseleave', () => {
-      stkActiveIdx = null;
-      stkCharts.forEach(c => c.update('none'));
+    // Remove stale listeners from previous renders (same DOM canvas is reused across renders)
+    const cvs = chart.canvas;
+    if (cvs._stkMove)  cvs.removeEventListener('mousemove',  cvs._stkMove);
+    if (cvs._stkLeave) cvs.removeEventListener('mouseleave', cvs._stkLeave);
+    cvs._stkMove = e => {
+      activeIdx = getIdx(chart, e);
+      stkCharts.forEach(c => { try { c.update('none'); } catch(_){} });
+      showTip(e, activeIdx);
+    };
+    cvs._stkLeave = () => {
+      activeIdx = null;
+      stkCharts.forEach(c => { try { c.update('none'); } catch(_){} });
       const tip = document.getElementById('stock-tip');
       if (tip) tip.style.display = 'none';
-    });
+    };
+    cvs.addEventListener('mousemove',  cvs._stkMove);
+    cvs.addEventListener('mouseleave', cvs._stkLeave);
   }
 
   // Panel 1 — 換手率
@@ -5489,7 +5489,7 @@ function stkDrawCharts(series) {
   const validTurn = series.turn.filter(v => v != null && v > 0);
   const maxTurn   = validTurn.length ? Math.max(...validTurn) : null;
   const c1 = new Chart(document.getElementById('stkC1'), {
-    type:'line', plugins:[],
+    type:'line', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[{
       label:'換手率',data:series.turn,
       borderColor:'#b8860b',borderWidth:1.5,
@@ -5509,7 +5509,7 @@ function stkDrawCharts(series) {
   // Panel 2 — Price + VWAP + Volume
   const maxVol = Math.max(...series.vol.filter(v => v != null && v > 0), 1);
   const c2 = new Chart(document.getElementById('stkC2'), {
-    type:'bar', plugins:[],
+    type:'bar', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[
       {type:'bar',   label:'成交量', data:series.vol,  backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yV',order:3,spanGaps:false},
       {type:'line',  label:'收市價', data:series.close, borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3,fill:false,yAxisID:'yP',order:1,spanGaps:false},
@@ -5536,7 +5536,7 @@ function stkDrawCharts(series) {
 
   // Panel 3 — Top10 (left) + SFC (right, separate scale)
   const c3 = new Chart(document.getElementById('stkC3'), {
-    type:'line', plugins:[],
+    type:'line', plugins:[crossPlugin],
     data:{labels:series.labels,datasets:[
       {label:'Top10持倉', type:'bar', data:series.top10, backgroundColor:'rgba(42,157,143,0.5)', borderColor:'#2a9d8f', borderWidth:1, barThickness:'flex', maxBarThickness:8, yAxisID:'yT'},
       {label:'SFC賣空',   data:series.sfc,   borderColor:'#c0252d', borderWidth:0, pointRadius:3, pointHoverRadius:5, pointBackgroundColor:'#c0252d', showLine:false, spanGaps:false, yAxisID:'yS'},
