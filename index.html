@@ -67,6 +67,14 @@ FIX LOG
   Changed afterDraw → afterDatasetsDraw to match Bollinger. Fixed bindHover to store
   handlers on canvas._stkMove/._stkLeave and remove them before re-adding each render.
   Location: stkDrawCharts() — crossPlugin, bindHover, all 3 chart plugins:[].
+
+[Fix 9 — 2026-04-29] 個股綜合分析 fetching future-year JSON files causing 404 errors
+  (turnover_2027.json, sfc_2027.json). Root cause: year range used flatMap(y=>[y-1,y,y+1])
+  which always includes the year after toDs — e.g. range ending 2026 fetches 2027.
+  y+1 was unnecessary (no warmup needed for future dates). Removed y+1 and added
+  curYear cap so fetches never exceed the current year regardless of date range.
+  Also suppresses 404 noise that was masking real JS errors in DevTools console.
+  Location: stkBuildSeries(), years array calculation.
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -5282,8 +5290,10 @@ async function stkEnsureSdw(code5) {
 async function stkBuildSeries(code5, fromDs, toDs) {
   // Use turnover_YYYY.json as date backbone and price/volume source
   // rank_history is now only 2 days — not suitable as a historical data source
+  // y-1 included for warmup period; y+1 removed — future year files don't exist
+  const curYear = new Date().getFullYear();
   const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
-    .flatMap(y => [y-1, y, y+1]).filter(y => y >= 2025))];
+    .flatMap(y => [y-1, y]).filter(y => y >= 2025 && y <= curYear))];
   for (const y of years) {
     await loadTvYear(y);
     await stkEnsureSfc(y);
