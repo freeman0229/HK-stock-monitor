@@ -91,11 +91,16 @@ FIX LOG
   is in right half — same logic as stock panel showTip().
   Location: showCaiTip() positioning.
 
-[Fix 11 — 2026-04-29] 保力加通道 crosshair line truncated at top/bottom of each panel
-  due to Chart.js clip region active during afterDatasetsDraw. Fixed by adding canvas
-  to destructuring and resetting clip via ctx.rect(0,0,canvas.width,canvas.height)
-  before drawing — same fix applied to stock panel crosshair in Fix 8.
-  Location: Bollinger crossPlugin.afterDatasetsDraw().
+[Fix 11 — 2026-04-30] 保力加通道 crosshair: broken line (clipping) + disappears after
+  tab switch (shared plugin object + listener accumulation + update() lifecycle).
+  Applied same pattern as stock panel Fix 8:
+  - makeCaiCross() factory — each of 3 charts gets own instance (no shared object)
+  - afterDraw (not afterDatasetsDraw) — fires last, nothing overwrites
+  - clip reset via ctx.rect(0,0,canvas.width,canvas.height) — fixes truncation
+  - c.draw() instead of c.update('none') — bypasses update lifecycle conflicts
+  - bindCaiHover: listener cleanup via canvas._caiMove/_caiLeave
+  - stroke colour rgba(150,150,150,0.6) — matches user-specified pattern
+  Location: makeCaiCross(), bindCaiHover(), all 3 Bollinger chart plugins:[].
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -4427,18 +4432,26 @@ async function drawCai() {
     }
   };
 
-  const crossPlugin = {
-    afterDatasetsDraw(chart) {
-      if (caiActiveIdx===null) return;
+  const makeCaiCross = () => ({
+    afterDraw(chart) {
+      if (caiActiveIdx == null) return;
       const {ctx, canvas, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
       const xp = x.getPixelForValue(caiActiveIdx);
       ctx.save();
-      ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
-      ctx.setLineDash([4,3]); ctx.strokeStyle='rgba(150,150,150,0.45)'; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(xp, chartArea.top); ctx.lineTo(xp, chartArea.bottom); ctx.stroke(); ctx.restore();
+      ctx.beginPath();
+      ctx.rect(0, 0, canvas.width, canvas.height);
+      ctx.clip();
+      ctx.setLineDash([4,3]);
+      ctx.strokeStyle = 'rgba(150,150,150,0.6)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(xp, chartArea.top);
+      ctx.lineTo(xp, chartArea.bottom);
+      ctx.stroke();
+      ctx.restore();
     }
-  };
+  });
 
   const refPlugin = {
     afterDraw(chart) {
@@ -4488,13 +4501,21 @@ async function drawCai() {
   }
 
   function bindCaiHover(chart) {
-    chart.canvas.addEventListener('mousemove', e => {
-      caiActiveIdx=getIdxCai(chart,e); caiCharts.forEach(c=>c.update('none')); showCaiTip(e,caiActiveIdx);
-    });
-    chart.canvas.addEventListener('mouseleave', () => {
-      caiActiveIdx=null; caiCharts.forEach(c=>c.update('none'));
-      const t=document.getElementById('cai-tip'); if(t) t.style.display='none';
-    });
+    const cvs = chart.canvas;
+    if (cvs._caiMove)  cvs.removeEventListener('mousemove',  cvs._caiMove);
+    if (cvs._caiLeave) cvs.removeEventListener('mouseleave', cvs._caiLeave);
+    cvs._caiMove = e => {
+      caiActiveIdx = getIdxCai(chart, e);
+      caiCharts.forEach(c => c.draw());
+      showCaiTip(e, caiActiveIdx);
+    };
+    cvs._caiLeave = () => {
+      caiActiveIdx = null;
+      caiCharts.forEach(c => c.draw());
+      const t = document.getElementById('cai-tip'); if(t) t.style.display='none';
+    };
+    cvs.addEventListener('mousemove',  cvs._caiMove);
+    cvs.addEventListener('mouseleave', cvs._caiLeave);
   }
 
   const maxVol = Math.max(...volView.filter(v=>v>0), 1);
@@ -4505,7 +4526,7 @@ async function drawCai() {
   const aFitR = s => { s.width = 32; };  // all right axes same width for crosshair alignment
 
   const c1 = new Chart(document.getElementById('caiCanvas'), {
-    type:'line', plugins:[sqzPlugin, crossPlugin],
+    type:'line', plugins:[sqzPlugin, makeCaiCross()],
     data:{labels:dateView, datasets:[
       {type:'bar',  label:'成交量',   data:volView,  backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yVol',order:5},
       {type:'line', label:'上軌',     data:upper,    borderColor:'#c0252d',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yPrice',order:2},
@@ -4522,7 +4543,7 @@ async function drawCai() {
   });
 
   const c2 = new Chart(document.getElementById('caiRsi'), {
-    type:'line', plugins:[crossPlugin, refPlugin],
+    type:'line', plugins:[makeCaiCross(), refPlugin],
     _refs:[{v:70,color:'rgba(192,37,45,0.4)',dash:[3,3]},{v:50,color:'rgba(128,128,128,0.3)',dash:[2,4]},{v:30,color:'rgba(26,122,60,0.4)',dash:[3,3]}],
     data:{labels:dateView, datasets:[{
       label:'RSI', data:rsiArr, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, fill:false, tension:0.3, spanGaps:false,
@@ -4541,7 +4562,7 @@ async function drawCai() {
   // MACD: lines on left axis, histogram on right axis pinned to bottom
   const maxHist = Math.max(...histArr.filter(v=>v!=null).map(Math.abs), 0.001);
   const c3 = new Chart(document.getElementById('caiMacd'), {
-    type:'line', plugins:[crossPlugin],
+    type:'line', plugins:[makeCaiCross()],
     data:{labels:dateView, datasets:[
       {type:'bar',  label:'柱狀',  data:histArr,  backgroundColor:histArr.map(v=>v==null?'transparent':v>=0?'rgba(26,122,60,0.6)':'rgba(192,37,45,0.6)'),borderWidth:0,yAxisID:'yHist',order:3},
       {type:'line', label:'MACD',  data:macdLine, borderColor:'#378ADD',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yMacd',order:1},
