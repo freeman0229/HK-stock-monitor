@@ -5105,7 +5105,7 @@ function renderHsiPanel() {
       if (hsiVlineIdx === null) return;
       const {ctx, canvas, chartArea} = chart;
       if (!chartArea) return;
-      // Use same proportional calculation as bottom chart for pixel-perfect alignment
+      // Use chartArea coordinates — afterFit ensures both charts have same chartArea.left
       const xp = chartArea.left + (hsiVlineIdx / (N - 1)) * (chartArea.right - chartArea.left);
       if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
@@ -5132,15 +5132,12 @@ function renderHsiPanel() {
     }
   };
 
-  // Bottom chart vline — same index, no label, clip reset for alignment
+  // Bottom chart vline — use identical xp calculation as top chart
   const makeHsiVolVline = () => ({
     afterDraw(chart) {
       if (hsiVlineIdx === null) return;
       const {ctx, canvas, chartArea} = chart;
       if (!chartArea) return;
-      // Use proportional calculation instead of x.getPixelForValue() —
-      // the bar chart's null last entry causes offset drift vs the top line chart.
-      // Both charts share the same N labels so proportional position is always aligned.
       const xp = chartArea.left + (hsiVlineIdx / (N - 1)) * (chartArea.right - chartArea.left);
       if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
@@ -5248,6 +5245,7 @@ function renderHsiPanel() {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      layout: { padding: { left: 0, right: 0 } },
       interaction: { mode: 'index', intersect: false },
       onClick(e, _, chart) {
         const pts = chart.getElementsAtEventForMode(e, 'index', {intersect: false}, false);
@@ -5304,13 +5302,14 @@ function renderHsiPanel() {
   });
 
   hsiVolInst = new Chart(document.getElementById('hsiVolCanvas'), {
-    type: 'bar',
+    type: 'line',
     plugins: [makeHsiVolVline()],
     data: {
       labels: chartLabels,
       datasets: [
         {
           label: '週高 − 4週均',
+          type: 'bar',
           data: [...highVsMa, null],
           backgroundColor: 'rgba(226,75,74,0.55)',
           borderWidth: 0,
@@ -5318,6 +5317,7 @@ function renderHsiPanel() {
         },
         {
           label: '週低 − 4週均',
+          type: 'bar',
           data: [...lowVsMa, null],
           backgroundColor: 'rgba(55,138,221,0.55)',
           borderWidth: 0,
@@ -5327,6 +5327,7 @@ function renderHsiPanel() {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      layout: { padding: { left: 0, right: 0 } },
       plugins: {
         legend: { display: false },
         tooltip: { enabled: false }
