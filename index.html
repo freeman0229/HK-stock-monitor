@@ -116,6 +116,16 @@ FIX LOG
   (c) makeCross: NO label lookup needed — all 3 stock panels share the same series.labels
       array and activeIdx from refChart (c2) maps directly via getPixelForValue(activeIdx).
   Location: bindHover/bindCaiHover refChart, makeCaiCross label lookup (makeCross simplified).
+
+[Fix 13 — 2026-05-01] Crosshair misaligned at chart edges in both panels. Root cause:
+  Chart.js defaults offset:true for bar-type charts/datasets, adding half-bar padding at
+  both ends of the x-axis. This shifts the pixel mapping differently from line charts —
+  e.g. panel 2 (bar) maps index 0 to a different pixel than panel 1 (line) for the same
+  canvas width, causing the crosshair to appear offset at the left/right edges.
+  Fixed by explicitly setting offset:false on xHide and xShow in both stock panel and
+  Bollinger panel — forcing all charts to use identical x-axis pixel mapping regardless
+  of chart type or dataset type.
+  Location: xHide/xShow in stkDrawCharts() and drawCai().
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -4543,8 +4553,8 @@ async function drawCai() {
   }
 
   const maxVol = Math.max(...volView.filter(v=>v>0), 1);
-  const xHide  = {ticks:{display:false},grid:{color:gc},border:{display:false}};
-  const xShow  = {ticks:{font:{size:10},color:'#888',maxRotation:0,callback:(v,i)=>i%Math.max(1,Math.floor(N/8))===0?dateView[i].slice(2,10):''},grid:{color:gc},border:{display:false}};
+  const xHide  = {offset:false, ticks:{display:false},grid:{color:gc},border:{display:false}};
+  const xShow  = {offset:false, ticks:{font:{size:10},color:'#888',maxRotation:0,callback:(v,i)=>i%Math.max(1,Math.floor(N/8))===0?dateView[i].slice(2,10):''},grid:{color:gc},border:{display:false}};
 
   // Fixed right-axis width to align crosshair across all 3 panels
   const aFitR = s => { s.width = 32; };  // all right axes same width for crosshair alignment
@@ -5470,8 +5480,8 @@ function stkDrawCharts(series) {
   const YW   = 52;  // fixed y-axis pixel width for alignment
 
   const afterFitY = scale => { scale.width = YW; };
-  const xHide = { ticks:{display:false}, grid:{color:gc}, border:{display:false} };
-  const xShow = { ticks:{font:{size:10},color:'#888',maxRotation:0,
+  const xHide = { offset:false, ticks:{display:false}, grid:{color:gc}, border:{display:false} };
+  const xShow = { offset:false, ticks:{font:{size:10},color:'#888',maxRotation:0,
     callback:(v,i) => {
       if (i % Math.max(1, Math.floor(N/8)) !== 0) return '';
       const lbl = series.labels[i] || '';
