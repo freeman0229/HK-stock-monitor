@@ -5298,7 +5298,7 @@ function renderHsiPanel() {
           },
           grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
         },
-        y: { ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } }
+        y: { afterFit: s => { s.width = 52; }, ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } }
       }
     }
   });
@@ -5334,6 +5334,7 @@ function renderHsiPanel() {
       scales: {
         x: { offset: false, stacked: true, ticks: { display: false }, grid: { display: false } },
         y: {
+          afterFit: s => { s.width = 52; },
           stacked: true,
           ticks: { callback: v => v > 0 ? '+'+v : v, font: { size: 10 }, color: isDark ? 'rgba(255,255,255,0.4)' : '#888' },
           grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
