@@ -102,15 +102,20 @@ FIX LOG
   - stroke colour rgba(150,150,150,0.6) — matches user-specified pattern
   Location: makeCaiCross(), bindCaiHover(), all 3 Bollinger chart plugins:[].
 
-[Fix 12 — 2026-04-30] Crosshair broken/missing on panels with different data lengths:
-  換手率 panel (stock) and RSI panel (Bollinger) start later than other panels (warmup
-  periods / different data sources), so they have fewer labels. Using raw activeIdx as
-  x.getPixelForValue() argument mapped to wrong position on short panels — line drew
-  outside chartArea or at wrong date. Fixed by switching to label-based lookup:
-  find the hovered date string in each chart's own data.labels array, use that local
-  index for getPixelForValue(). Added chartArea bounds guard (xp < left || xp > right)
-  to silently skip panels that don't contain the hovered date.
-  Location: makeCross() and makeCaiCross() — label/dateView lookup replacing raw index.
+[Fix 12 — 2026-04-30] Crosshair misaligned: 換手率 panel crosshair at wrong position
+  vs price/volume panels. Root cause: each panel's x-axis has slightly different
+  pixel-per-index mapping due to canvas height differences (Chart.js recalculates
+  chartArea per canvas). getIdx() used the hovered panel's own x-scale, so hovering
+  panel 1 returned an index based on c1's mapping, which placed the line at a different
+  pixel on c2/c3. Two-part fix:
+  (a) bindHover/bindCaiHover: always use stkCharts[1]/caiCharts[0] as reference for
+      getIdx/getIdxCai — price charts have the most complete dataset and consistent
+      chartArea. RSI/MACD/換手率 panels have fewer points or different heights.
+  (b) makeCaiCross: label-based lookup (dateView[caiActiveIdx] → indexOf) so RSI/MACD
+      panels with fewer data points (warmup periods) resolve to their own local index.
+  (c) makeCross: NO label lookup needed — all 3 stock panels share the same series.labels
+      array and activeIdx from refChart (c2) maps directly via getPixelForValue(activeIdx).
+  Location: bindHover/bindCaiHover refChart, makeCaiCross label lookup (makeCross simplified).
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -4521,7 +4526,10 @@ async function drawCai() {
     if (cvs._caiMove)  cvs.removeEventListener('mousemove',  cvs._caiMove);
     if (cvs._caiLeave) cvs.removeEventListener('mouseleave', cvs._caiLeave);
     cvs._caiMove = e => {
-      caiActiveIdx = getIdxCai(chart, e);
+      // Always use caiCharts[0] (price chart) as reference — RSI/MACD panels have
+      // fewer points due to warmup periods, so their x-scale gives different indices.
+      const refChart = caiCharts[0] || chart;
+      caiActiveIdx = getIdxCai(refChart, e);
       caiCharts.forEach(c => c.draw());
       showCaiTip(e, caiActiveIdx);
     };
@@ -5485,13 +5493,10 @@ function stkDrawCharts(series) {
       if (activeIdx === null) return;
       const {ctx, canvas, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
-      // Use label-based lookup so panels with different data lengths draw at the
-      // correct date position (e.g. 換手率 panel may have fewer points than price panel)
-      const label = series.labels[activeIdx];
-      const labelIdx = chart.data.labels ? chart.data.labels.indexOf(label) : -1;
-      if (labelIdx === -1) return;
-      const xp = x.getPixelForValue(labelIdx);
-      if (xp < chartArea.left || xp > chartArea.right) return;
+      // activeIdx is always from refChart (c2) which shares series.labels with all panels —
+      // direct getPixelForValue is correct and sufficient, no label lookup needed.
+      const xp = x.getPixelForValue(activeIdx);
+      if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, 0, canvas.width, canvas.height);
@@ -5553,7 +5558,11 @@ function stkDrawCharts(series) {
     if (cvs._stkMove)  cvs.removeEventListener('mousemove',  cvs._stkMove);
     if (cvs._stkLeave) cvs.removeEventListener('mouseleave', cvs._stkLeave);
     cvs._stkMove = e => {
-      activeIdx = getIdx(chart, e);
+      // Always use c2 (price chart) as reference for index lookup — it has the most
+      // complete dataset and consistent chartArea, ensuring all panels share the same
+      // pixel-to-index mapping regardless of individual canvas heights.
+      const refChart = stkCharts[1] || chart;
+      activeIdx = getIdx(refChart, e);
       stkCharts.forEach(c => c.draw());
       showTip(e, activeIdx);
     };
