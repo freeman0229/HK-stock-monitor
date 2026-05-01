@@ -101,6 +101,16 @@ FIX LOG
   - bindCaiHover: listener cleanup via canvas._caiMove/_caiLeave
   - stroke colour rgba(150,150,150,0.6) — matches user-specified pattern
   Location: makeCaiCross(), bindCaiHover(), all 3 Bollinger chart plugins:[].
+
+[Fix 12 — 2026-04-30] Crosshair broken/missing on panels with different data lengths:
+  換手率 panel (stock) and RSI panel (Bollinger) start later than other panels (warmup
+  periods / different data sources), so they have fewer labels. Using raw activeIdx as
+  x.getPixelForValue() argument mapped to wrong position on short panels — line drew
+  outside chartArea or at wrong date. Fixed by switching to label-based lookup:
+  find the hovered date string in each chart's own data.labels array, use that local
+  index for getPixelForValue(). Added chartArea bounds guard (xp < left || xp > right)
+  to silently skip panels that don't contain the hovered date.
+  Location: makeCross() and makeCaiCross() — label/dateView lookup replacing raw index.
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -4437,7 +4447,13 @@ async function drawCai() {
       if (caiActiveIdx == null) return;
       const {ctx, canvas, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
-      const xp = x.getPixelForValue(caiActiveIdx);
+      // Use label-based lookup so panels with different lengths (e.g. RSI warmup)
+      // draw the crosshair at the correct date position instead of a stale index
+      const label = dateView[caiActiveIdx];
+      const labelIdx = chart.data.labels ? chart.data.labels.indexOf(label) : -1;
+      if (labelIdx === -1) return;
+      const xp = x.getPixelForValue(labelIdx);
+      if (xp < chartArea.left || xp > chartArea.right) return;
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, 0, canvas.width, canvas.height);
@@ -5469,7 +5485,13 @@ function stkDrawCharts(series) {
       if (activeIdx === null) return;
       const {ctx, canvas, chartArea, scales:{x}} = chart;
       if (!x || !chartArea) return;
-      const xp = x.getPixelForValue(activeIdx);
+      // Use label-based lookup so panels with different data lengths draw at the
+      // correct date position (e.g. 換手率 panel may have fewer points than price panel)
+      const label = series.labels[activeIdx];
+      const labelIdx = chart.data.labels ? chart.data.labels.indexOf(label) : -1;
+      if (labelIdx === -1) return;
+      const xp = x.getPixelForValue(labelIdx);
+      if (xp < chartArea.left || xp > chartArea.right) return;
       ctx.save();
       ctx.beginPath();
       ctx.rect(0, 0, canvas.width, canvas.height);
