@@ -138,6 +138,17 @@ FIX LOG
   Final order: # 股票 累積沽空股數 累積沽空金額 賣空比例 回補天數 持倉集中度
                成交金額 日沽空金額 日沽空股數 日沽空 信號
   Location: thead + row rendering in renderShort().
+
+[Fix 15 — 2026-05-01] 恒生指數預測通道: reference line only drew on top chart, not bottom.
+  Also misaligned at edges and truncated at top/bottom. Three-part fix:
+  (a) vlinePlugin: use chartArea.top/bottom + clip reset (same as Fix 8/11/13) —
+      was using y.top/y.bottom which truncates at scale boundaries not canvas edges.
+  (b) makeHsiVolVline() factory added to bottom chart (hsiVolInst) — reads module-level
+      hsiVlineIdx so both charts always share the same reference index.
+  (c) offset:false on both chart x-axes — bar chart default offset:true was misaligning
+      pixel mapping vs the line chart (same fix as Fix 13).
+  (d) Click handler + clear button both call hsiVolInst.draw() after hsiChartInst.update().
+  Location: vlinePlugin, makeHsiVolVline, hsiChartInst/hsiVolInst x-axis, click handler.
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -836,6 +847,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn" data-tab="cai">保力加通道</button>
   <button class="tab-btn" data-tab="stock">個股綜合分析</button>
   <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
+  <button class="tab-btn" data-tab="strategy">投資策略</button>
 </div>
 
 <!-- Offline / stale data banner -->
@@ -1048,8 +1060,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th>股票</th>
           <th class="num-r" data-col="sfc_sh">累積沽空股數</th>
           <th class="num-r" data-col="sfc_hkd">累積沽空金額</th>
-          <th class="num-r mob-hide" data-col="sfc_pct">賣空比例</th>
-          <th class="num-r mob-hide" data-col="days_to_cover">回補天數</th>
+          <th class="num-r mob-hide" data-col="sfc_pct" title="賣空比例 = SFC累積沽空股數 ÷ CCASS總數｜&lt;5% 正常｜5–10% 留意｜10–20% 偏高｜20–30% 高度集中｜30%+ 極端">賣空比例</th>
+          <th class="num-r mob-hide" data-col="days_to_cover" title="回補天數 DTC = 累積沽空股數 ÷ 日均成交股數｜&lt;1日 正常｜1–3日 留意｜3–5日 偏高｜5–10日 高度集中｜10日+ 極端擠壓風險">回補天數</th>
           <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔總數%｜0–5% 正常｜5–10% 留意｜10–20% 偏高｜20–30% 高度集中｜30%+ 極端">持倉集中度</th>
           <th class="num-r mob-hide" data-col="turnover">成交金額</th>
           <th class="num-r mob-hide" data-col="short_st">日沽空金額</th>
@@ -1337,6 +1349,74 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <span><span style="display:inline-block;width:16px;height:8px;background:rgba(128,128,128,0.2);vertical-align:middle;margin-right:3px;border-radius:1px"></span>成交量</span>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ═══ Panel: 投資策略 ══════════════════════════════════════════════════════ -->
+<div class="panel" id="panel-strategy">
+  <div class="sec-title">投資策略</div>
+  <div style="max-width:820px;line-height:1.8;font-size:14px;color:var(--text)">
+
+    <div style="margin-bottom:28px">
+      <h3 style="font-size:16px;font-weight:600;color:var(--red);margin:0 0 8px">1. 空頭平倉 (Short Covering)</h3>
+      <p style="margin:0 0 8px"><strong>定義：</strong>原本看空並借券賣出的投資人，為了結清部位而從市場「買回」股票。</p>
+      <p style="margin:0 0 4px"><strong>策略應用：</strong></p>
+      <ul style="margin:0 0 0 20px;padding:0">
+        <li><strong>觀察訊號：</strong>當股價跌不下去了，且成交量縮小，代表空頭獲利了結。</li>
+        <li><strong>操作：</strong>若伴隨利多消息，空頭平倉的「買力」會成為止跌回升的第一道推力。多頭可在此時分批佈局。</li>
+      </ul>
+    </div>
+
+    <div style="margin-bottom:28px">
+      <h3 style="font-size:16px;font-weight:600;color:var(--red);margin:0 0 8px">2. 大戶增持 (Whale Accumulation)</h3>
+      <p style="margin:0 0 8px"><strong>定義：</strong>主力、法人或內部大股東在低位持續買入，籌碼由散戶轉向少數大戶手中。</p>
+      <p style="margin:0 0 4px"><strong>策略應用：</strong></p>
+      <ul style="margin:0 0 0 20px;padding:0">
+        <li><strong>觀察訊號：</strong>查閱「集中度」或「大戶持股比例」。若股價橫盤但大戶持股增加，表示有人在收貨。</li>
+        <li><strong>操作：</strong>跟隨策略。在股價突破整理區間時進場，因為大戶收足籌碼後，通常會發動拉升。</li>
+      </ul>
+    </div>
+
+    <div style="margin-bottom:28px">
+      <h3 style="font-size:16px;font-weight:600;color:var(--red);margin:0 0 8px">3. 挾倉 (Short Squeeze)</h3>
+      <p style="margin:0 0 8px"><strong>定義：</strong>俗稱「軋空」。股價上漲迫使空頭帳面虧損，為了停損，空頭不得不「買回」股票，這份被迫的買力進一步推升股價，形成越漲越買的惡性循環。</p>
+      <p style="margin:0 0 4px"><strong>策略應用：</strong></p>
+      <ul style="margin:0 0 0 20px;padding:0">
+        <li><strong>觀察訊號：</strong>找「券資比高」（放空的人很多）且「借券賣出餘額高」的股票。</li>
+        <li><strong>操作：</strong>動能策略。一旦股價爆量突破放空者的成本區，空頭會集體恐慌平倉，此時股價噴發速度最快。</li>
+      </ul>
+    </div>
+
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;margin-top:8px">
+      <h3 style="font-size:16px;font-weight:600;color:var(--red);margin:0 0 12px">三者結合的「最強策略」：軋空三部曲</h3>
+      <p style="margin:0 0 10px;color:var(--muted);font-size:13px">這通常是尋找爆發股的黃金公式：</p>
+      <ol style="margin:0 0 16px 20px;padding:0">
+        <li style="margin-bottom:8px"><strong>先行指標：</strong>發現大戶增持，且市場仍有大量空單不願認輸。</li>
+        <li style="margin-bottom:8px"><strong>觸發事件：</strong>公司發布超預期財報或利多，股價開始上攻。</li>
+        <li style="margin-bottom:8px"><strong>核心爆點：</strong>股價漲過空頭停損線，觸發連鎖的空頭平倉，正式進入挾倉階段。</li>
+      </ol>
+      <p style="margin:0;padding:12px;background:rgba(192,37,45,0.08);border-radius:6px;font-size:13px;color:var(--text)">
+        ⚠️ <strong>重點提醒：</strong>挾倉行情屬於「不理性上漲」，一旦空頭補完了、或是大戶獲利倒貨，股價會掉得非常快。
+      </p>
+    </div>
+
+    <!-- 支持我們 -->
+    <div style="max-width:820px;margin-top:36px;padding:24px;background:var(--card);border:1px solid var(--border);border-radius:12px;text-align:center">
+      <div style="font-size:18px;font-weight:600;color:var(--text);margin-bottom:4px">🙏 支持我們 / Support Us</div>
+      <div style="margin:14px 0 6px">
+        <img src="hktg.png" alt="Tardigrade Analytics" style="height:90px;object-fit:contain">
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin:0 0 20px">如果本工具對您有幫助，歡迎掃碼支持 ❤️</p>
+      <div style="display:flex;justify-content:center;align-items:center;gap:40px;flex-wrap:wrap">
+        <a href="https://www.paypal.com/ncp/payment/2QH5PNJJH9ANJ" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none">
+          <img src="Support_My_Wor-qrcode.png" alt="Support My Work QR Code" style="height:140px;width:140px;object-fit:contain;border-radius:6px">
+        </a>
+        <a href="https://www.paypal.com/ncp/payment/2QH5PNJJH9ANJ" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none">
+          <img src="pp.jpg" alt="PayPal" style="height:80px;object-fit:contain">
+        </a>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -5019,30 +5099,54 @@ function renderHsiPanel() {
     id: 'hsiVline',
     afterDraw(chart) {
       if (hsiVlineIdx === null) return;
-      const {ctx, scales: {x, y}} = chart;
-      if (!x || !y) return;
+      const {ctx, canvas, chartArea, scales: {x}} = chart;
+      if (!x || !chartArea) return;
       const xp = x.getPixelForValue(hsiVlineIdx);
+      if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
       ctx.setLineDash([6, 3]);
       ctx.strokeStyle = '#c0252d';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(xp, y.top);
-      ctx.lineTo(xp, y.bottom);
+      ctx.moveTo(xp, chartArea.top);
+      ctx.lineTo(xp, chartArea.bottom);
       ctx.stroke();
+      // Date label — top chart only
       const ds = chartLabels[hsiVlineIdx];
       if (ds && ds !== '下週(預測)') {
         ctx.font = '11px sans-serif';
         const tw = ctx.measureText(ds.slice(0, 7)).width + 8;
-        const tx = Math.min(xp + 3, chart.chartArea.right - tw);
+        const tx = Math.min(xp + 3, chartArea.right - tw);
         ctx.fillStyle = 'rgba(192,37,45,0.1)';
-        ctx.fillRect(tx, y.top, tw, 16);
+        ctx.fillRect(tx, chartArea.top, tw, 16);
         ctx.fillStyle = '#c0252d';
-        ctx.fillText(ds.slice(0, 7), tx + 4, y.top + 11);
+        ctx.fillText(ds.slice(0, 7), tx + 4, chartArea.top + 11);
       }
       ctx.restore();
     }
   };
+
+  // Bottom chart vline — same index, no label, clip reset for alignment
+  const makeHsiVolVline = () => ({
+    afterDraw(chart) {
+      if (hsiVlineIdx === null) return;
+      const {ctx, canvas, chartArea, scales: {x}} = chart;
+      if (!x || !chartArea) return;
+      const xp = x.getPixelForValue(hsiVlineIdx);
+      if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
+      ctx.setLineDash([6, 3]);
+      ctx.strokeStyle = '#c0252d';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(xp, chartArea.top);
+      ctx.lineTo(xp, chartArea.bottom);
+      ctx.stroke();
+      ctx.restore();
+    }
+  });
 
   hsiChartInst = new Chart(document.getElementById('hsiCanvas'), {
     type: 'line',
@@ -5144,6 +5248,7 @@ function renderHsiPanel() {
         hsiVlineIdx = (idx === hsiVlineIdx) ? null : idx;
         _updateHsiVlineBar(chartLabels, weekly, lastDs);
         chart.update('none');
+        if (hsiVolInst) hsiVolInst.draw();
       },
       plugins: {
         legend: { display: false },
@@ -5174,6 +5279,7 @@ function renderHsiPanel() {
       },
       scales: {
         x: {
+          offset: false,
           ticks: {
             callback: (v,i) => {
               if (i === N-1) return '下週';
@@ -5191,6 +5297,7 @@ function renderHsiPanel() {
 
   hsiVolInst = new Chart(document.getElementById('hsiVolCanvas'), {
     type: 'bar',
+    plugins: [makeHsiVolVline()],
     data: {
       labels: chartLabels,
       datasets: [
@@ -5217,7 +5324,7 @@ function renderHsiPanel() {
         tooltip: { enabled: false }
       },
       scales: {
-        x: { stacked: true, ticks: { display: false }, grid: { display: false } },
+        x: { offset: false, stacked: true, ticks: { display: false }, grid: { display: false } },
         y: {
           stacked: true,
           ticks: { callback: v => v > 0 ? '+'+v : v, font: { size: 10 }, color: isDark ? 'rgba(255,255,255,0.4)' : '#888' },
@@ -5287,7 +5394,7 @@ function _updateHsiVlineBar(chartLabels, weekly, lastDs) {
     item('現價',      lastRec.c.toLocaleString()) +
     item('變動',      chgStr, cc) +
     item('週數',      weeks) +
-    `<button onclick="hsiVlineIdx=null;document.getElementById('hsi-vline-bar').innerHTML='<span style=\\'color:var(--muted)\\'>— 點擊圖表設定基準線</span>';if(hsiChartInst)hsiChartInst.update(\\'none\\');" ` +
+    `<button onclick="hsiVlineIdx=null;document.getElementById('hsi-vline-bar').innerHTML='<span style=\\'color:var(--muted)\\'>— 點擊圖表設定基準線</span>';if(hsiChartInst)hsiChartInst.update(\\'none\\');if(hsiVolInst)hsiVolInst.draw();" ` +
     `style="margin-left:auto;font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);cursor:pointer">清除</button>`;
 }
 
