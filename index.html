@@ -126,6 +126,18 @@ FIX LOG
   Bollinger panel — forcing all charts to use identical x-axis pixel mapping regardless
   of chart type or dataset type.
   Location: xHide/xShow in stkDrawCharts() and drawCai().
+
+[Fix 14 — 2026-05-01] 累積沽空排行 table restructured (12 cols maintained):
+  Removed: 偏離 (short_dev) — moved to tooltip on 日沽空 cell as hover title
+           沽空趨勢 — redundant with 信號 badge
+  Added:   日沽空金額 (short_st) — daily short sell HKD value
+           日沽空股數 (short_vol) — daily short sell share volume
+  Moved:   賣空比例 (sfc_pct) → after 累積沽空金額
+           回補天數 (days_to_cover) → after 賣空比例
+           日沽空 (short_ratio) → after 日沽空股數
+  Final order: # 股票 累積沽空股數 累積沽空金額 賣空比例 回補天數 持倉集中度
+               成交金額 日沽空金額 日沽空股數 日沽空 信號
+  Location: thead + row rendering in renderShort().
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -1036,13 +1048,13 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th>股票</th>
           <th class="num-r" data-col="sfc_sh">累積沽空股數</th>
           <th class="num-r" data-col="sfc_hkd">累積沽空金額</th>
-          <th class="num-r" data-col="short_ratio">日沽空</th>
-          <th class="num-r mob-hide" data-col="short_dev">偏離</th>
-          <th class="num-r mob-hide" data-col="days_to_cover">回補天數</th>
           <th class="num-r mob-hide" data-col="sfc_pct">賣空比例</th>
+          <th class="num-r mob-hide" data-col="days_to_cover">回補天數</th>
           <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔總數%｜0–5% 正常｜5–10% 留意｜10–20% 偏高｜20–30% 高度集中｜30%+ 極端">持倉集中度</th>
           <th class="num-r mob-hide" data-col="turnover">成交金額</th>
-          <th>沽空趨勢</th>
+          <th class="num-r mob-hide" data-col="short_st">日沽空金額</th>
+          <th class="num-r mob-hide" data-col="short_vol">日沽空股數</th>
+          <th class="num-r" data-col="short_ratio">日沽空</th>
           <th data-col="insight">信號</th>
         </tr>
       </thead>
@@ -3045,7 +3057,6 @@ function renderShort() {
   const html = display.map((s,i) => {
     const diff      = s.short_ratio - s.short_avg;
     const diffClass = diff > 2 ? 'up-txt' : diff < -2 ? 'dn-txt' : '';
-    const trend     = diff > 2 ? '📈 上升' : diff < -2 ? '📉 下降' : '→ 平穩';
     const dtc       = s.days_to_cover || 0;
     const dtcClass  = dtc > 5 ? 'up-txt' : dtc > 2 ? '' : 'na-txt';
     const dtcTxt    = dtc > 0 ? dtc.toFixed(1) + '日' : '—';
@@ -3056,18 +3067,23 @@ function renderShort() {
     const conc      = s.concentration || 0;
     const tier      = concTier(conc);
     const concTxt   = conc > 0 ? conc.toFixed(1) + '%' : '—';
+    const shortSt   = s.short_st  || 0;
+    const shortVol  = s.short_vol || 0;
+    // 偏離 shown in tooltip on 日沽空 cell
+    const diffTip   = s.short_ratio > 0 && diff !== 0
+      ? `title="偏離均值 ${diff > 0 ? '+' : ''}${diff.toFixed(2)}pp"` : '';
     return `<tr>
       <td class="rank">${i+1}</td>
       <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
       <td class="num-r">${sfcSh  > 0 ? sfcSh.toLocaleString('zh-HK') : '—'}</td>
-      <td class="num-r">${sfcHkd > 0 ? fmtM(sfcHkd)                  : '—'}</td>
-      <td class="num-r ${s.short_ratio > shortHi(s) ? 'up-txt' : ''}">${fmtPct(s.short_ratio)}</td>
-      <td class="num-r mob-hide ${diffClass}">${s.short_ratio > 0 && diff !== 0 ? (diff > 0 ? '+' : '') + diff.toFixed(2) + 'pp' : '—'}</td>
-      <td class="num-r mob-hide ${dtcClass}">${dtcTxt}</td>
+      <td class="num-r">${sfcHkd > 0 ? fmtM(sfcHkd) : '—'}</td>
       <td class="num-r mob-hide">${sfcPct > 0 ? sfcPct.toFixed(2) + '%' + sfcPctFlag : '—'}</td>
+      <td class="num-r mob-hide ${dtcClass}">${dtcTxt}</td>
       <td class="num-r mob-hide ${tier.cls}">${concTxt}</td>
       <td class="num-r mob-hide">${fmtM(s.turnover)}</td>
-      <td class="${s.short_ratio > 0 ? diffClass : ''}">${s.short_ratio > 0 ? trend : '—'}</td>
+      <td class="num-r mob-hide">${shortSt  > 0 ? fmtM(shortSt)                : '—'}</td>
+      <td class="num-r mob-hide">${shortVol > 0 ? shortVol.toLocaleString('zh-HK') : '—'}</td>
+      <td class="num-r ${s.short_ratio > shortHi(s) ? 'up-txt' : ''} ${diffClass}" ${diffTip}>${fmtPct(s.short_ratio)}</td>
       <td>${insightBadge(s.insight)}</td>
     </tr>`;
   }).join('');
