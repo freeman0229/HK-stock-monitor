@@ -148,6 +148,10 @@ FIX LOG
   (c) offset:false on both chart x-axes — bar chart default offset:true was misaligning
       pixel mapping vs the line chart (same fix as Fix 13).
   (d) Click handler + clear button both call hsiVolInst.draw() after hsiChartInst.update().
+  (e) makeHsiVolVline uses proportional pixel calculation (chartArea.left + idx/(N-1) *
+      chartArea.width) instead of x.getPixelForValue() — the bar chart's null last entry
+      (下週 prediction slot) causes offset drift in getPixelForValue(), while proportional
+      calculation always aligns with the top line chart regardless of bar positioning.
   Location: vlinePlugin, makeHsiVolVline, hsiChartInst/hsiVolInst x-axis, click handler.
 -->
 <!DOCTYPE html>
@@ -5131,9 +5135,12 @@ function renderHsiPanel() {
   const makeHsiVolVline = () => ({
     afterDraw(chart) {
       if (hsiVlineIdx === null) return;
-      const {ctx, canvas, chartArea, scales: {x}} = chart;
-      if (!x || !chartArea) return;
-      const xp = x.getPixelForValue(hsiVlineIdx);
+      const {ctx, canvas, chartArea} = chart;
+      if (!chartArea) return;
+      // Use proportional calculation instead of x.getPixelForValue() —
+      // the bar chart's null last entry causes offset drift vs the top line chart.
+      // Both charts share the same N labels so proportional position is always aligned.
+      const xp = chartArea.left + (hsiVlineIdx / (N - 1)) * (chartArea.right - chartArea.left);
       if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
