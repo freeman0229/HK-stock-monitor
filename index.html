@@ -5103,9 +5103,10 @@ function renderHsiPanel() {
     id: 'hsiVline',
     afterDraw(chart) {
       if (hsiVlineIdx === null) return;
-      const {ctx, canvas, chartArea, scales: {x}} = chart;
-      if (!x || !chartArea) return;
-      const xp = x.getPixelForValue(hsiVlineIdx);
+      const {ctx, canvas, chartArea} = chart;
+      if (!chartArea) return;
+      // Use same proportional calculation as bottom chart for pixel-perfect alignment
+      const xp = chartArea.left + (hsiVlineIdx / (N - 1)) * (chartArea.right - chartArea.left);
       if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
