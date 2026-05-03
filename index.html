@@ -162,6 +162,7 @@ FIX LOG
 <title>港股策略板</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -811,7 +812,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 /* ── HSI panel ─────────────────── */
 #panel-hsi { padding: 0 0 40px; }
 .hsi-chart-wrap { position: relative; width: 100%; height: 380px; margin-bottom: 0; }
-.hsi-vol-wrap   { position: relative; width: 100%; height: 80px; }
+.hsi-vol-wrap   { position: relative; width: 100%; height: 100px; }
 .hsi-loading    { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
 
 </style>
@@ -1289,6 +1290,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <label style="font-size:13px;color:var(--muted)">至</label>
       <input type="date" id="hsi-to" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
       <button id="hsi-apply" style="font-size:13px;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer">套用</button>
+      <button id="hsi-export" style="font-size:13px;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer">📥 匯出 Excel</button>
     </div>
 
     <div class="hsi-chart-wrap"><canvas id="hsiCanvas" role="img" aria-label="HSI weekly price channel">HSI weekly channel chart.</canvas></div>
@@ -1905,7 +1907,6 @@ function drawSbChart(sorted) {
 
   const chartW = W - PAD_LEFT - PAD_RIGHT;
   const maxAbs = Math.max(...stocks.filter(s => s.sb_total > 0 || s.sb_buy > 0).map(s => Math.abs(s.sb_net)), 1);
-  console.log(`[chart] W=${W} chartW=${chartW} stocks=${stocks.length} maxAbs=${maxAbs} layout=${layout}`);
 
   // zero line x
   const zeroX = PAD_LEFT + chartW / 2;
@@ -2038,7 +2039,6 @@ function renderBshui() {
   const { col, dir } = getTableSort('tbl-bshui', 'turnover');
   const sorted = base.sort((a, b) => stockSortCmp(a, b, col, dir));
 
-  console.log(`[bshui] allStocks=${allStocks.length} sb_active=${sorted.length}`);
   const display = sorted;
   const countEl = document.getElementById('sb-stock-count');
   if (countEl) countEl.textContent = display.length ? `(${display.length} 隻)` : '';
@@ -2227,6 +2227,7 @@ let sfcCurCode    = '';
 let sfcInited       = false;
 let sfcLoaded       = false;
 let sfcEventsWired  = false;
+let _sfcCodesCache  = null;   // cached sorted array of ccass_universe SFC codes — built once after load
 
 // turnover data cache: { year: { "YYYY-MM-DD": { code: {tv, vol, close, high, low} } } }
 // Source: HKEX daily quotation  https://www.hkex.com.hk/chi/stat/smstat/dayquot/d{YYMMDD}c.htm
@@ -2257,6 +2258,7 @@ async function loadSfcData() {
   sfcData   = merged;
   sfcDates  = Object.keys(merged).sort();
   sfcLoaded = true;
+  _sfcCodesCache = null;   // invalidate code cache so sfcBuildDropdown rebuilds with new data
   return true;
 }
 
@@ -2430,13 +2432,16 @@ function sfcBuildDropdown(query) {
     // Typing — filter across SFC codes that are in ccass_universe only
     let sfcCodes;
     if (sfcDates.length) {
-      const sfcCodeSet = new Set();
-      sfcDates.forEach(ds => {
-        Object.keys(sfcData[ds] || {}).forEach(c => {
-          if (c !== '__total__' && nameMap[norm5(c)]) sfcCodeSet.add(norm5(c));  // ccass_universe only, normalised
+      if (!_sfcCodesCache) {
+        const sfcCodeSet = new Set();
+        sfcDates.forEach(ds => {
+          Object.keys(sfcData[ds] || {}).forEach(c => {
+            if (c !== '__total__' && nameMap[norm5(c)]) sfcCodeSet.add(norm5(c));
+          });
         });
-      });
-      sfcCodes = [...sfcCodeSet].sort();
+        _sfcCodesCache = [...sfcCodeSet].sort();
+      }
+      sfcCodes = _sfcCodesCache;
     } else {
       sfcCodes = allStocks.map(s => norm5(s.code));
     }
@@ -4520,9 +4525,6 @@ async function drawCai() {
   const validBw  = bwArr.filter(v=>v!=null).sort((a,b)=>a-b);
   const bwThresh = validBw[Math.floor(validBw.length*0.25)]||0;
 
-  const priceUp = closeView.map((c,i) => mid[i]!=null && c>=mid[i] ? c : null); // kept for tooltip reference
-  const priceDn = closeView.map((c,i) => mid[i]!=null && c< mid[i] ? c : null); // kept for tooltip reference
-
   // RSI + MACD (computed on full history, sliced for display)
   const rsiFull   = calcRsi(closeArr);
   const rsiArr    = rsiFull.slice(viewIdx);
@@ -4898,10 +4900,9 @@ let _resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(_resizeTimer);
   _resizeTimer = setTimeout(() => {
-    const activeTab = () => t => document.querySelector(`.tab-btn[data-tab="${t}"]`)?.classList.contains('active');
     const is = t => document.querySelector(`.tab-btn[data-tab="${t}"]`)?.classList.contains('active');
     if (is('cai'))   drawCai();
-    if (is('hsi'))   initHsiPanel();
+    if (is('hsi') && hsiData)   renderHsiPanel();
     if (is('bshui')) renderBshui();
     if (is('short')) { drawShortRiskMap(allStocks); drawSfcChart(); renderSqueezeTop10(allStocks); }
     if (is('ccass')) renderSdwPanel(); // redraws sdwCanvas + sdwGroupCanvas
@@ -5286,14 +5287,7 @@ function renderHsiPanel() {
       scales: {
         x: {
           offset: false,
-          ticks: {
-            callback: (v,i) => {
-              if (i === N-1) return '下週';
-              return i % tickEvery === 0 ? chartLabels[i].slice(0,7) : '';
-            },
-            color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
-            maxRotation: 0, font: { size: 11 }
-          },
+          ticks: { display: false },
           grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
         },
         y: { afterFit: s => { s.width = 52; }, ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } }
@@ -5333,7 +5327,14 @@ function renderHsiPanel() {
         tooltip: { enabled: false }
       },
       scales: {
-        x: { offset: false, stacked: true, ticks: { display: false }, grid: { display: false } },
+        x: { offset: false, stacked: true, ticks: {
+            callback: (v,i) => {
+              if (i === N-1) return '下週';
+              return i % tickEvery === 0 ? chartLabels[i].slice(0,7) : '';
+            },
+            color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
+            maxRotation: 0, font: { size: 11 }
+          }, grid: { display: false } },
         y: {
           afterFit: s => { s.width = 52; },
           stacked: true,
@@ -5375,6 +5376,35 @@ function renderHsiPanel() {
   if (applyBtn && !applyBtn._hsiWired) {
     applyBtn._hsiWired = true;
     applyBtn.addEventListener('click', () => renderHsiPanel());
+  }
+
+  const exportBtn = document.getElementById('hsi-export');
+  if (exportBtn && !exportBtn._hsiWired) {
+    exportBtn._hsiWired = true;
+    exportBtn.addEventListener('click', () => {
+      const rows = [['日期','收市價','實際高位','實際低位','預測高位(3σ)','預測高位(2.5σ)','預測低位(2.5σ)','預測低位(3σ)','週高−4週均','週低−4週均']];
+      view.forEach((d, i) => {
+        const rec = weekly[d];
+        const ch  = channel[d];
+        rows.push([
+          d,
+          rec.c, rec.h, rec.l,
+          ch ? +((  (weekly[d].c+sigmaUp  *ch.vr*3.0)+(weekly[d].o+sigmaUpO  *ch.vr*3.0))/2).toFixed(0) : '',
+          ch ? +((  (weekly[d].c+sigmaUp  *ch.vr*2.5)+(weekly[d].o+sigmaUpO  *ch.vr*2.5))/2).toFixed(0) : '',
+          ch ? +(((weekly[d].c-sigmaDown*ch.vr*2.5)+(weekly[d].o-sigmaDownO*ch.vr*2.5))/2).toFixed(0) : '',
+          ch ? +(((weekly[d].c-sigmaDown*ch.vr*3.0)+(weekly[d].o-sigmaDownO*ch.vr*3.0))/2).toFixed(0) : '',
+          highVsMa[i] ?? '',
+          lowVsMa[i]  ?? '',
+        ]);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [{wch:12},{wch:10},{wch:10},{wch:10},{wch:14},{wch:16},{wch:16},{wch:14},{wch:12},{wch:12}];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, '恒生指數預測');
+      const fromVal = document.getElementById('hsi-from')?.value || '';
+      const toVal   = document.getElementById('hsi-to')?.value   || '';
+      XLSX.writeFile(wb, `HSI_Channel_${fromVal}_${toVal}.xlsx`);
+    });
   }
 }
 
@@ -5507,7 +5537,7 @@ async function stkBuildSeries(code5, fromDs, toDs) {
   // y-1 included for warmup period; y+1 removed — future year files don't exist
   const curYear = new Date().getFullYear();
   const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
-    .flatMap(y => [y-1, y]).filter(y => y >= 2025 && y <= curYear))];
+    .flatMap(y => [y-1, y]).filter(y => y >= 2020 && y <= curYear))];
   for (const y of years) {
     await loadTvYear(y);
     await stkEnsureSfc(y);
@@ -5563,8 +5593,8 @@ async function stkBuildSeries(code5, fromDs, toDs) {
     const win24 = sortedVolDates.slice(Math.max(0, dsIdx - 23), dsIdx + 1);
     const vol24 = win24.reduce((s, d) => s + (allVolByDate[d] || 0), 0);
     // Get total_sh from SDW — use nearest available date
-    const sdwDates = Object.keys(sdwByDate).sort();
-    const nearestSdw = sdwDates.filter(d => d <= ds).slice(-1)[0];
+    const sdwDateKeys = Object.keys(sdwByDate).sort();
+    const nearestSdw = sdwDateKeys.filter(d => d <= ds).slice(-1)[0];
     const totalSh = nearestSdw ? (sdwByDate[nearestSdw]?.total_sh || 0) : 0;
     turnArr.push(totalSh > 0 && vol24 > 0 ? +(vol24 / totalSh * 100).toFixed(2) : null);
 
