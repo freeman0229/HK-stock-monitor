@@ -218,8 +218,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 300
     concurrency:
-      group: sdw-build
-      cancel-in-progress: true
+      group: sdw-db-lock
+      cancel-in-progress: false
     permissions:
       contents: write
     if: |
@@ -239,7 +239,7 @@ jobs:
         run: |
           aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
-          echo "No existing DB found — starting fresh"
+          { echo "ERROR: DB download failed — aborting"; exit 1; }
       - name: Full SDW backfill → ccass_sdw.db
         env:
           SDW_WORKERS: "3"
@@ -265,6 +265,12 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+      - name: Verify DB before export
+        run: |
+          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
+          echo "DB has $COUNT distinct dates"
+          [ "$COUNT" -gt 1 ] || \
+            { echo "ERROR: DB has only $COUNT date — aborting export to protect R2 data"; exit 1; }
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
       - name: Upload SDW chart files to R2
@@ -286,7 +292,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     concurrency:
-      group: sdw-weekly
+      group: sdw-db-lock
       cancel-in-progress: false
     permissions:
       contents: write
@@ -308,7 +314,7 @@ jobs:
         run: |
           aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
-          echo "No existing DB found — starting fresh"
+          { echo "ERROR: DB download failed — aborting"; exit 1; }
       - name: Fetch latest Friday SDW data
         env:
           SDW_WORKERS: "3"
@@ -333,6 +339,12 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+      - name: Verify DB before export
+        run: |
+          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
+          echo "DB has $COUNT distinct dates"
+          [ "$COUNT" -gt 1 ] || \
+            { echo "ERROR: DB has only $COUNT date — aborting export to protect R2 data"; exit 1; }
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
       - name: Upload SDW chart files to R2
@@ -594,8 +606,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     concurrency:
-      group: sdw-backfill
-      cancel-in-progress: true
+      group: sdw-db-lock
+      cancel-in-progress: false
     permissions:
       contents: write
     if: |
@@ -615,7 +627,7 @@ jobs:
         run: |
           aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
-          echo "No existing DB found — starting fresh"
+          { echo "ERROR: DB download failed — aborting"; exit 1; }
       - name: Backfill SDW for date ${{ inputs.backfill_date }}
         env:
           SDW_WORKERS: "2"
@@ -629,6 +641,12 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+      - name: Verify DB before export
+        run: |
+          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
+          echo "DB has $COUNT distinct dates"
+          [ "$COUNT" -gt 1 ] || \
+            { echo "ERROR: DB has only $COUNT date — aborting export to protect R2 data"; exit 1; }
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
       - name: Upload SDW chart files to R2
@@ -650,8 +668,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     concurrency:
-      group: sdw-backfill-3w
-      cancel-in-progress: true
+      group: sdw-db-lock
+      cancel-in-progress: false
     permissions:
       contents: write
     if: |
@@ -671,7 +689,7 @@ jobs:
         run: |
           aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
-          echo "No existing DB found — starting fresh"
+          { echo "ERROR: DB download failed — aborting"; exit 1; }
       - name: Backfill SDW for date ${{ inputs.backfill_date }} (3 workers)
         env:
           SDW_WORKERS: "3"
@@ -685,6 +703,12 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+      - name: Verify DB before export
+        run: |
+          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
+          echo "DB has $COUNT distinct dates"
+          [ "$COUNT" -gt 1 ] || \
+            { echo "ERROR: DB has only $COUNT date — aborting export to protect R2 data"; exit 1; }
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
       - name: Upload SDW chart files to R2
