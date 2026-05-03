@@ -105,6 +105,57 @@ def fetch_all() -> dict:
         log.error("Fetch failed: %s", e)
         return {}
 
+# ── Fetch current (incomplete) week's open ───────────────────────────────────
+
+def fetch_current_week_open() -> dict | None:
+    """Fetch today's daily bar to get the current week's Monday open.
+    Returns {date_str: {"o": open}} or None if unavailable."""
+    try:
+        import yfinance as yf
+        from datetime import timedelta
+    except ImportError:
+        return None
+
+    try:
+        # Fetch last 7 days of daily data to find this week's Monday
+        ticker = yf.Ticker(TICKER)
+        df = ticker.history(period="7d", interval="1d", auto_adjust=True)
+        if df.empty:
+            return None
+
+        # Find the Monday of the NEXT trading week
+        # On weekdays (Mon-Fri): next Monday = current week's Monday + 7
+        # On weekends (Sat-Sun): next Monday = coming Monday
+        today = date.today()
+        days_since_monday = today.weekday()  # 0=Mon, 6=Sun
+        if days_since_monday <= 4:  # Mon–Fri: next week's Monday
+            monday = today - timedelta(days=days_since_monday) + timedelta(days=7)
+        else:  # Sat–Sun: coming Monday
+            monday = today + timedelta(days=(7 - days_since_monday))
+        monday_str = monday.isoformat()
+
+        # Find Monday's open in daily data
+        for ts, row in df.iterrows():
+            if ts.strftime("%Y-%m-%d") == monday_str:
+                o = round(float(row["Open"]), 2)
+                log.info("Current week open: %s  o=%.2f", monday_str, o)
+                return {monday_str: {"o": o}}
+
+        # Monday may be a holiday — use first available day of the week
+        for ts, row in df.iterrows():
+            ds = ts.strftime("%Y-%m-%d")
+            d  = datetime.strptime(ds, "%Y-%m-%d").date()
+            if d >= monday:
+                o = round(float(row["Open"]), 2)
+                log.info("Current week open (first trading day): %s  o=%.2f", ds, o)
+                return {monday_str: {"o": o}}  # still key by Monday for consistency
+
+        return None
+    except Exception as e:
+        log.warning("Could not fetch current week open: %s", e)
+        return None
+
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 
 def build(dry_run: bool = False, rebuild: bool = False):
@@ -124,6 +175,21 @@ def build(dry_run: bool = False, rebuild: bool = False):
             added += 1
 
     log.info("Added/updated: %d weeks  (total: %d)", added, len(lib["weekly"]))
+
+    # Fetch current (incomplete) week's open for next-week prediction
+    # Store as a partial entry — only "o" field, no h/l/c/v until week completes
+    current = fetch_current_week_open()
+    if current:
+        for ds, rec in current.items():
+            if ds not in lib["weekly"]:
+                # New partial week — store open only
+                lib["weekly"][ds] = rec
+                log.info("Stored partial week %s: o=%.2f", ds, rec["o"])
+            else:
+                # Week already exists (completed) — update open if changed
+                if lib["weekly"][ds].get("o") != rec["o"]:
+                    lib["weekly"][ds]["o"] = rec["o"]
+                    log.info("Updated open for %s: o=%.2f", ds, rec["o"])
 
     if not dry_run:
         save_lib(lib)

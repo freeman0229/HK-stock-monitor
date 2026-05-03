@@ -5048,34 +5048,55 @@ function renderHsiPanel() {
   if (hsiVolInst)   { hsiVolInst.destroy();   hsiVolInst   = null; }
 
   // ── Next-week prediction: extend labels and band data by one point ──────────
-  const predLabel  = '下週(預測)';
+  // Prediction from week d uses d's close + next week's open (correct open-based sigma)
+  // So prediction for week[i+1] is calculated from week[i]'s close + week[i+1]'s open
+  // The last week's prediction goes to the 下週 label (next Monday's date)
+  const nextMonday = (() => {
+    const d = new Date(lastDs + 'T00:00:00');
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().slice(0, 10);
+  })();
+  const predLabel   = nextMonday;
   const chartLabels = [...labels, predLabel];
   const N = chartLabels.length;
 
+  // Helper: get prediction value for week d, given next week's open nxo
+  const predPh3  = (d, nxo) => +( ((weekly[d].c + sigmaUp  *channel[d].vr*3.0) + (nxo + sigmaUpO  *channel[d].vr*3.0)) / 2 ).toFixed(0);
+  const predPl3  = (d, nxo) => +( ((weekly[d].c - sigmaDown*channel[d].vr*3.0) + (nxo - sigmaDownO*channel[d].vr*3.0)) / 2 ).toFixed(0);
+  const predPh25 = (d, nxo) => +( ((weekly[d].c + sigmaUp  *channel[d].vr*2.5) + (nxo + sigmaUpO  *channel[d].vr*2.5)) / 2 ).toFixed(0);
+  const predPl25 = (d, nxo) => +( ((weekly[d].c - sigmaDown*channel[d].vr*2.5) + (nxo - sigmaDownO*channel[d].vr*2.5)) / 2 ).toFixed(0);
+
+  // Next week's open for last prediction point — from JSON if build_hsi fetched it, else fallback to lastRec.c
+  const nextWeekO = (weekly[nextMonday]?.o) || lastRec.c;
+
+  // Shift: prediction from view[i] displays at view[i+1]; first point is null
   const predPhData = [
-    ...view.map(d => +( ((weekly[d].c+sigmaUp  *channel[d].vr*3.0)+(weekly[d].o+sigmaUpO  *channel[d].vr*3.0))/2 ).toFixed(0)),
-    Math.round(ph30avg)
+    null,
+    ...view.slice(0, -1).map((d, i) => predPh3(d, weekly[view[i+1]].o)),
+    predPh3(lastDs, nextWeekO),
   ];
   const predPlData = [
-    ...view.map(d => +( ((weekly[d].c-sigmaDown*channel[d].vr*3.0)+(weekly[d].o-sigmaDownO*channel[d].vr*3.0))/2 ).toFixed(0)),
-    Math.round(pl30avg)
+    null,
+    ...view.slice(0, -1).map((d, i) => predPl3(d, weekly[view[i+1]].o)),
+    predPl3(lastDs, nextWeekO),
   ];
-  // 2.5σ bands
   const predPh25Data = [
-    ...view.map(d => +( ((weekly[d].c+sigmaUp  *channel[d].vr*2.5)+(weekly[d].o+sigmaUpO  *channel[d].vr*2.5))/2 ).toFixed(0)),
-    Math.round(ph25avg)
+    null,
+    ...view.slice(0, -1).map((d, i) => predPh25(d, weekly[view[i+1]].o)),
+    predPh25(lastDs, nextWeekO),
   ];
   const predPl25Data = [
-    ...view.map(d => +( ((weekly[d].c-sigmaDown*channel[d].vr*2.5)+(weekly[d].o-sigmaDownO*channel[d].vr*2.5))/2 ).toFixed(0)),
-    Math.round(pl25avg)
+    null,
+    ...view.slice(0, -1).map((d, i) => predPl25(d, weekly[view[i+1]].o)),
+    predPl25(lastDs, nextWeekO),
   ];
   const closeData  = [...view.map(d => weekly[d].c), null];
   const highData   = [...view.map(d => weekly[d].h), null];
   const lowData    = [...view.map(d => weekly[d].l), null];
 
   // Fill zone between 2.5σ high and low for last two points only
-  const fillPhData = chartLabels.map((l,i) => i >= N-2 ? predPh25Data[i] : null);
-  const fillPlData = chartLabels.map((l,i) => i >= N-2 ? predPl25Data[i] : null);
+  const fillPhData = chartLabels.map((l,i) => i >= N-1 ? predPh25Data[i] : null);
+  const fillPlData = chartLabels.map((l,i) => i >= N-1 ? predPl25Data[i] : null);
 
   // Vertical divider + shaded background plugin
   const predDividerPlugin = {
@@ -5083,7 +5104,7 @@ function renderHsiPanel() {
     afterDraw(chart) {
       const {ctx, scales: {x, y}} = chart;
       if (!x || !y) return;
-      const xPos = x.getPixelForValue(N - 2);
+      const xPos = x.getPixelForValue(N - 1);
       const xEnd = x.right;
       ctx.save();
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(91,141,217,0.05)';
@@ -5120,7 +5141,7 @@ function renderHsiPanel() {
       ctx.stroke();
       // Date label — top chart only
       const ds = chartLabels[hsiVlineIdx];
-      if (ds && ds !== '下週(預測)') {
+      if (ds && ds !== predLabel) {
         ctx.font = '11px sans-serif';
         const tw = ctx.measureText(ds.slice(0, 7)).width + 8;
         const tx = Math.min(xp + 3, chartArea.right - tw);
@@ -5253,7 +5274,7 @@ function renderHsiPanel() {
         if (!pts.length) return;
         const idx = pts[0].index;
         hsiVlineIdx = (idx === hsiVlineIdx) ? null : idx;
-        _updateHsiVlineBar(chartLabels, weekly, lastDs);
+        _updateHsiVlineBar(chartLabels, weekly, lastDs, predLabel);
         chart.update('none');
         if (hsiVolInst) hsiVolInst.draw();
       },
@@ -5329,7 +5350,7 @@ function renderHsiPanel() {
       scales: {
         x: { offset: false, stacked: true, ticks: {
             callback: (v,i) => {
-              if (i === N-1) return '下週';
+              if (i === N-1) return '下週 ' + predLabel.slice(5);
               return i % tickEvery === 0 ? chartLabels[i].slice(0,7) : '';
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
@@ -5383,20 +5404,35 @@ function renderHsiPanel() {
     exportBtn._hsiWired = true;
     exportBtn.addEventListener('click', () => {
       const rows = [['日期','收市價','實際高位','實際低位','預測高位(3σ)','預測高位(2.5σ)','預測低位(2.5σ)','預測低位(3σ)','週高−4週均','週低−4週均']];
+      const lastViewDate = view[view.length - 1];
       view.forEach((d, i) => {
-        const rec = weekly[d];
-        const ch  = channel[d];
+        const rec  = weekly[d];
+        const isLast = d === lastViewDate;
+        // Prediction for this row = what week d forecasts for the following week
+        // Use next week's actual open if available
+        const nxd  = isLast ? predLabel : view[i + 1];
+        const nxo  = (weekly[nxd]?.o) || rec.c;
+        const ch   = channel[d];
         rows.push([
           d,
-          rec.c, rec.h, rec.l,
-          ch ? +((  (weekly[d].c+sigmaUp  *ch.vr*3.0)+(weekly[d].o+sigmaUpO  *ch.vr*3.0))/2).toFixed(0) : '',
-          ch ? +((  (weekly[d].c+sigmaUp  *ch.vr*2.5)+(weekly[d].o+sigmaUpO  *ch.vr*2.5))/2).toFixed(0) : '',
-          ch ? +(((weekly[d].c-sigmaDown*ch.vr*2.5)+(weekly[d].o-sigmaDownO*ch.vr*2.5))/2).toFixed(0) : '',
-          ch ? +(((weekly[d].c-sigmaDown*ch.vr*3.0)+(weekly[d].o-sigmaDownO*ch.vr*3.0))/2).toFixed(0) : '',
+          rec.c, rec.h || '', rec.l || '',
+          ch ? predPh3 (d, nxo) : '',
+          ch ? predPh25(d, nxo) : '',
+          ch ? predPl25(d, nxo) : '',
+          ch ? predPl3 (d, nxo) : '',
           highVsMa[i] ?? '',
           lowVsMa[i]  ?? '',
         ]);
       });
+      // Append next-week prediction row
+      rows.push([
+        predLabel, '', '', '',
+        predPhData[N-1]   || '',
+        predPh25Data[N-1] || '',
+        predPl25Data[N-1] || '',
+        predPlData[N-1]   || '',
+        '', '',
+      ]);
       const ws = XLSX.utils.aoa_to_sheet(rows);
       ws['!cols'] = [{wch:12},{wch:10},{wch:10},{wch:10},{wch:14},{wch:16},{wch:16},{wch:14},{wch:12},{wch:12}];
       const wb = XLSX.utils.book_new();
@@ -5408,10 +5444,10 @@ function renderHsiPanel() {
   }
 }
 
-function _updateHsiVlineBar(chartLabels, weekly, lastDs) {
+function _updateHsiVlineBar(chartLabels, weekly, lastDs, predLabel) {
   const bar = document.getElementById('hsi-vline-bar');
   if (!bar) return;
-  if (hsiVlineIdx === null || !chartLabels[hsiVlineIdx] || chartLabels[hsiVlineIdx] === '下週(預測)') {
+  if (hsiVlineIdx === null || !chartLabels[hsiVlineIdx] || chartLabels[hsiVlineIdx] === predLabel) {
     bar.innerHTML = '<span style="color:var(--muted)">— 點擊圖表設定基準線</span>';
     return;
   }
