@@ -1,3 +1,38 @@
+# ── Changelog ─────────────────────────────────────────────────────────────────
+# [Fix 1 — 2026-05-04] classify_insight: replaced pct_dev with top10_pct_delta.
+#   pct_dev (Stock Connect %) was only meaningful for ~100 SC stocks; always 0
+#   for the rest of ccass_universe. top10_pct_delta (CCASS SDW institutional
+#   concentration change) covers all stocks. Thresholds unchanged.
+#
+# [Fix 2 — 2026-05-04] Removed stale pct_dev computation and data.json output.
+#   pct_avg24_lvl/_pct_hist() calls removed; "pct_dev" key removed from output.
+#
+# [Fix 3 — 2026-05-04] _sdw_prev_date NameError when SDW unavailable.
+#   Variable now initialised to None before the if _SDW_AVAILABLE block.
+#
+# [Fix 4 — 2026-05-04] top10_pct_delta suppressed on first SDW week.
+#   Guard changed from `if _prev_top10_pct > 0` to `if _prev_holders` — delta
+#   fires whenever a previous snapshot exists, even if prev concentration was 0.
+#
+# [Fix 5 — 2026-05-04] avg_vol24 denominator wrong when today_vol = 0.
+#   Old code counted today even with zero volume, inflating denominator.
+#   Fixed: only count today if today_vol > 0; use consistent _prior_days var.
+#
+# [Fix 6 — 2026-05-04] sfc_week_delta mixed denominators.
+#   sfc_prev_pct was read from saved sfc_hist[0].pct (possibly from a prior run
+#   with a different total_sh). Now recomputed from raw _prev_sh / total_sh for
+#   consistency with current week's sfc_pct.
+#
+# [Fix 7 — 2026-05-04] _sdw_summary _sc_name stale in max_inc/max_dec loop.
+#   Post-loop name re-resolution for max_holder/max_conc now correctly looks up
+#   by stored code, not last loop iteration's _sc_name. Added clarifying comment.
+#
+# [Fix 8 — 2026-05-04] SDW total_sh fallback when today's data not yet published.
+#   sdw_get_total_sh_bulk() returns empty if HKEX hasn't published today's SDW.
+#   Now falls back to most recent available date in total_sh table, preventing
+#   concentration/top10_pct/turnover_24d from being zeroed out for all stocks.
+# ──────────────────────────────────────────────────────────────────────────────
+
 import json
 import logging
 import os
@@ -601,6 +636,22 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     if _SDW_AVAILABLE:
         _sdw_total_sh_map = {normalize_code(k): v for k, v in _sdw_total_sh_map.items()}
         log.info("SDW total_sh: %d stocks from %s", len(_sdw_total_sh_map), _sdw_total_sh_date)
+        # Fallback: if today's total_sh not yet published, use most recent available date
+        if not _sdw_total_sh_map:
+            try:
+                with _sdw_get_conn(_SDW_DB_PATH) as _sc:
+                    _fb_date = _sc.execute(
+                        "SELECT date FROM total_sh WHERE date < ? ORDER BY date DESC LIMIT 1",
+                        (_sdw_total_sh_date,)
+                    ).fetchone()
+                if _fb_date:
+                    _sdw_total_sh_date = _fb_date[0]
+                    _sdw_total_sh_map = {normalize_code(k): v
+                                         for k, v in sdw_get_total_sh_bulk(_sdw_total_sh_date).items()}
+                    log.info("SDW total_sh fallback: %d stocks from %s",
+                             len(_sdw_total_sh_map), _sdw_total_sh_date)
+            except Exception as _e:
+                log.warning("SDW total_sh fallback failed: %s", _e)
 
     _sdw_prev_holders_map: dict[str, list] = {}
     _sdw_prev_date: str | None = None   # safe default — referenced in _sdw_summary below

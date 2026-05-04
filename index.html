@@ -153,6 +153,20 @@ FIX LOG
       (下週 prediction slot) causes offset drift in getPixelForValue(), while proportional
       calculation always aligns with the top line chart regardless of bar positioning.
   Location: vlinePlugin, makeHsiVolVline, hsiChartInst/hsiVolInst x-axis, click handler.
+
+[Fix 16 — 2026-05-04] 異常信號 tab added (panel-signal) after 大戶持倉.
+  Three signal tables: 🚨 不尋常沽空, 🏦 大戶增持, 📉 空頭平倉.
+  Each filters allStocks by exact insight badge, sorts by turnover desc, max 10 rows.
+  4 summary cards: signal counts + 數據日期. renderSignalPanel() wired to tab click,
+  renderAll() (auto-refresh), and resize handler.
+  Location: tab bar, panel-signal HTML, renderSignalPanel(), renderAll(), resize handler.
+
+[Fix 17 — 2026-05-04] 🐉 異常亢奮 / 🏦 大戶增持 signals: replaced pct_dev with top10_pct_delta.
+  pct_dev was based on CCASS mutualmarket ?t=hk (Stock Connect % only — meaningful for
+  ~100 SC stocks, always 0 for the rest). top10_pct_delta from CCASS SDW covers all
+  ccass_universe stocks and measures actual institutional concentration change.
+  Thresholds unchanged: 異常亢奮 >= 0.5pp, 大戶增持 0.2-0.5pp.
+  Location: classify_insight() signature + conditions, call site, data.json output.
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
