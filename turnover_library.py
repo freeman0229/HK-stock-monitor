@@ -199,6 +199,54 @@ def get_close_history(code: str, n: int, before: str) -> list:
 # Preferred alias for chart construction — same as get_close_history
 get_price_history = get_close_history
 
+def get_high_history(code: str, n: int, before: str) -> list:
+    """
+    Return last n high values for a stock before date `before`
+    (YYYY-MM-DD), newest-first. Skips days with no data.
+    """
+    code5  = normalize_code(code)
+    result = []
+    for year in sorted(all_years(), reverse=True):
+        p = lib_path(year)
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8") as f:
+            by_date = json.load(f).get("by_date", {})
+        for ds in sorted(by_date.keys(), reverse=True):
+            if ds >= before:
+                continue
+            rec  = by_date[ds].get(code5, {})
+            high = rec.get("high", 0.0) if isinstance(rec, dict) else 0.0
+            if high > 0:
+                result.append(float(high))
+            if len(result) >= n:
+                return result
+    return result
+
+def get_low_history(code: str, n: int, before: str) -> list:
+    """
+    Return last n low values for a stock before date `before`
+    (YYYY-MM-DD), newest-first. Skips days with no data.
+    """
+    code5  = normalize_code(code)
+    result = []
+    for year in sorted(all_years(), reverse=True):
+        p = lib_path(year)
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8") as f:
+            by_date = json.load(f).get("by_date", {})
+        for ds in sorted(by_date.keys(), reverse=True):
+            if ds >= before:
+                continue
+            rec = by_date[ds].get(code5, {})
+            low = rec.get("low", 0.0) if isinstance(rec, dict) else 0.0
+            if low > 0:
+                result.append(float(low))
+            if len(result) >= n:
+                return result
+    return result
+
 def get_close(code: str, ds_yyyymmdd: str) -> float:
     """
     Return closing price for a stock on a given date (YYYYMMDD format).

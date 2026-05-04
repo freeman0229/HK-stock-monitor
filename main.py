@@ -48,7 +48,9 @@ from stock_ref import get_zh_name, get_industry, get_type, STOCKS
 from ccass_universe import get_universe, is_included as _universe_included, normalize_code
 from ccass_library import get_pct_history, get_sh_history, load_year as _cc_load_year
 from short_library import get_short_ratio_history, load_year as sl_load_year
-from turnover_library import load_year as tv_load_year, load_recent as tv_load_recent
+from turnover_library import load_year as tv_load_year, load_recent as tv_load_recent, \
+                            get_high_history as tv_get_high_history, \
+                            get_low_history  as tv_get_low_history
 from sc_top10_library import get_top10, get_top10_history, get_sb_summary
 try:
     from sfc_library import get_short_position as sfc_get_position, \
@@ -928,6 +930,35 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         # only meaningful for ~100 SC stocks. classify_insight now uses top10_pct_delta
         # (CCASS SDW top-10 institutional concentration change) which covers all stocks.
 
+        # ── Kan-style channel σ (global, asymmetric) ─────────────────────────
+        # σ_up   = std(high[i] - close[i-1])  — upward move from prev close to this day's high
+        # σ_down = std(close[i-1] - low[i])   — downward move from prev close to this day's low
+        # Computed over ALL available history (global σ, not rolling).
+        _all_dates_sorted = sorted(_tv_all.keys())
+        _up_moves, _dn_moves = [], []
+        for _di in range(1, len(_all_dates_sorted)):
+            _ds_prev = _all_dates_sorted[_di - 1]
+            _ds_cur  = _all_dates_sorted[_di]
+            _rec_prev = _tv_all[_ds_prev].get(code, {})
+            _rec_cur  = _tv_all[_ds_cur].get(code, {})
+            if not isinstance(_rec_prev, dict) or not isinstance(_rec_cur, dict): continue
+            _pc = _rec_prev.get("close", 0.0)
+            _hi = _rec_cur.get("high",  0.0)
+            _lo = _rec_cur.get("low",   0.0)
+            if _pc > 0 and _hi > _pc: _up_moves.append(_hi - _pc)
+            if _pc > 0 and _lo > 0 and _pc > _lo: _dn_moves.append(_pc - _lo)
+        def _std(arr):
+            if len(arr) < 2: return 0.0
+            m = sum(arr) / len(arr)
+            return (sum((x - m) ** 2 for x in arr) / len(arr)) ** 0.5
+        sigma_up   = round(_std(_up_moves),   4)
+        sigma_down = round(_std(_dn_moves),   4)
+
+        # vol_ratio_5: today vol / 5-day avg vol (for channel band width)
+        _vol5 = _vol_hist(code, 5, today_ds)
+        _avg_vol5 = sum(_vol5) / len(_vol5) if _vol5 else 0.0
+        vol_ratio_5 = round(today_vol / _avg_vol5, 4) if _avg_vol5 > 0 and today_vol > 0 else 1.0
+
         _holders = _sdw_holders_map.get(code) or []
         if not _holders and _SDW_AVAILABLE:
             _holders = sdw_get_holders(code, today_ds)
@@ -1021,6 +1052,9 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             "sfc_pct":        sfc_map.get(code, {}).get("sfc_pct",        0.0),
             "sfc_week_delta": sfc_map.get(code, {}).get("sfc_week_delta", 0.0),
             "tv_ratio":  tv_ratio,
+            "sigma_up":        sigma_up,
+            "sigma_down":      sigma_down,
+            "vol_ratio_5":     vol_ratio_5,
             "concentration": concentration,
             "top10_sh":         top10_sh,
             "top10_pct":        top10_pct,

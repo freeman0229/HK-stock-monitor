@@ -864,7 +864,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn" data-tab="short">累積沽空</button>
   <button class="tab-btn" data-tab="ccass">大戶持倉</button>
   <button class="tab-btn" data-tab="signal">異常信號</button>
-  <button class="tab-btn" data-tab="cai">保力加通道</button>
+  <button class="tab-btn" data-tab="cai">個股通道</button>
   <button class="tab-btn" data-tab="stock">個股綜合分析</button>
   <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
   <button class="tab-btn" data-tab="strategy">投資策略</button>
@@ -1327,10 +1327,26 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <!-- ═══ Panel 4: 蔡氏通道 ════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-cai">
   <div class="summary-bar">
-    <div class="sum-card"><div class="sum-label">突破上軌</div><div class="sum-val up" id="cai-break-up">--</div><div class="sum-sub">股票數</div></div>
-    <div class="sum-card"><div class="sum-label">跌破下軌</div><div class="sum-val dn" id="cai-break-dn">--</div><div class="sum-sub">股票數</div></div>
-    <div class="sum-card"><div class="sum-label">通道收窄</div><div class="sum-val gold" id="cai-narrow">--</div><div class="sum-sub">波幅壓縮</div></div>
-    <div class="sum-card"><div class="sum-label">通道擴闊</div><div class="sum-val" id="cai-wide">--</div><div class="sum-sub">波幅放大</div></div>
+    <div class="sum-card">
+      <div class="sum-label">σ 上行</div>
+      <div class="sum-val" id="cai-sigma-up">--</div>
+      <div class="sum-sub">上行標準差</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">σ 下行</div>
+      <div class="sum-val" id="cai-sigma-dn">--</div>
+      <div class="sum-sub">下行標準差</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">成交量倍數</div>
+      <div class="sum-val" id="cai-vr5">--</div>
+      <div class="sum-sub">今日 ÷ 5日均量</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">通道闊度</div>
+      <div class="sum-val" id="cai-width">--</div>
+      <div class="sum-sub">3σ 上下幅</div>
+    </div>
   </div>
 
   <div class="chart-placeholder">
@@ -1341,37 +1357,24 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           style="width:180px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;">
         <div id="cai-dropdown" style="display:none;position:absolute;top:100%;left:0;width:240px;max-height:220px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:999;font-size:13px;"></div>
       </div>
-      <label>通道週期</label>
-      <select id="cai-period">
-        <option value="20">20日</option>
-        <option value="10">10日</option>
-        <option value="5">5日</option>
-      </select>
-      <label>乘數</label>
-      <input type="number" id="cai-mult" value="2" min="0.5" max="4" step="0.5" style="width:60px">
     </div>
 
     <div id="cai-charts-wrap" style="position:relative;">
       <div id="cai-tip" style="position:absolute;background:#1a1a1a;color:#eee;font-size:11px;padding:8px 10px;border-radius:6px;pointer-events:none;display:none;white-space:nowrap;z-index:99;line-height:1.9;"></div>
-      <div style="font-size:10px;color:var(--muted);margin-bottom:2px;" id="cai-title">保力加通道 &amp; 成交量</div>
-      <div class="cai-chart-area" style="height:300px;min-height:300px;"><canvas id="caiCanvas" role="img" aria-label="保力加通道 chart">保力加通道.</canvas></div>
-      <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">RSI (14)</div>
-      <div style="position:relative;width:100%;height:90px;min-height:90px;"><canvas id="caiRsi" role="img" aria-label="RSI 14">RSI.</canvas></div>
-      <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">MACD (12, 26, 9)</div>
-      <div style="position:relative;width:100%;height:90px;min-height:90px;"><canvas id="caiMacd" role="img" aria-label="MACD">MACD.</canvas></div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:2px;" id="cai-title">個股波幅通道</div>
+      <div class="cai-chart-area" style="height:360px;min-height:360px;"><canvas id="caiCanvas" role="img" aria-label="個股波幅通道 chart">個股波幅通道.</canvas></div>
+      <div style="font-size:10px;color:var(--muted);margin:4px 0 2px;">高/低 − 5日均價</div>
+      <div style="position:relative;width:100%;height:80px;min-height:80px;"><canvas id="caiVol" role="img" aria-label="高低波動">高低波動.</canvas></div>
     </div>
 
     <div class="cai-legend">
-      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>上軌</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#666;height:2px"></div>中軌</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>下軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>3σ 上軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(192,37,45,0.4);height:2px;border-top:2px dashed rgba(192,37,45,0.5)"></div>2.5σ 上軌</div>
       <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>收市價</div>
-      <div class="leg-item"><div class="leg-dot" style="background:rgba(128,128,128,0.4);height:8px;border-radius:1px"></div>成交量</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#534AB7;height:2px"></div>RSI</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>MACD</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px;border-top:2px dashed #c0252d"></div>Signal</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:8px;border-radius:1px"></div>柱狀(+)</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:8px;border-radius:1px"></div>柱狀(-)</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(26,122,60,0.4);height:2px;border-top:2px dashed rgba(26,122,60,0.5)"></div>2.5σ 下軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>3σ 下軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(192,37,45,0.6);height:8px;border-radius:1px"></div>高 − 5日均</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(42,157,143,0.6);height:8px;border-radius:1px"></div>低 − 5日均</div>
     </div>
   </div>
 </div>
@@ -1564,8 +1567,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'hsi') initHsiPanel();
     if (btn.dataset.tab === 'signal' && allStocks.length) renderSignalPanel();
     if (btn.dataset.tab === 'cai' && allStocks.length) {
-      drawCai();
-      updateCaiCards();
+      drawCai().catch(e => console.warn('drawCai error:', e));
       setTimeout(() => caiCharts.forEach(c => c?.resize()), 50);
     }
     if (btn.dataset.tab === 'bshui' && allStocks.length) renderBshui();
@@ -1880,7 +1882,6 @@ function generateMockData() {
       vwap:              parseFloat((0.5 + Math.random() * 20).toFixed(4)),
       turnover_24d:      parseFloat((Math.random() * 40).toFixed(4)),
       delta_turnover_24d:parseFloat(((Math.random() - 0.5) * 10).toFixed(4)),
-      pct_dev:           parseFloat(((Math.random() - 0.5) * 2).toFixed(4)),
       top10_sh:          Math.round(Math.random() * 5e8),
       top10_pct:         parseFloat((Math.random() * 60).toFixed(2)),
       top10_pct_delta:   parseFloat(((Math.random() - 0.5) * 5).toFixed(4)),
@@ -4418,32 +4419,7 @@ async function initSdwPanel() {
 }
 
 // ── Cai Channel ──────────────────────────────────────────────────────────
-function caiChannel(data, period, mult) {
-  const result = [];
-  for (let i = 0; i < data.length; i++) {
-    if (i < period - 1) { result.push(null); continue; }
-    const win = data.slice(i - period + 1, i + 1);
-    const ma = win.reduce((a,v) => a+v, 0) / period;
-    const variance = win.reduce((a,v) => a + (v-ma)**2, 0) / period;
-    const std = Math.sqrt(variance);
-    result.push({ ma, upper: ma + mult*std, lower: ma - mult*std, std });
-  }
-  return result;
-}
-
 // ── ATR (Average True Range) ─────────────────────────────────────────────────
-// Source: high, low, close from turnover_YYYY.json (parsed from HKEX dayquot)
-//
-// True Range (TR) per day:
-//   TR = max(high − low, |high − prev_close|, |low − prev_close|)
-//   The gap components handle overnight gaps missed by intraday range alone.
-//
-// ATR(period) = mean(TR, last N days)
-// ATR%        = ATR / close × 100   ← normalised across stocks of different prices
-//
-// period = 24 (consistent with avg_vol24, tv_avg24, turnover_24d across the system)
-//
-// Returns array of { atr, atrPct } per bar, null if insufficient data.
 function computeATR(highHistory, lowHistory, closeHistory, period = 24) {
   const result = [];
   for (let i = 0; i < closeHistory.length; i++) {
@@ -4465,59 +4441,14 @@ function computeATR(highHistory, lowHistory, closeHistory, period = 24) {
   return result;
 }
 
-async function updateCaiCards() {
-  try {
-    const periodEl = document.getElementById('cai-period');
-    const multEl   = document.getElementById('cai-mult');
-    if (!periodEl || !multEl) return;
-    const period = parseInt(periodEl.value) || 20;
-    const mult   = parseFloat(multEl.value)  || 2;
-
-    ['cai-break-up','cai-break-dn','cai-narrow','cai-wide'].forEach(id => {
-      const el = document.getElementById(id); if (el) el.textContent = '…';
-    });
-
-    const year   = new Date().getFullYear();
-    const byDate = await loadTvYear(year);
-    if (!byDate || !Object.keys(byDate).length) return;
-
-    const dates = Object.keys(byDate).sort();
-    const today = dates[dates.length - 1];
-    if (!today) return;
-    const codes = Object.keys(byDate[today] || {});
-
-    let breakUp = 0, breakDn = 0, narrow = 0, wide = 0;
-
-    for (const code of codes) {
-      const closes = [];
-      for (const d of dates) { const v = byDate[d]?.[code]?.close; if (v > 0) closes.push(v); }
-      if (closes.length < period + 5) continue;
-      const bands = caiChannel(closes, period, mult);
-      const last  = bands[bands.length - 1];
-      if (!last) continue;
-      const lastClose = closes[closes.length - 1];
-      if      (lastClose > last.upper) breakUp++;
-      else if (lastClose < last.lower) breakDn++;
-      const recent = bands.filter(Boolean).slice(-10);
-      if (recent.length < 3) continue;
-      const avgStd = recent.reduce((a, b) => a + b.std, 0) / recent.length;
-      if      (last.std < avgStd * 0.8) narrow++;
-      else if (last.std > avgStd * 1.2) wide++;
-    }
-
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    set('cai-break-up', breakUp); set('cai-break-dn', breakDn);
-    set('cai-narrow', narrow);    set('cai-wide', wide);
-  } catch(e) { console.warn('updateCaiCards error:', e); }
-}
-
 function caiSetStock(code) {
   const s = allStocks.find(x => x.code === code) || allStocks.find(x => String(parseInt(x.code)) === String(parseInt(code)));
   if (!s) return;
   document.getElementById('cai-search').value = s.code + ' ' + s.name_chi;
   document.getElementById('cai-dropdown').style.display = 'none';
+  caiCurCode = s.code;
   const caiActive = document.querySelector('.tab-btn[data-tab="cai"]')?.classList.contains('active');
-  if (caiActive) { drawCai(); updateCaiCards(); setTimeout(() => caiCharts.forEach(c => c?.resize()), 50); }
+  if (caiActive) { drawCai(); setTimeout(() => caiCharts.forEach(c => c?.resize()), 50); }
 }
 
 function caiBuildDropdown(q) {
@@ -4539,18 +4470,11 @@ function caiBuildDropdown(q) {
   dd.style.display = 'block';
 }
 
-function caiGetSelectedCode() {
-  const val = document.getElementById('cai-search').value.trim();
-  const code = val.split(' ')[0];
-  const s = allStocks.find(x => x.code === code || String(parseInt(x.code)) === String(parseInt(code)));
-  return s ? s.code : (allStocks[0]?.code || '');
-}
-
 function renderCaiStockSelect() {
   const inp = document.getElementById('cai-search');
   const preferred = allStocks.find(s => s.code === '02800' || s.code === '2800' || String(parseInt(s.code)) === '2800');
   const target = preferred || allStocks[0];
-  if (target) inp.value = target.code + ' ' + target.name_chi;
+  if (target) { inp.value = target.code + ' ' + target.name_chi; caiCurCode = target.code; }
 
   inp.addEventListener('input',  () => caiBuildDropdown(inp.value));
   inp.addEventListener('focus',  () => caiBuildDropdown(inp.value));
@@ -4562,10 +4486,6 @@ function renderCaiStockSelect() {
     }
   });
 
-  document.getElementById('cai-period').onchange = () => { drawCai(); updateCaiCards(); };
-  document.getElementById('cai-mult').onchange   = () => { drawCai(); updateCaiCards(); };
-  document.getElementById('cai-mult').oninput    = () => { drawCai(); updateCaiCards(); };
-
   const caiActive = document.querySelector('.tab-btn[data-tab="cai"]')?.classList.contains('active');
   if (caiActive) drawCai();
 }
@@ -4574,6 +4494,262 @@ let caiCharts = [];
 function caiDestroyCharts() {
   caiCharts.forEach(c => { try { c.destroy(); } catch(e){} });
   caiCharts = [];
+}
+
+// ── 個股波幅通道 (Kan-style asymmetric sigma channel) ─────────────────────────
+// σ_up   = std(high[i] - close[i-1])  — global over all available history
+// σ_down = std(close[i-1] - low[i])   — global over all available history
+// vol_ratio_5 = today_vol / avg_vol_last_5_days
+// upper_N = close + σ_up   × vol_ratio_5 × N
+// lower_N = close - σ_down × vol_ratio_5 × N   where N = 2.5 or 3.0
+
+let caiCurCode = '02800';  // default stock
+
+function caiGetSelectedCode() {
+  const inp = document.getElementById('cai-search');
+  if (!inp) return caiCurCode;
+  const val = inp.value.trim();
+  const m = val.match(/^0*(\d{1,5})/);
+  if (m) {
+    const found = allStocks.find(s => norm5(s.code) === norm5(m[1]));
+    if (found) return found.code;
+  }
+  return caiCurCode;
+}
+
+async function drawCai() {
+  const code  = caiGetSelectedCode();
+  const stock = allStocks.find(s => s.code === code) || allStocks.find(s => norm5(s.code) === '02800');
+  if (!stock) return;
+  const code5 = norm5(stock.code);
+
+  // Load current + prior year (for full σ computation warmup)
+  const year     = new Date().getFullYear();
+  const prevYear = year - 1;
+  if (!tvCache[year])     await loadTvYear(year);
+  if (!tvCache[prevYear]) await loadTvYear(prevYear);
+  const byDatePrev = tvCache[prevYear] || {};
+  const byDate     = tvCache[year]     || {};
+  const allDates   = [...new Set([...Object.keys(byDatePrev), ...Object.keys(byDate)])].sort();
+
+  // Build arrays
+  const dates = [], closeArr = [], highArr = [], lowArr = [], volArr = [];
+  for (const d of allDates) {
+    const rec = byDate[d]?.[code5] || byDatePrev[d]?.[code5];
+    if (rec && rec.close > 0) {
+      dates.push(d);
+      closeArr.push(rec.close);
+      highArr.push(rec.high   || rec.close);
+      lowArr.push(rec.low     || rec.close);
+      volArr.push(rec.vol     || 0);
+    }
+  }
+  if (closeArr.length < 5) return;
+
+  // Compute global asymmetric σ over all available data
+  const upMoves = [], dnMoves = [];
+  for (let i = 1; i < closeArr.length; i++) {
+    const pc = closeArr[i-1];
+    const up = highArr[i] - pc;
+    const dn = pc - lowArr[i];
+    if (up > 0) upMoves.push(up);
+    if (dn > 0) dnMoves.push(dn);
+  }
+  const _mean = arr => arr.reduce((a,b) => a+b, 0) / arr.length;
+  const _std  = arr => { if (arr.length < 2) return 0; const m = _mean(arr); return Math.sqrt(arr.reduce((a,b) => a+(b-m)**2, 0) / arr.length); };
+  const sigmaUp   = _std(upMoves);
+  const sigmaDown = _std(dnMoves);
+
+  // Compute per-day vol_ratio_5 and bands
+  const upper3 = [], lower3 = [], upper25 = [], lower25 = [];
+  for (let i = 0; i < closeArr.length; i++) {
+    const vols5 = volArr.slice(Math.max(0, i-5), i).filter(v => v > 0);
+    const avgVol5 = vols5.length > 0 ? _mean(vols5) : 0;
+    const vr5 = (volArr[i] > 0 && avgVol5 > 0) ? volArr[i] / avgVol5 : 1.0;
+    const c = closeArr[i];
+    upper3.push(+(c + sigmaUp   * vr5 * 3.0).toFixed(3));
+    lower3.push(+(c - sigmaDown * vr5 * 3.0).toFixed(3));
+    upper25.push(+(c + sigmaUp  * vr5 * 2.5).toFixed(3));
+    lower25.push(+(c - sigmaDown* vr5 * 2.5).toFixed(3));
+  }
+
+  // Only show current year on chart, use full history for σ
+  const curYearStr = String(year);
+  const viewStart  = dates.findIndex(d => d.startsWith(curYearStr));
+  const vi = viewStart >= 0 ? viewStart : 0;
+
+  const dateView   = dates.slice(vi);
+  const closeView  = closeArr.slice(vi);
+  const volView    = volArr.slice(vi);
+  const u3View     = upper3.slice(vi);
+  const l3View     = lower3.slice(vi);
+  const u25View    = upper25.slice(vi);
+  const l25View    = lower25.slice(vi);
+  const N = dateView.length;
+
+  // Update summary cards
+  const lastVols5 = volArr.slice(Math.max(0, closeArr.length-6), closeArr.length-1).filter(v=>v>0);
+  const lastAvgVol5 = lastVols5.length > 0 ? _mean(lastVols5) : 0;
+  const lastVr5 = (volArr[volArr.length-1] > 0 && lastAvgVol5 > 0) ? volArr[volArr.length-1] / lastAvgVol5 : 1.0;
+  const lastClose = closeArr[closeArr.length-1];
+  const bandWidth3 = ((sigmaUp + sigmaDown) * lastVr5 * 3.0);
+
+  const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setEl('cai-sigma-up', sigmaUp   > 0 ? sigmaUp.toFixed(3)   : '--');
+  setEl('cai-sigma-dn', sigmaDown > 0 ? sigmaDown.toFixed(3) : '--');
+  setEl('cai-vr5',      lastVr5   > 0 ? lastVr5.toFixed(2) + 'x' : '--');
+  setEl('cai-width',    bandWidth3 > 0 ? bandWidth3.toFixed(2) : '--');
+
+  // Update title
+  const titleEl = document.getElementById('cai-title');
+  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 個股波幅通道  σ↑=${sigmaUp.toFixed(3)}  σ↓=${sigmaDown.toFixed(3)}`;
+
+  // Crosshair state
+  let caiActiveIdx = null;
+  const gc = 'rgba(128,128,128,0.08)';
+  const YW = 52;
+
+  caiDestroyCharts();
+
+  const makeCaiCross = () => ({
+    afterDraw(chart) {
+      if (caiActiveIdx == null) return;
+      const {ctx, canvas, chartArea, scales:{x}} = chart;
+      if (!x || !chartArea) return;
+      const label    = dateView[caiActiveIdx];
+      const labelIdx = chart.data.labels ? chart.data.labels.indexOf(label) : -1;
+      if (labelIdx === -1) return;
+      const xp = x.getPixelForValue(labelIdx);
+      if (xp < chartArea.left || xp > chartArea.right) return;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
+      ctx.setLineDash([4,3]); ctx.strokeStyle = '#c0252d'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(xp, chartArea.top); ctx.lineTo(xp, chartArea.bottom); ctx.stroke();
+      ctx.restore();
+    }
+  });
+
+  function getIdxCai(chart, e) {
+    const rect = chart.canvas.getBoundingClientRect(), xPx = e.clientX - rect.left;
+    const xs = chart.scales.x; if (!xs) return null;
+    let best = null, minD = Infinity;
+    for (let i = 0; i < N; i++) { const d = Math.abs(xs.getPixelForValue(i) - xPx); if (d < minD) { minD = d; best = i; } }
+    return minD < 40 ? best : null;
+  }
+
+  function showCaiTip(e, idx) {
+    const tip  = document.getElementById('cai-tip');
+    const wrap = document.getElementById('cai-charts-wrap');
+    if (!tip || !wrap) return;
+    if (idx === null) { tip.style.display = 'none'; return; }
+    const c  = closeView[idx];
+    const u3 = u3View[idx], l3 = l3View[idx], u25 = u25View[idx], l25 = l25View[idx];
+    const hlH = hlOscHigh[idx], hlL = hlOscLow[idx];
+    const row = (lbl, val, col) => `<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
+    tip.innerHTML =
+      `<b style="color:#bbb">${dateView[idx]}</b><br>` +
+      row('收市',    c?.toFixed(3),   '#378ADD') +
+      row('3σ上軌',  u3?.toFixed(3),  '#c0252d') +
+      row('2.5σ上軌',u25?.toFixed(3), 'rgba(192,37,45,0.7)') +
+      row('2.5σ下軌',l25?.toFixed(3), 'rgba(26,122,60,0.7)') +
+      row('3σ下軌',  l3?.toFixed(3),  '#1a7a3c') +
+      row('高−5MA',  hlH != null ? (hlH >= 0 ? '+' : '') + hlH.toFixed(3) : '—', '#c0252d') +
+      row('低−5MA',  hlL != null ? (hlL >= 0 ? '+' : '') + hlL.toFixed(3) : '—', '#2a9d8f');
+    tip.style.display = 'block';
+    const wr = wrap.getBoundingClientRect();
+    const cx = e.clientX - wr.left;
+    const tipW = 160;
+    const tx = cx > wr.width / 2 ? cx - tipW - 14 : cx + 14;
+    tip.style.left = Math.max(0, Math.min(tx, wr.width - tipW)) + 'px';
+    tip.style.top  = Math.max(e.clientY - wr.top - 100, 4) + 'px';
+  }
+
+  function bindCaiHover(chart) {
+    const cvs = chart.canvas;
+    if (cvs._caiMove)  cvs.removeEventListener('mousemove',  cvs._caiMove);
+    if (cvs._caiLeave) cvs.removeEventListener('mouseleave', cvs._caiLeave);
+    cvs._caiMove = e => {
+      const refChart = caiCharts[0] || chart;
+      caiActiveIdx = getIdxCai(refChart, e);
+      caiCharts.forEach(c => c.draw());
+      showCaiTip(e, caiActiveIdx);
+    };
+    cvs._caiLeave = () => {
+      caiActiveIdx = null;
+      caiCharts.forEach(c => c.draw());
+      const t = document.getElementById('cai-tip'); if (t) t.style.display = 'none';
+    };
+    cvs.addEventListener('mousemove',  cvs._caiMove);
+    cvs.addEventListener('mouseleave', cvs._caiLeave);
+  }
+
+  const aFit  = s => { s.width = YW; };
+  const aFitR = s => { s.width = 32; };
+  const xHide = {offset:false, ticks:{display:false}, grid:{color:gc}, border:{display:false}};
+  const xShow = {offset:false, ticks:{font:{size:10}, color:'#888', maxRotation:0,
+    callback:(v,i) => i % Math.max(1, Math.floor(N/8)) === 0 ? dateView[i].slice(2,10) : ''},
+    grid:{color:gc}, border:{display:false}};
+
+  // Main price + channel chart
+  const c1 = new Chart(document.getElementById('caiCanvas'), {
+    type: 'line', plugins: [makeCaiCross()],
+    data: { labels: dateView, datasets: [
+      { type:'line', label:'3σ上軌',  data:u3View,    borderColor:'#c0252d',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false },
+      { type:'line', label:'2.5σ上軌',data:u25View,   borderColor:'rgba(192,37,45,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3] },
+      { type:'line', label:'收市價',  data:closeView, borderColor:'#378ADD',            borderWidth:2,   pointRadius:0, fill:false,  tension:0.3, spanGaps:true  },
+      { type:'line', label:'2.5σ下軌',data:l25View,   borderColor:'rgba(26,122,60,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3] },
+      { type:'line', label:'3σ下軌',  data:l3View,    borderColor:'#1a7a3c',            borderWidth:1.5, pointRadius:0, fill:'-4',   tension:0.3, spanGaps:false, backgroundColor:'rgba(192,37,45,0.04)' },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false, animation:false,
+      plugins: { legend:{display:false}, tooltip:{enabled:false} },
+      scales: {
+        x: xHide,
+        y: { position:'left', afterFit:aFit, display:true, ticks:{font:{size:10},color:'#888'}, grid:{color:gc}, border:{display:false} },
+        yR:{ position:'right', afterFit:aFitR, display:true, ticks:{display:false}, grid:{display:false}, border:{display:false} },
+      }
+    }
+  });
+
+  // High/Low − 5-day MA oscillator
+  // 5-day MA of close, then high - MA (above zero) and low - MA (below zero)
+  const hlOscHigh = [], hlOscLow = [];
+  for (let i = 0; i < closeView.length; i++) {
+    const win = closeView.slice(Math.max(0, i - 4), i + 1);
+    const ma5  = win.reduce((a, b) => a + b, 0) / win.length;
+    hlOscHigh.push(i < closeView.length ? +(highArr.slice(vi)[i] - ma5).toFixed(3) : null);
+    hlOscLow.push( i < closeView.length ? +(lowArr.slice(vi)[i]  - ma5).toFixed(3) : null);
+  }
+  const maxOsc = Math.max(...hlOscHigh.filter(v=>v!=null).map(Math.abs),
+                           ...hlOscLow.filter(v=>v!=null).map(Math.abs), 0.01);
+
+  const c2 = new Chart(document.getElementById('caiVol'), {
+    type: 'bar', plugins: [makeCaiCross()],
+    data: { labels: dateView, datasets: [
+      { label:'高 − 5日均', data:hlOscHigh,
+        backgroundColor: hlOscHigh.map(v => v == null ? 'transparent' : v >= 0 ? 'rgba(192,37,45,0.55)' : 'rgba(42,157,143,0.35)'),
+        borderWidth:0 },
+      { label:'低 − 5日均', data:hlOscLow,
+        backgroundColor: hlOscLow.map(v => v == null ? 'transparent' : v >= 0 ? 'rgba(192,37,45,0.35)' : 'rgba(42,157,143,0.55)'),
+        borderWidth:0 },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false, animation:false,
+      plugins: { legend:{display:false}, tooltip:{enabled:false} },
+      scales: {
+        x: xShow,
+        y: { position:'left', afterFit:aFit, display:true,
+          min:-maxOsc*1.5, max:maxOsc*1.5,
+          ticks:{ font:{size:9}, color:'#888', maxTicksLimit:3,
+            callback: v => v === 0 ? '0' : v > 0 ? '+'+v.toFixed(1) : v.toFixed(1) },
+          grid:{ color: ctx => ctx.tick.value === 0 ? 'rgba(128,128,128,0.3)' : gc },
+          border:{display:false} },
+        yR:{ position:'right', afterFit:aFitR, display:true, ticks:{display:false}, grid:{display:false}, border:{display:false} },
+      }
+    }
+  });
+
+  caiCharts = [c1, c2];
+  bindCaiHover(c1);
+  bindCaiHover(c2);
 }
 
 function calcRsi(data, period=14) {
@@ -4605,260 +4781,6 @@ function calcEma(data, period) {
   return result;
 }
 
-async function drawCai() {
-  const code   = caiGetSelectedCode();
-  const period = parseInt(document.getElementById('cai-period').value);
-  const mult   = parseFloat(document.getElementById('cai-mult').value) || 2;
-
-  const stock = allStocks.find(s => s.code === code) || allStocks[0];
-  if (!stock) return;
-  const code5 = norm5(stock.code);
-
-  const year = new Date().getFullYear();
-  if (!tvCache[year]) await loadTvYear(year);
-  // Load current + prior year for warmup period
-  const prevYear = year - 1;
-  if (!tvCache[prevYear]) await loadTvYear(prevYear);
-  const byDatePrev = tvCache[prevYear] || {};
-  const byDate     = tvCache[year]     || {};
-  const allDates   = [...new Set([...Object.keys(byDatePrev), ...Object.keys(byDate)])].sort();
-
-  const chartDates=[], closeArr=[], volArr=[];
-  for (const d of allDates) {
-    const rec = byDate[d]?.[code5] || byDatePrev[d]?.[code5];
-    if (rec && rec.close > 0) { chartDates.push(d); closeArr.push(rec.close); volArr.push(rec.vol||0); }
-  }
-
-  if (closeArr.length < period) return;
-
-  // Only show current year dates on chart, but use full history for warmup
-  const curYearStr = String(year);
-  const viewStart  = chartDates.findIndex(d => d.startsWith(curYearStr));
-  const viewIdx    = viewStart >= 0 ? viewStart : 0;
-
-  // Update title
-  const titleEl = document.getElementById('cai-title');
-  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 保力加通道 N=${period} K=${mult}`;
-
-  // Bollinger bands (computed on full history, sliced for display)
-  const bb = caiChannel(closeArr, period, mult);
-  const upper = bb.map(v => v ? +v.upper.toFixed(2) : null).slice(viewIdx);
-  const lower = bb.map(v => v ? +v.lower.toFixed(2) : null).slice(viewIdx);
-  const mid   = bb.map(v => v ? +v.ma.toFixed(2)    : null).slice(viewIdx);
-  const closeView = closeArr.slice(viewIdx);
-  const volView   = volArr.slice(viewIdx);
-  const dateView  = chartDates.slice(viewIdx);
-
-  // Squeeze zones (bandwidth bottom 25%)
-  const bwFull   = bb.map(v => v ? +((v.upper-v.lower)/v.ma*100).toFixed(2) : null);
-  const bwArr    = bwFull.slice(viewIdx);
-  const validBw  = bwArr.filter(v=>v!=null).sort((a,b)=>a-b);
-  const bwThresh = validBw[Math.floor(validBw.length*0.25)]||0;
-
-  // RSI + MACD (computed on full history, sliced for display)
-  const rsiFull   = calcRsi(closeArr);
-  const rsiArr    = rsiFull.slice(viewIdx);
-  const ema12     = calcEma(closeArr, 12);
-  const ema26     = calcEma(closeArr, 26);
-  const macdFull  = closeArr.map((_,i) => ema12[i]!=null&&ema26[i]!=null ? +(ema12[i]-ema26[i]).toFixed(4) : null);
-  const sigFull   = calcEma(macdFull, 9);
-  const macdLine  = macdFull.slice(viewIdx);
-  const sigLine   = sigFull.slice(viewIdx);
-  const histArr   = macdLine.map((v,i) => v!=null&&sigLine[i]!=null ? +(v-sigLine[i]).toFixed(4) : null);
-
-  const gc   = 'rgba(128,128,128,0.08)';
-  const YW   = 52;
-  const N    = dateView.length;
-  const aFit = s => { s.width = YW; };
-  const isDark = matchMedia('(prefers-color-scheme:dark)').matches;
-  let caiActiveIdx = null;
-
-  caiDestroyCharts();
-
-  // Squeeze background plugin
-  const sqzPlugin = {
-    beforeDraw(chart) {
-      const {ctx, chartArea, scales:{x}} = chart; if(!x||!chartArea) return;
-      let inSq=false, startX=0;
-      bwArr.forEach((v,i) => {
-        const inZ = v!=null && v<bwThresh;
-        if (inZ&&!inSq) { startX=x.getPixelForValue(i); inSq=true; }
-        if (!inZ&&inSq) { ctx.save(); ctx.fillStyle='rgba(255,200,0,0.1)'; ctx.fillRect(startX,chartArea.top,x.getPixelForValue(i)-startX,chartArea.bottom-chartArea.top); ctx.restore(); inSq=false; }
-      });
-      if (inSq) { ctx.save(); ctx.fillStyle='rgba(255,200,0,0.1)'; ctx.fillRect(startX,chartArea.top,x.right-startX,chartArea.bottom-chartArea.top); ctx.restore(); }
-    }
-  };
-
-  const makeCaiCross = () => ({
-    afterDraw(chart) {
-      if (caiActiveIdx == null) return;
-      const {ctx, canvas, chartArea, scales:{x}} = chart;
-      if (!x || !chartArea) return;
-      // Use label-based lookup so panels with different lengths (e.g. RSI warmup)
-      // draw the crosshair at the correct date position instead of a stale index
-      const label = dateView[caiActiveIdx];
-      const labelIdx = chart.data.labels ? chart.data.labels.indexOf(label) : -1;
-      if (labelIdx === -1) return;
-      const xp = x.getPixelForValue(labelIdx);
-      if (xp < chartArea.left || xp > chartArea.right) return;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, canvas.width, canvas.height);
-      ctx.clip();
-      ctx.setLineDash([4,3]);
-      ctx.strokeStyle = '#c0252d';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(xp, chartArea.top);
-      ctx.lineTo(xp, chartArea.bottom);
-      ctx.stroke();
-      ctx.restore();
-    }
-  });
-
-  const refPlugin = {
-    afterDraw(chart) {
-      const refs = chart.config._refs||[]; if(!refs.length) return;
-      const {ctx, chartArea, scales:{x,y}} = chart; if(!x||!chartArea) return;
-      const yScale = y || Object.values(chart.scales).find(s=>s.axis==='y');
-      if (!yScale) return;
-      refs.forEach(({v,color,dash}) => {
-        const yp=yScale.getPixelForValue(v); if(yp<chartArea.top||yp>chartArea.bottom) return;
-        ctx.save(); ctx.setLineDash(dash||[3,3]); ctx.strokeStyle=color||'rgba(128,128,128,0.35)'; ctx.lineWidth=1;
-        ctx.beginPath(); ctx.moveTo(chartArea.left,yp); ctx.lineTo(chartArea.right,yp); ctx.stroke(); ctx.restore();
-      });
-    }
-  };
-
-  function getIdxCai(chart, e) {
-    const rect=chart.canvas.getBoundingClientRect(), xPx=e.clientX-rect.left;
-    const xs=chart.scales.x; if(!xs) return null;
-    let best=null, minD=Infinity;
-    for (let i=0;i<N;i++) { const d=Math.abs(xs.getPixelForValue(i)-xPx); if(d<minD){minD=d;best=i;} }
-    return minD<40?best:null;
-  }
-
-  function showCaiTip(e, idx) {
-    const tip=document.getElementById('cai-tip'), wrap=document.getElementById('cai-charts-wrap');
-    if(!tip||!wrap){return;}
-    if(idx===null){tip.style.display='none';return;}
-    const c=closeView[idx], u=upper[idx], l=lower[idx], r=rsiArr[idx], m=macdLine[idx], s=sigLine[idx], h=histArr[idx];
-    const vol=volView[idx];
-    const hc=h!=null?(h>=0?'#1a7a3c':'#c0252d'):'#888';
-    const row=(lbl,val,col)=>`<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
-    tip.innerHTML =
-      `<b style="color:#bbb">${dateView[idx]}</b><br>`+
-      row('收市', c?.toFixed(2), '#378ADD')+
-      row('上軌', u?.toFixed(2), '#c0252d')+row('下軌', l?.toFixed(2), '#1a7a3c')+
-      row('RSI',  r?.toFixed(1), '#534AB7')+
-      row('MACD', m?.toFixed(3), '#378ADD')+row('Signal', s?.toFixed(3), '#c0252d')+
-      `<span style="color:${hc}">柱狀</span>　${h?.toFixed(3)??'—'}<br>`+
-      row('成交量', vol?((vol/1e6).toFixed(1)+'M'):'—', '#888');
-    tip.style.display='block';
-    const wr=wrap.getBoundingClientRect();
-    const cx=e.clientX-wr.left;
-    const tipW=170;
-    const tx=cx > wr.width/2 ? cx-tipW-14 : cx+14;
-    tip.style.left=Math.max(0,Math.min(tx, wr.width-tipW))+'px';
-    tip.style.top =Math.max(e.clientY-wr.top-120, 4)+'px';
-  }
-
-  function bindCaiHover(chart) {
-    const cvs = chart.canvas;
-    if (cvs._caiMove)  cvs.removeEventListener('mousemove',  cvs._caiMove);
-    if (cvs._caiLeave) cvs.removeEventListener('mouseleave', cvs._caiLeave);
-    cvs._caiMove = e => {
-      // Always use caiCharts[0] (price chart) as reference — RSI/MACD panels have
-      // fewer points due to warmup periods, so their x-scale gives different indices.
-      const refChart = caiCharts[0] || chart;
-      caiActiveIdx = getIdxCai(refChart, e);
-      caiCharts.forEach(c => c.draw());
-      showCaiTip(e, caiActiveIdx);
-    };
-    cvs._caiLeave = () => {
-      caiActiveIdx = null;
-      caiCharts.forEach(c => c.draw());
-      const t = document.getElementById('cai-tip'); if(t) t.style.display='none';
-    };
-    cvs.addEventListener('mousemove',  cvs._caiMove);
-    cvs.addEventListener('mouseleave', cvs._caiLeave);
-  }
-
-  const maxVol = Math.max(...volView.filter(v=>v>0), 1);
-  const xHide  = {offset:false, ticks:{display:false},grid:{color:gc},border:{display:false}};
-  const xShow  = {offset:false, ticks:{font:{size:10},color:'#888',maxRotation:0,callback:(v,i)=>i%Math.max(1,Math.floor(N/8))===0?dateView[i].slice(2,10):''},grid:{color:gc},border:{display:false}};
-
-  // Fixed right-axis width to align crosshair across all 3 panels
-  const aFitR = s => { s.width = 32; };  // all right axes same width for crosshair alignment
-
-  const c1 = new Chart(document.getElementById('caiCanvas'), {
-    type:'line', plugins:[sqzPlugin, makeCaiCross()],
-    data:{labels:dateView, datasets:[
-      {type:'bar',  label:'成交量',   data:volView,  backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yVol',order:5},
-      {type:'line', label:'上軌',     data:upper,    borderColor:'#c0252d',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yPrice',order:2},
-      {type:'line', label:'中軌',     data:mid,      borderColor:'rgba(128,128,128,0.55)',borderWidth:1,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yPrice',order:3},
-      {type:'line', label:'下軌',     data:lower,    borderColor:'#1a7a3c',borderWidth:1.5,pointRadius:0,fill:'-2',backgroundColor:'rgba(192,37,45,0.05)',tension:0.3,spanGaps:false,yAxisID:'yPrice',order:2},
-      {type:'line', label:'收市價',   data:closeView,borderColor:'#378ADD',borderWidth:2,pointRadius:0,fill:false,tension:0.3,spanGaps:true,yAxisID:'yPrice',order:1},
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{x:xHide,
-        yPrice:{position:'left',  afterFit:aFit, display:true, ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
-        yVol:  {position:'right', afterFit:aFitR, display:true, min:0, max:maxVol*4, ticks:{display:false},grid:{display:false},border:{display:false}},
-      }}
-  });
-
-  const c2 = new Chart(document.getElementById('caiRsi'), {
-    type:'line', plugins:[makeCaiCross(), refPlugin],
-    _refs:[{v:70,color:'rgba(192,37,45,0.4)',dash:[3,3]},{v:50,color:'rgba(128,128,128,0.3)',dash:[2,4]},{v:30,color:'rgba(26,122,60,0.4)',dash:[3,3]}],
-    data:{labels:dateView, datasets:[{
-      label:'RSI', data:rsiArr, borderColor:'#534AB7', borderWidth:1.5, pointRadius:0, fill:false, tension:0.3, spanGaps:false,
-    }]},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{x:xHide,
-        y:{afterFit:aFit, min:0, max:100,
-          afterBuildTicks: axis => { axis.ticks = [0,30,50,70,100].map(v=>({value:v})); },
-          ticks:{font:{size:10},color:'#888',callback:v=>[30,50,70].includes(+v)?String(+v):''},
-          grid:{color:gc},border:{display:false}},
-        yDummy:{position:'right', afterFit:aFitR, display:true, ticks:{display:false}, grid:{display:false}, border:{display:false}},
-      }}
-  });
-
-  // MACD: lines on left axis, histogram on right axis pinned to bottom
-  const maxHist = Math.max(...histArr.filter(v=>v!=null).map(Math.abs), 0.001);
-  const c3 = new Chart(document.getElementById('caiMacd'), {
-    type:'line', plugins:[makeCaiCross()],
-    data:{labels:dateView, datasets:[
-      {type:'bar',  label:'柱狀',  data:histArr,  backgroundColor:histArr.map(v=>v==null?'transparent':v>=0?'rgba(26,122,60,0.6)':'rgba(192,37,45,0.6)'),borderWidth:0,yAxisID:'yHist',order:3},
-      {type:'line', label:'MACD',  data:macdLine, borderColor:'#378ADD',borderWidth:1.5,pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yMacd',order:1},
-      {type:'line', label:'Signal',data:sigLine,  borderColor:'#c0252d',borderWidth:1.5,borderDash:[4,3],pointRadius:0,fill:false,tension:0.3,spanGaps:false,yAxisID:'yMacd',order:2},
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{display:false},tooltip:{enabled:false}},
-      scales:{
-        x:xShow,
-        yMacd:{position:'left',  afterFit:aFit,  display:true, ticks:{callback:v=>v.toFixed(2),font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
-        yHist:{position:'right', afterFit:s=>{s.width=32;}, display:true, min:-maxHist*0.5, max:maxHist*8,
-          ticks:{font:{size:9},color:'rgba(128,128,128,0.6)',
-            callback:v => { const a=Math.abs(v); return a<0.001?'0': a>=1?v.toFixed(1):v.toFixed(2); },
-            maxTicksLimit: 4,
-          },
-          grid:{display:false},border:{display:false}},
-      }}
-  });
-
-  caiCharts = [c1, c2, c3];
-  bindCaiHover(c1); bindCaiHover(c2); bindCaiHover(c3);
-
-  // ATR computed but not rendered (available for future use)
-  const atrHistory = computeATR(
-    allDates.map(d=>(byDate[d]?.[code5]||byDatePrev[d]?.[code5])?.high||0),
-    allDates.map(d=>(byDate[d]?.[code5]||byDatePrev[d]?.[code5])?.low||0),
-    closeArr, 24
-  );
-  void atrHistory;
-}
 
 // ── SbChart hover tooltip ─────────────────────────────────────────────────────
 let _sbChartTip = null;
