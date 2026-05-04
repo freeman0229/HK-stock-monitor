@@ -3651,6 +3651,20 @@ function sdwPopulateDates() {
   sdwCurDate = sdwDates[sdwDates.length - 1];   // default = latest
 }
 
+// ── SDW helper: check if an entry has non-empty participants ─────────────────
+// Used everywhere sdwData entries are read to skip empty p:[] records
+// (e.g. 03750 post-placement where HKEX omits the pct column)
+function sdwEntryHasHolders(entry) {
+  if (!entry) return false;
+  const p = Array.isArray(entry) ? entry : (entry.p || []);
+  return p.length > 0;
+}
+
+// Find most recent date with non-empty holders for a given code
+function sdwLatestDateForCode(code) {
+  return [...sdwDates].reverse().find(d => sdwEntryHasHolders((sdwData[d]||{})[code]));
+}
+
 // ── Summary cards: scan latest date across ALL tracked stocks ───────────────
 function sdwComputeSummary() {
   if (!sdwDates.length) return;
@@ -3683,8 +3697,8 @@ function sdwComputeSummary() {
     : allSdwCodes;
 
   codesForSummary.forEach(code => {
-    // Use most recent date that has data for this stock
-    const latestStockDs = sdwDates.slice().reverse().find(d => (sdwData[d]||{})[code]);
+    // Use most recent date that has non-empty holders for this stock
+    const latestStockDs = sdwLatestDateForCode(code);
     if (!latestStockDs) return;
     const rawEntry = sdwData[latestStockDs][code];
     const holders  = rawEntry ? (Array.isArray(rawEntry) ? rawEntry : (rawEntry.p || [])) : [];
@@ -3703,8 +3717,8 @@ function sdwComputeSummary() {
     const conc5  = totalSh > 0 ? top5sh / totalSh * 100 : 0;
     if (conc5 > maxConc) { maxConc = conc5; maxConcCode = code; maxConcName = displayName; }
 
-    // WoW mover: find two most recent dates with data for this specific stock
-    const stockDates = sdwDates.filter(d => (sdwData[d]||{})[code]).reverse(); // newest first
+    // WoW mover: find two most recent dates with non-empty holders for this stock
+    const stockDates = sdwDates.filter(d => sdwEntryHasHolders((sdwData[d]||{})[code])).reverse();
     if (stockDates.length >= 2) {
       const prevRaw     = sdwData[stockDates[1]][code];
       const prevHolders = Array.isArray(prevRaw) ? prevRaw : (prevRaw.p || []);
@@ -3772,7 +3786,7 @@ function sdwBuildDropdown(query) {
   const _sdwRec  = inSdw ? (() => {
     for (const ds of [...sdwDates].reverse()) {
       const r = (sdwData[ds]||{})[code];
-      if (r) return Array.isArray(r) ? r : (r.p || []);
+      if (r && sdwEntryHasHolders(r)) return Array.isArray(r) ? r : (r.p || []);
     }
     return null;
   })() : null;
@@ -3815,16 +3829,16 @@ async function sdwSelectCode(code) {
 function renderSdwPanel() {
   if (!sdwLoaded || !sdwCurCode) return;
   const _selDs  = document.getElementById('sdw-date-sel').value || sdwCurDate;
-  // Fall back to most recent date that has data for this stock
-  const ds      = (sdwData[_selDs]||{})[sdwCurCode]
+  // Fall back to most recent date that has non-empty holders for this stock
+  const ds      = sdwEntryHasHolders((sdwData[_selDs]||{})[sdwCurCode])
     ? _selDs
-    : ([...sdwDates].reverse().find(d => (sdwData[d]||{})[sdwCurCode]) || _selDs);
+    : (sdwLatestDateForCode(sdwCurCode) || _selDs);
   const topN    = sdwTopN || 5;
   const raw = (sdwData[ds] || {})[sdwCurCode];
   const holders = raw ? (Array.isArray(raw) ? raw : (raw.p || [])) : [];
 
-  // Find prev date with data for this code
-  const prevDs  = [...sdwDates].reverse().find(d => d < ds && (sdwData[d]||{})[sdwCurCode]);
+  // Find prev date with non-empty holders for this code
+  const prevDs  = [...sdwDates].reverse().find(d => d < ds && sdwEntryHasHolders((sdwData[d]||{})[sdwCurCode]));
   const _prevRaw = prevDs ? ((sdwData[prevDs]||{})[sdwCurCode]) : null;
   const prevHolders = _prevRaw ? (Array.isArray(_prevRaw) ? _prevRaw : (_prevRaw.p || [])) : [];
   const prevMap = {};
@@ -5860,7 +5874,7 @@ async function stkBuildSeries(code5, fromDs, toDs) {
 
     // top10_pct — only show on exact SDW Friday dates (weekly data)
     const sdwEntry = sdwByDate[ds];  // exact date match only
-    if (sdwEntry && sdwEntry.total_sh > 0) {
+    if (sdwEntry && sdwEntry.total_sh > 0 && sdwEntryHasHolders(sdwEntry)) {
       const holders = sdwEntry.p || [];
       const top10sh = holders.slice(0,10).reduce((s,h)=>s+(h.sh||0),0);
       top10Arr.push(+(top10sh / sdwEntry.total_sh * 100).toFixed(2));
