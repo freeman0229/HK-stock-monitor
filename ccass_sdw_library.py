@@ -1105,11 +1105,14 @@ def _parse_response(html: str, code5: str, date_str: str) -> HoldingEntry:
 
     for tr in soup.find_all("tr"):
         tds     = [td.get_text(strip=True) for td in tr.find_all("td")]
-        if len(tds) < 5:
+        # Table normally has 5 cols: pid, name, addr, sh, pct
+        # When HKEX omits pct column (e.g. post-placement before issued_sh update)
+        # table has only 4 cols: pid, name, addr, sh — handle both cases
+        if len(tds) < 4:
             continue
         pid_raw = _clean_cell(tds[0])
         sh_raw  = _clean_cell(tds[3]).replace(",", "")
-        pct_raw = _clean_cell(tds[4]).replace("%", "").strip()
+        pct_raw = _clean_cell(tds[4]).replace("%", "").strip() if len(tds) >= 5 else ""
         if not pid_raw or not sh_raw.isdigit():
             continue
         if pid_raw.lower() in ("參與者編號", "id", "participant id"):
