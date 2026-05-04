@@ -1,0 +1,171 @@
+name: Fix Empty SDW Records (one-off)
+# One-off workflow: finds all SDW records where total_sh > 0 but p:[] (no participants),
+# deletes them so they get re-fetched, then runs a full backfill for the affected dates.
+#
+# SAFE: only touches records where total_sh > 0 AND no rows exist in holdings table.
+# Any stock with even 1 holder row is completely untouched.
+#
+# Usage: Actions → Fix Empty SDW Records → Run workflow
+# Delete this file after successful run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — show what would be deleted without deleting'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  fix-empty-sdw:
+    name: Clean empty SDW records and re-fetch
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    concurrency:
+      group: sdw-db-lock
+      cancel-in-progress: false
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+
+      - run: pip install -r requirements.txt
+
+      - run: playwright install chromium
+
+      # ── Step 1: Download production DB from R2 ────────────────────────────────
+      - name: Download DB from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          { echo "ERROR: DB download failed — aborting"; exit 1; }
+
+      # ── Step 2: Inspect and clean empty records ───────────────────────────────
+      - name: Find and delete empty SDW records
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          python3 - <<'EOF'
+          import sqlite3, os, json
+
+          dry_run = os.environ.get("DRY_RUN", "false").lower() == "true"
+          conn = sqlite3.connect("ccass_sdw.db")
+
+          # Find metadata rows where total_sh > 0 but no participant rows exist in holdings
+          empty = conn.execute("""
+              SELECT m.code, m.date, m.total_sh
+              FROM metadata m
+              WHERE m.total_sh > 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM holdings h
+                  WHERE h.code = m.code AND h.date = m.date
+              )
+              ORDER BY m.date DESC, m.total_sh DESC
+          """).fetchall()
+
+          print(f"Found {len(empty)} empty records (total_sh > 0, no participant rows):")
+          for code, date, total_sh in empty:
+              print(f"  {code}  {date}  total_sh={total_sh:,}")
+
+          # Save affected dates to file for Step 3 to use
+          affected_dates = sorted(set(r[1] for r in empty))
+          with open("affected_dates.json", "w") as f:
+              json.dump(affected_dates, f)
+          print(f"\nAffected dates: {affected_dates}")
+
+          if dry_run:
+              print("\nDRY RUN — no changes made.")
+          else:
+              if empty:
+                  codes_dates = [(r[0], r[1]) for r in empty]
+                  conn.executemany(
+                      "DELETE FROM metadata WHERE code = ? AND date = ?",
+                      codes_dates
+                  )
+                  conn.commit()
+                  print(f"\nDeleted {len(empty)} empty metadata records.")
+              else:
+                  print("\nNothing to delete.")
+
+          conn.close()
+          EOF
+
+      # ── Step 3: Re-fetch all affected dates (skips already-complete stocks) ───
+      - name: Re-fetch affected dates
+        if: ${{ inputs.dry_run == 'false' }}
+        env:
+          SDW_WORKERS: "3"
+        run: |
+          python3 - <<'EOF'
+          import json, subprocess, sys, os
+
+          if not os.path.exists("affected_dates.json"):
+              print("No affected_dates.json found — nothing to re-fetch.")
+              sys.exit(0)
+
+          with open("affected_dates.json") as f:
+              dates = json.load(f)
+
+          if not dates:
+              print("No affected dates — nothing to re-fetch.")
+              sys.exit(0)
+
+          print(f"Re-fetching {len(dates)} affected date(s): {dates}")
+          for d in dates:
+              print(f"\nRunning backfill for {d}...")
+              result = subprocess.run(
+                  ["python", "ccass_sdw_library.py", "--date", d],
+                  capture_output=False
+              )
+              if result.returncode != 0:
+                  print(f"WARNING: backfill failed for {d}")
+          EOF
+
+      # ── Step 4: Upload fixed DB to R2 ─────────────────────────────────────────
+      - name: Upload DB to R2
+        if: ${{ inputs.dry_run == 'false' }}
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          { echo "ERROR: DB upload failed"; exit 1; }
+
+      # ── Step 5: Export updated SDW chart files ────────────────────────────────
+      - name: Verify DB before export
+        if: ${{ inputs.dry_run == 'false' }}
+        run: |
+          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
+          echo "DB has $COUNT distinct dates in holdings"
+          [ "$COUNT" -gt 1 ] || \
+            { echo "ERROR: DB has only $COUNT date — aborting export"; exit 1; }
+
+      - name: Export SDW chart files
+        if: ${{ inputs.dry_run == 'false' }}
+        run: python ccass_sdw_library.py --export-charts
+
+      - name: Upload SDW chart files to R2
+        if: ${{ inputs.dry_run == 'false' }}
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 sync . s3://hk-stock-monitor/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
+            --exclude "*" --include "sdw_*.json" \
+            --no-progress
