@@ -105,11 +105,14 @@ jobs:
       - run: pip install -r requirements.txt
         # Note: playwright not needed here — sc_top10 + ccass run in early-fetch job at 19:00
 
-      - name: Fetch today's turnover + short selling data
+      - name: Fetch today's turnover data
         run: python build_turnover.py
-        # build_turnover.py parses both the quotation table AND adj_short section
-        # from the same HKEX page, writing turnover_{Y}.json AND short_{Y}.json.
-        # build_short.py is redundant here — removed.
+        # Parses HKEX quotation file (d{YYMMDD}c.htm top section) → writes turnover_{Y}.json
+
+      - name: Fetch today's short selling data
+        run: python build_short.py
+        # Parses short sell section from next trading day's file → writes short_{Y}.json
+        # Short data has 1-day lag by design: D's short is published in D+1's file.
 
       - name: Download SDW DB from R2
         env:
