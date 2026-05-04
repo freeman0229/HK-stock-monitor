@@ -1,0 +1,6 @@
+data.json 
+rank_history.json 
+ccass_sdw.db 
+__pycache__/ 
+ccass_cache/ 
+"*.pyc" 
