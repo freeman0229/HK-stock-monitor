@@ -849,6 +849,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn active" data-tab="bshui">北水追蹤</button>
   <button class="tab-btn" data-tab="short">累積沽空</button>
   <button class="tab-btn" data-tab="ccass">大戶持倉</button>
+  <button class="tab-btn" data-tab="signal">異常信號</button>
   <button class="tab-btn" data-tab="cai">保力加通道</button>
   <button class="tab-btn" data-tab="stock">個股綜合分析</button>
   <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
@@ -1211,6 +1212,104 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
 </div>
 
+<!-- ═══ Panel: 異常信號 ══════════════════════════════════════════════════════ -->
+<div class="panel" id="panel-signal">
+
+  <!-- Summary cards -->
+  <div class="summary-bar" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+    <div class="sum-card">
+      <div class="sum-label">🚨 不尋常沽空</div>
+      <div class="sum-val up" id="sig-short-count">--</div>
+      <div class="sum-sub">隻</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">🏦 大戶增持</div>
+      <div class="sum-val gold" id="sig-dahu-count">--</div>
+      <div class="sum-sub">隻</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">📉 空頭平倉</div>
+      <div class="sum-val dn" id="sig-cover-count">--</div>
+      <div class="sum-sub">隻</div>
+    </div>
+    <div class="sum-card">
+      <div class="sum-label">數據日期</div>
+      <div class="sum-val" id="sig-date" style="font-size:14px;font-weight:600">--</div>
+      <div class="sum-sub">最後更新</div>
+    </div>
+  </div>
+
+  <!-- Section 1: 不尋常沽空 -->
+  <div class="sec-head">
+    <div class="sec-title">🚨 不尋常沽空</div>
+    <div class="sec-sub">沽空比率超出該股型態上限且成交量異常 ｜ 按成交額排序</div>
+  </div>
+  <div class="tbl-wrap" style="margin-bottom:20px">
+    <table id="tbl-sig-short">
+      <thead>
+        <tr>
+          <th class="rank">#</th>
+          <th>股票</th>
+          <th class="num-r">成交額</th>
+          <th class="num-r" title="今日沽空佔成交股數%">今日沽空率</th>
+          <th class="num-r" title="今日沽空率 − 24日均值">偏離</th>
+          <th class="num-r" title="今日成交量 ÷ 24日均量">成交量倍數</th>
+        </tr>
+      </thead>
+      <tbody id="body-sig-short">
+        <tr><td colspan="6"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Section 2: 大戶增持 -->
+  <div class="sec-head">
+    <div class="sec-title">🏦 大戶增持</div>
+    <div class="sec-sub">成交量及成交額同步異常放大且機構持倉增加 ｜ 按成交額排序</div>
+  </div>
+  <div class="tbl-wrap" style="margin-bottom:20px">
+    <table id="tbl-sig-dahu">
+      <thead>
+        <tr>
+          <th class="rank">#</th>
+          <th>股票</th>
+          <th class="num-r">成交額</th>
+          <th class="num-r" title="今日成交量 ÷ 24日均量">成交量倍數</th>
+          <th class="num-r" title="今日成交額 ÷ 24日均成交額">成交額倍數</th>
+          <th class="num-r" title="前10大機構持股% 較上週變動">增持%</th>
+        </tr>
+      </thead>
+      <tbody id="body-sig-dahu">
+        <tr><td colspan="6"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Section 3: 空頭平倉 -->
+  <div class="sec-head">
+    <div class="sec-title">📉 空頭平倉</div>
+    <div class="sec-sub">沽空比率大幅低於均值且成交量放大 ｜ 按成交額排序</div>
+  </div>
+  <div class="tbl-wrap" style="margin-bottom:20px">
+    <table id="tbl-sig-cover">
+      <thead>
+        <tr>
+          <th class="rank">#</th>
+          <th>股票</th>
+          <th class="num-r">成交額</th>
+          <th class="num-r" title="今日沽空佔成交股數%">今日沽空率</th>
+          <th class="num-r" title="24日平均沽空率">均值</th>
+          <th class="num-r" title="均值 − 今日沽空率（正數 = 大幅回落）">回落幅度</th>
+        </tr>
+      </thead>
+      <tbody id="body-sig-cover">
+        <tr><td colspan="6"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
 <!-- ═══ Panel 4: 蔡氏通道 ════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-cai">
   <div class="summary-bar">
@@ -1449,6 +1548,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'hsi') initHsiPanel();
+    if (btn.dataset.tab === 'signal' && allStocks.length) renderSignalPanel();
     if (btn.dataset.tab === 'cai' && allStocks.length) {
       drawCai();
       updateCaiCards();
@@ -1785,6 +1885,8 @@ function renderAll() {
   // If it was already initialised, refresh the summary cards with latest allStocks names
   if (sdwLoaded) sdwComputeSummary();
   renderCaiStockSelect();
+  // 異常信號 — always re-render when data refreshes so counts stay current
+  renderSignalPanel();
   updateTicker();
 }
 
@@ -4905,10 +5007,118 @@ window.addEventListener('resize', () => {
     if (is('hsi') && hsiData)   renderHsiPanel();
     if (is('bshui')) renderBshui();
     if (is('short')) { drawShortRiskMap(allStocks); drawSfcChart(); renderSqueezeTop10(allStocks); }
-    if (is('ccass')) renderSdwPanel(); // redraws sdwCanvas + sdwGroupCanvas
+    if (is('ccass')) renderSdwPanel();
+    if (is('signal')) renderSignalPanel();
     if (is('stock') && stkCode) stkRenderCharts();
   }, 250);
 });
+
+// ══ 異常信號 ══════════════════════════════════════════════════════════════════
+// Renders 3 signal tables — only stocks where the exact insight badge fired.
+// All data comes from allStocks (already in memory from data.json).
+// SHORT_THRESHOLDS / shortHi() are defined in the 累積沽空 section above.
+
+function renderSignalPanel() {
+  if (!allStocks.length) return;
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const sigEl = id => document.getElementById(id);
+
+  // Update date card
+  const tradingDate = allStocks[0]?.ccass_trade_date || '';
+  if (sigEl('sig-date')) sigEl('sig-date').textContent = tradingDate || '--';
+
+  // ── Section 1: 不尋常沽空 ──────────────────────────────────────────────────
+  const shortStocks = allStocks
+    .filter(s => s.insight === '🚨 不尋常沽空')
+    .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
+    .slice(0, 10);
+
+  sigEl('sig-short-count').textContent = shortStocks.length || '0';
+
+  if (!shortStocks.length) {
+    sigEl('body-sig-short').innerHTML =
+      '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">今日無不尋常沽空信號</td></tr>';
+  } else {
+    sigEl('body-sig-short').innerHTML = shortStocks.map((s, i) => {
+      const hi      = shortHi(s);
+      const srClass = s.short_ratio > hi ? 'up-txt' : '';
+      const dev     = s.short_ratio - (s.short_avg || 0);
+      const devStr  = s.short_avg > 0 ? (dev >= 0 ? '+' : '') + dev.toFixed(2) + 'pp' : '—';
+      const devClass= dev > 0 ? 'up-txt' : dev < 0 ? 'dn-txt' : '';
+      const vrStr   = s.vol_ratio > 0 ? s.vol_ratio.toFixed(2) + 'x' : '—';
+      const vrClass = s.vol_ratio >= 2.5 ? 'up-txt' : s.vol_ratio >= 2.0 ? 'conc-high' : s.vol_ratio >= 1.5 ? 'conc-elevated' : '';
+      return `<tr>
+        <td class="rank">${i + 1}</td>
+        <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
+        <td class="num-r">${fmtM(s.turnover)}</td>
+        <td class="num-r ${srClass}">${fmtPct(s.short_ratio)}</td>
+        <td class="num-r ${devClass}">${devStr}</td>
+        <td class="num-r ${vrClass}">${vrStr}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── Section 2: 大戶增持 ────────────────────────────────────────────────────
+  const dahuStocks = allStocks
+    .filter(s => s.insight === '🏦 大戶增持')
+    .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
+    .slice(0, 10);
+
+  sigEl('sig-dahu-count').textContent = dahuStocks.length || '0';
+
+  if (!dahuStocks.length) {
+    sigEl('body-sig-dahu').innerHTML =
+      '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">今日無大戶增持信號</td></tr>';
+  } else {
+    sigEl('body-sig-dahu').innerHTML = dahuStocks.map((s, i) => {
+      const vrStr   = s.vol_ratio  > 0 ? s.vol_ratio.toFixed(2)  + 'x' : '—';
+      const tvrStr  = s.tv_ratio   > 0 ? s.tv_ratio.toFixed(2)   + 'x' : '—';
+      const vrClass = s.vol_ratio >= 2.5 ? 'up-txt' : s.vol_ratio >= 1.8 ? 'conc-elevated' : '';
+      const tvrClass= s.tv_ratio  >= 2.0 ? 'up-txt' : s.tv_ratio  >= 1.5 ? 'conc-elevated' : '';
+      const delta   = s.top10_pct_delta || 0;
+      const deltaStr= delta !== 0 ? (delta > 0 ? '+' : '') + delta.toFixed(2) + 'pp' : '—';
+      const deltaClass = delta >= 0.5 ? 'up-txt' : delta >= 0.2 ? 'conc-elevated' : delta < 0 ? 'dn-txt' : '';
+      return `<tr>
+        <td class="rank">${i + 1}</td>
+        <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
+        <td class="num-r">${fmtM(s.turnover)}</td>
+        <td class="num-r ${vrClass}">${vrStr}</td>
+        <td class="num-r ${tvrClass}">${tvrStr}</td>
+        <td class="num-r ${deltaClass}">${deltaStr}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── Section 3: 空頭平倉 ────────────────────────────────────────────────────
+  const coverStocks = allStocks
+    .filter(s => s.insight === '📉 空頭平倉')
+    .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
+    .slice(0, 10);
+
+  sigEl('sig-cover-count').textContent = coverStocks.length || '0';
+
+  if (!coverStocks.length) {
+    sigEl('body-sig-cover').innerHTML =
+      '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">今日無空頭平倉信號</td></tr>';
+  } else {
+    sigEl('body-sig-cover').innerHTML = coverStocks.map((s, i) => {
+      const drop      = (s.short_avg || 0) - s.short_ratio;
+      const dropStr   = s.short_avg > 0 ? (drop > 0 ? '+' : '') + drop.toFixed(2) + 'pp' : '—';
+      // Significant drop = more than 40% of the average unwound
+      const sigDrop   = s.short_avg > 0 && drop > s.short_avg * 0.40;
+      const dropClass = sigDrop ? 'dn-txt' : drop > 0 ? 'conc-elevated' : '';
+      return `<tr>
+        <td class="rank">${i + 1}</td>
+        <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
+        <td class="num-r">${fmtM(s.turnover)}</td>
+        <td class="num-r">${fmtPct(s.short_ratio)}</td>
+        <td class="num-r">${s.short_avg > 0 ? fmtPct(s.short_avg) : '—'}</td>
+        <td class="num-r ${dropClass}">${dropStr}</td>
+      </tr>`;
+    }).join('');
+  }
+}
 
 // ══ HSI 週線預測通道 ══════════════════════════════════════════════════════════
 let hsiData = null;

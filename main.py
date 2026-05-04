@@ -404,7 +404,7 @@ def classify_insight(stock_type, short_ratio, short_avg,
                      turnover, tv_avg5,
                      pct_delta=0.0,
                      days_to_cover=0.0, vol_ratio=0.0,
-                     tv_ratio=0.0, pct_dev=0.0,
+                     tv_ratio=0.0, top10_pct_delta=0.0,
                      sb_net=0,
                      sfc_week_delta=0.0,
                      delta_turnover_24d=0.0) -> str | None:
@@ -413,12 +413,12 @@ def classify_insight(stock_type, short_ratio, short_avg,
     r_today = turnover / tv_avg5 if tv_avg5 > 0 else 0.0
 
     if days_to_cover > 5 and vol_ratio > 2:                      return "🔥 挾倉風險"
-    if (vol_ratio  >  2.5
+    if (vol_ratio        >  2.5
             and tv_ratio >  2.0
-            and pct_dev  >= 0.5):                                 return "🐉 異常亢奮"
-    if (1.8 <= vol_ratio  <= 2.5
+            and top10_pct_delta >= 0.5):                          return "🐉 異常亢奮"
+    if (1.8 <= vol_ratio        <= 2.5
             and 1.5 <= tv_ratio <= 2.0
-            and 0.2 <= pct_dev  <= 0.5):                          return "🏦 大戶增持"
+            and 0.2 <= top10_pct_delta <= 0.5):                   return "🏦 大戶增持"
     if sb_net > 0 and pct_delta > 0:                             return "🏦 北水增持"
 
     if sfc_week_delta >= sfc_up:                                  return f"⚠️ 沽空倉位急增 +{sfc_week_delta:.1f}pp"
@@ -603,6 +603,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         log.info("SDW total_sh: %d stocks from %s", len(_sdw_total_sh_map), _sdw_total_sh_date)
 
     _sdw_prev_holders_map: dict[str, list] = {}
+    _sdw_prev_date: str | None = None   # safe default — referenced in _sdw_summary below
     if _SDW_AVAILABLE:
         try:
             with _sdw_get_conn(_SDW_DB_PATH) as _sc:
@@ -664,11 +665,14 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                     sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
 
                     sfc_hist = sfc_get_history(code, 5, _latest_sfc_ds)
-                    # Use or 0.0 to guard against explicit None values in history records
-                    sfc_prev_pct    = (sfc_hist[0].get("pct") or 0.0) if sfc_hist else 0.0
-                    sfc_week_delta  = round(sfc_pct - sfc_prev_pct, 4) if sfc_prev_pct > 0 else 0.0
-                    sfc_prev_hkd    = (sfc_hist[0].get("hkd") or 0.0) if sfc_hist else 0.0
-                    sfc_hkd_delta   = int(round(sfc_hkd - sfc_prev_hkd, 0)) if sfc_prev_hkd > 0 else 0
+                    # Recompute prev_pct from raw sh + same total_sh denominator for
+                    # consistency — sfc_hist[0].pct may have been saved by a prior run
+                    # with a different total_sh, making the delta unreliable.
+                    _prev_sh       = (sfc_hist[0].get("sh") or 0) if sfc_hist else 0
+                    sfc_prev_pct   = round(_prev_sh / total_sh * 100, 4) if total_sh > 0 and _prev_sh > 0 else 0.0
+                    sfc_week_delta = round(sfc_pct - sfc_prev_pct, 4) if sfc_prev_pct > 0 else 0.0
+                    sfc_prev_hkd   = (sfc_hist[0].get("hkd") or 0.0) if sfc_hist else 0.0
+                    sfc_hkd_delta  = int(round(sfc_hkd - sfc_prev_hkd, 0)) if sfc_prev_hkd > 0 else 0
 
                     sfc_map[code] = {
                         "sfc_sh":         sfc_sh,
@@ -859,17 +863,19 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         tv_avg5      = sum(tv_avg5_vals) / len(tv_avg5_vals) if tv_avg5_vals else 0.0
 
         vol_hist24  = _vol_hist(code, 24, today_ds)
-        _vol24_days = 1 + min(len(vol_hist24), 23)
-        avg_vol24   = (today_vol + sum(vol_hist24[:23])) / _vol24_days if today_vol > 0 or vol_hist24 else 0
+        # Always include today in the 24-day average; cap history slice at 23 prior days
+        _prior_days  = vol_hist24[:23]
+        _vol24_days  = (1 if today_vol > 0 else 0) + len(_prior_days)
+        avg_vol24    = (today_vol + sum(_prior_days)) / _vol24_days if _vol24_days > 0 else 0
         days_to_cover = round(short_vol_today / avg_vol24, 2) if avg_vol24 > 0 else 0.0
         vol_ratio     = round(today_vol / avg_vol24, 2)       if avg_vol24 > 0 else 0.0
 
         tv_hist24  = _tv_hist(code, 24, today_ds)
         tv_avg24   = sum(tv_hist24) / len(tv_hist24) if tv_hist24 else 0.0
         tv_ratio   = round(turnover / tv_avg24, 2)  if tv_avg24 > 0 else 0.0
-        pct_hist24 = _pct_hist(code, 24, today_ds)
-        pct_avg24_lvl = round(sum(pct_hist24) / len(pct_hist24), 4) if pct_hist24 else 0.0
-        pct_dev    = round(pct_listed - pct_avg24_lvl, 4) if pct_avg24_lvl > 0 else 0.0
+        # pct_dev removed — was based on Stock Connect % (mutualmarket ?t=hk) which is
+        # only meaningful for ~100 SC stocks. classify_insight now uses top10_pct_delta
+        # (CCASS SDW top-10 institutional concentration change) which covers all stocks.
 
         _holders = _sdw_holders_map.get(code) or []
         if not _holders and _SDW_AVAILABLE:
@@ -889,13 +895,15 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             _prev_holders = _prev_snap[0] if _prev_snap else []
         _prev_top10_sh   = sum(h.get('sh', 0) for h in _prev_holders[:10])
         _prev_top10_pct  = round(_prev_top10_sh / _total_sh_conc * 100, 2) if _total_sh_conc > 0 and _prev_top10_sh > 0 else 0.0
-        top10_pct_delta  = round(top10_pct - _prev_top10_pct, 4) if _prev_top10_pct > 0 else 0.0
+        # Use presence of prev holders (not _prev_top10_pct > 0) as guard — avoids
+        # suppressing delta on the first week a stock enters SDW tracking.
+        top10_pct_delta  = round(top10_pct - _prev_top10_pct, 4) if _prev_holders else 0.0
 
         vwap = round(turnover / today_vol, 4) if turnover > 0 and today_vol > 0 else 0.0
 
-        vol_24d          = today_vol + sum(vol_hist24[:23])
+        vol_24d          = today_vol + sum(_prior_days)
         turnover_24d     = round(vol_24d / _total_sh_conc * 100, 4) if _total_sh_conc > 0 and vol_24d > 0 else 0.0
-        vol_24d_prev     = sum(vol_hist24)
+        vol_24d_prev     = sum(vol_hist24)  # all 24 prior-day vols (excludes today) for prev window
         prev_turnover_24d  = round(vol_24d_prev / _total_sh_conc * 100, 4) if _total_sh_conc > 0 and vol_24d_prev > 0 else 0.0
         delta_turnover_24d = round(turnover_24d - prev_turnover_24d, 4)
 
@@ -923,10 +931,10 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             stock_type, short_ratio, short_avg,
             turnover, tv_avg5,
             pct_delta=pct_delta,
-            days_to_cover=days_to_cover if has_history else 0.0,
-            vol_ratio=vol_ratio         if has_history else 0.0,
-            tv_ratio=tv_ratio           if has_history else 0.0,
-            pct_dev=pct_dev             if has_history else 0.0,
+            days_to_cover=days_to_cover    if has_history else 0.0,
+            vol_ratio=vol_ratio            if has_history else 0.0,
+            tv_ratio=tv_ratio              if has_history else 0.0,
+            top10_pct_delta=top10_pct_delta if has_history else 0.0,
             sb_net=sb.get("sb_net", 0),
             sfc_week_delta=sfc_map.get(code, {}).get("sfc_week_delta", 0.0),
             delta_turnover_24d=delta_turnover_24d,
@@ -962,7 +970,6 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             "sfc_pct":        sfc_map.get(code, {}).get("sfc_pct",        0.0),
             "sfc_week_delta": sfc_map.get(code, {}).get("sfc_week_delta", 0.0),
             "tv_ratio":  tv_ratio,
-            "pct_dev":   round(pct_dev, 4),
             "concentration": concentration,
             "top10_sh":         top10_sh,
             "top10_pct":        top10_pct,
@@ -1047,6 +1054,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         for _sc_code, _sc_holders in _sdw_holders_map.items():
             if not _sc_holders: continue
             _sc_total = _sdw_total_sh_map.get(_sc_code, 0)
+            # Resolve name once per code — used by all four summary metrics below
             _sc_name = _uni_names.get(_sc_code, {}).get("zh") or _sc_code
             _sc_top_pct = _sc_holders[0].get("pct", 0.0) if _sc_holders else 0.0
             if _sc_top_pct > _sc_max_pct:
