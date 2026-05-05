@@ -283,7 +283,7 @@ def patch_turnover_2026(universe: list):
 
 if __name__ == "__main__":
     import argparse
-    from ccass_universe import get_universe
+    from ccass_universe import get_universe_codes
 
     ap = argparse.ArgumentParser(description="Yahoo Finance OHLCV library builder")
     ap.add_argument("--year",        type=int)
@@ -293,8 +293,7 @@ if __name__ == "__main__":
     ap.add_argument("--patch-2026",  action="store_true", dest="patch_2026")
     args = ap.parse_args()
 
-    today_str = date.today().strftime("%Y%m%d")
-    universe  = get_universe(today_str)  # returns list of code strings directly
+    universe = list(get_universe_codes())
     log.info("Universe: %d stocks", len(universe))
 
     if args.patch_2026:

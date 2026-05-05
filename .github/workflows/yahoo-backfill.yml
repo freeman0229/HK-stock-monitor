@@ -90,7 +90,7 @@ jobs:
           python3 - <<'EOF'
           import os, subprocess, logging
           from datetime import date
-          from ccass_universe import get_universe
+          from ccass_universe import get_universe_codes
           from yahoo_library import fetch_and_save_year, lib_path
 
           logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -101,8 +101,7 @@ jobs:
           rebuild   = os.environ.get("REBUILD", "false").lower() == "true"
           endpoint  = os.environ["R2_ENDPOINT_URL"]
 
-          today_str = date.today().strftime("%Y%m%d")
-          universe  = get_universe(today_str)
+          universe  = list(get_universe_codes())
           log.info("Universe: %d stocks | years: %d-%d | rebuild: %s",
                    len(universe), from_year, to_year, rebuild)
 
