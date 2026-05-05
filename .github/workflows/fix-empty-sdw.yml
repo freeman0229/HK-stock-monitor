@@ -1,24 +1,34 @@
 name: Fix Empty SDW Records (one-off)
 # One-off workflow: finds all SDW records where total_sh > 0 but p:[] (no participants),
 # deletes them so they get re-fetched, then runs a full backfill for the affected dates.
+# Also supports renaming a date in the DB (e.g. 2026-04-03 -> 2026-04-02).
 #
 # SAFE: only touches records where total_sh > 0 AND no rows exist in holdings table.
 # Any stock with even 1 holder row is completely untouched.
 #
-# Usage: Actions → Fix Empty SDW Records → Run workflow
-# Delete this file after successful run.
+# Usage: Actions -> Fix Empty SDW Records -> Run workflow
 
 on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Dry run — show what would be deleted without deleting'
+        description: 'Dry run - show what would be deleted without deleting'
         required: false
         default: 'false'
         type: choice
         options:
           - 'false'
           - 'true'
+      rename_date_from:
+        description: 'Rename date FROM (YYYY-MM-DD) — leave empty to skip'
+        required: false
+        default: ''
+        type: string
+      rename_date_to:
+        description: 'Rename date TO (YYYY-MM-DD) — leave empty to skip'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   fix-empty-sdw:
@@ -51,6 +61,55 @@ jobs:
           aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
           { echo "ERROR: DB download failed — aborting"; exit 1; }
+
+      # ── Step 1b: Rename a date in the DB (optional one-off fix) ─────────────
+      - name: Rename date in DB (one-off fix)
+        if: ${{ inputs.rename_date_from != '' && inputs.rename_date_to != '' }}
+        env:
+          FROM_DATE: ${{ inputs.rename_date_from }}
+          TO_DATE  : ${{ inputs.rename_date_to }}
+          DRY_RUN  : ${{ inputs.dry_run }}
+        run: |
+          python3 - <<'EOF'
+          import sqlite3, os
+
+          from_date = os.environ["FROM_DATE"]
+          to_date   = os.environ["TO_DATE"]
+          dry_run   = os.environ.get("DRY_RUN", "false").lower() == "true"
+          conn      = sqlite3.connect("ccass_sdw.db")
+
+          # Count affected rows
+          meta_count = conn.execute(
+              "SELECT COUNT(*) FROM metadata WHERE date = ?", (from_date,)
+          ).fetchone()[0]
+          hold_count = conn.execute(
+              "SELECT COUNT(*) FROM holdings WHERE date = ?", (from_date,)
+          ).fetchone()[0]
+
+          print(f"Rename {from_date} -> {to_date}")
+          print(f"  metadata rows: {meta_count}")
+          print(f"  holdings rows: {hold_count}")
+
+          if dry_run:
+              print("DRY RUN — no changes made.")
+          else:
+              if meta_count > 0 or hold_count > 0:
+                  # Safety: check no data already exists for to_date
+                  existing = conn.execute(
+                      "SELECT COUNT(*) FROM metadata WHERE date = ?", (to_date,)
+                  ).fetchone()[0]
+                  if existing > 0:
+                      print(f"ABORT: {to_date} already has {existing} rows in metadata.")
+                      print("Cannot rename — would overwrite existing data.")
+                  else:
+                      conn.execute("UPDATE metadata SET date = ? WHERE date = ?", (to_date, from_date))
+                      conn.execute("UPDATE holdings SET date = ? WHERE date = ?", (to_date, from_date))
+                      conn.commit()
+                      print(f"Done. Renamed {meta_count} metadata + {hold_count} holdings rows.")
+              else:
+                  print(f"No rows found for {from_date} — nothing to rename.")
+          conn.close()
+          EOF
 
       # ── Step 2: Inspect and clean empty records ───────────────────────────────
       - name: Find and delete empty SDW records

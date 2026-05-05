@@ -301,12 +301,19 @@ except ImportError:
 # ── Schedule ──────────────────────────────────────────────────────────────────
 
 def _fetch_date_for_friday(friday: date) -> date | None:
-    """Return *friday* if not a holiday, Thursday if Friday is a holiday, else None."""
-    thu = friday - timedelta(days=1)
-    if friday not in _HK_HOLIDAYS:
-        return friday
-    if thu not in _HK_HOLIDAYS:
-        return thu
+    """Return the most recent non-holiday weekday on or before friday.
+
+    Walk back up to 5 days (the full Mon-Fri week):
+    - Normal week         -> Friday
+    - Friday holiday      -> Thursday
+    - Thu+Fri holiday     -> Wednesday
+    - Mon-Fri all holiday -> None (genuine full-week holiday e.g. CNY, skip)
+    """
+    d = friday
+    for _ in range(5):
+        if d.weekday() < 5 and d not in _HK_HOLIDAYS:
+            return d
+        d -= timedelta(days=1)
     return None
 
 
