@@ -294,7 +294,7 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     today_str = date.today().strftime("%Y%m%d")
-    universe  = [r["code"] for r in get_universe(today_str)]
+    universe  = get_universe(today_str)  # returns list of code strings directly
     log.info("Universe: %d stocks", len(universe))
 
     if args.patch_2026:
