@@ -1,0 +1,138 @@
+name: Yahoo Finance Backfill
+
+# Fetches historical OHLCV data from Yahoo Finance for HK stocks.
+# Two modes:
+#   historical  — fetch 1995–2025 into yahoo_{YYYY}.json → upload each year to R2 immediately
+#   patch-2026  — fill missing high/low/open/prev_close in turnover_2026.json → commit to git
+#
+# Files stored on R2 (same bucket as sdw_*.json):
+#   pub-0b0781d969ec4b38b173f889109244a9.r2.dev/yahoo_{YYYY}.json
+#
+# Incremental: re-running skips years/codes already fetched.
+# Per-year upload: each year uploaded to R2 immediately — timeouts don't lose work.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Mode: historical (1995-2025 to R2) or patch-2026 (fix turnover_2026.json)'
+        required: true
+        default: 'patch-2026'
+        type: choice
+        options:
+          - patch-2026
+          - historical
+      from_year:
+        description: 'Start year for historical mode (default: 1995)'
+        required: false
+        default: '1995'
+        type: string
+      to_year:
+        description: 'End year for historical mode (default: 2025)'
+        required: false
+        default: '2025'
+        type: string
+      rebuild:
+        description: 'Rebuild - re-fetch even if data exists'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+
+  yahoo-backfill:
+    name: Yahoo Finance Backfill (${{ inputs.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+
+      - run: pip install -r requirements.txt
+
+      # patch-2026: fix missing high/low in turnover_2026.json
+      - name: Patch turnover_2026.json
+        if: ${{ inputs.mode == 'patch-2026' }}
+        run: python yahoo_library.py --patch-2026
+
+      - name: Commit patched turnover_2026.json
+        if: ${{ inputs.mode == 'patch-2026' }}
+        run: |
+          git config --global user.name "Bot"
+          git config --global user.email "bot@github.com"
+          git add turnover_2026.json
+          git diff --staged --quiet || \
+            git commit -m "patch-2026: fill missing high/low/prev_close from Yahoo Finance"
+          for i in 1 2 3; do
+            git pull --rebase && git push && break || sleep 10
+          done
+
+      # historical: fetch year by year, upload each to R2 immediately
+      - name: Fetch historical Yahoo data
+        if: ${{ inputs.mode == 'historical' }}
+        env:
+          FROM_YEAR            : ${{ inputs.from_year }}
+          TO_YEAR              : ${{ inputs.to_year }}
+          REBUILD              : ${{ inputs.rebuild }}
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          python3 - <<'EOF'
+          import os, subprocess, logging
+          from datetime import date
+          from ccass_universe import get_universe
+          from yahoo_library import fetch_and_save_year, lib_path
+
+          logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+          log = logging.getLogger(__name__)
+
+          from_year = int(os.environ.get("FROM_YEAR", "1995"))
+          to_year   = int(os.environ.get("TO_YEAR",   "2025"))
+          rebuild   = os.environ.get("REBUILD", "false").lower() == "true"
+          endpoint  = os.environ["R2_ENDPOINT_URL"]
+
+          today_str = date.today().strftime("%Y%m%d")
+          universe  = [r["code"] for r in get_universe(today_str)]
+          log.info("Universe: %d stocks | years: %d-%d | rebuild: %s",
+                   len(universe), from_year, to_year, rebuild)
+
+          def upload_year(year):
+              f = lib_path(year)
+              if not os.path.exists(f):
+                  return
+              cmd = ["aws", "s3", "cp", f, f"s3://hk-stock-monitor/{f}",
+                     "--endpoint-url", endpoint, "--no-progress"]
+              r = subprocess.run(cmd, capture_output=True, text=True)
+              if r.returncode == 0:
+                  log.info("Uploaded %s to R2", f)
+              else:
+                  log.warning("Upload failed for %s: %s", f, r.stderr[:200])
+
+          for yr in range(from_year, to_year + 1):
+              log.info("=== Year %d ===", yr)
+              fetch_and_save_year(yr, universe, rebuild=rebuild, upload_fn=upload_year)
+              upload_year(yr)  # final upload after year completes
+
+          log.info("All years complete.")
+          EOF
+
+      - name: List uploaded yahoo files in R2
+        if: ${{ inputs.mode == 'historical' }}
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 ls s3://hk-stock-monitor/ \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
+            | grep yahoo_ | sort

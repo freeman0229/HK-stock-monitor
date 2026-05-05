@@ -2459,6 +2459,23 @@ async function loadTvYear(year) {
   } catch(e) { return null; }
 }
 
+// ── Yahoo Finance historical cache ────────────────────────────────────────────
+// Stores OHLCV data from yahoo_{YYYY}.json (R2) for years before current year.
+// Structure: yahooCache[year] = {date_str: {code5: {open,high,low,close,vol}}}
+let yahooCache = {};
+const YAHOO_R2_BASE = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
+
+async function loadYahooYear(year) {
+  if (yahooCache[year]) return yahooCache[year];
+  try {
+    const r = await fetch(`${YAHOO_R2_BASE}/yahoo_${year}.json`, { cache: 'force-cache' });
+    if (!r.ok) { yahooCache[year] = {}; return {}; }
+    const lib = await r.json();
+    yahooCache[year] = lib.by_date || {};
+    return yahooCache[year];
+  } catch(e) { yahooCache[year] = {}; return {}; }
+}
+
 // Build {ds: {close, vol}} for one stock across all relevant years
 // ── Filter dates by range ─────────────────────────────────────────────────────
 let sfcCustomFrom = '';   // YYYY-MM-DD, empty = use pill range
@@ -4524,25 +4541,64 @@ async function drawCai() {
   if (!stock) return;
   const code5 = norm5(stock.code);
 
-  // Load current + prior year (for full σ computation warmup)
+  // Load current year from turnover library (HKEX primary)
   const year     = new Date().getFullYear();
   const prevYear = year - 1;
   if (!tvCache[year])     await loadTvYear(year);
   if (!tvCache[prevYear]) await loadTvYear(prevYear);
-  const byDatePrev = tvCache[prevYear] || {};
-  const byDate     = tvCache[year]     || {};
-  const allDates   = [...new Set([...Object.keys(byDatePrev), ...Object.keys(byDate)])].sort();
+
+  // Preload last 2 Yahoo years for σ computation (2024, 2025 for 2026)
+  const yahooYear1 = year - 2;  // e.g. 2024
+  const yahooYear2 = year - 1;  // e.g. 2025 (also in tvCache if available)
+  await loadYahooYear(yahooYear1);
+  await loadYahooYear(yahooYear2);
+
+  // Merge all sources: Yahoo (older) + turnover (current year primary)
+  // HKEX turnover always takes priority over Yahoo for current year
+  const getMergedRec = (d, c5) => {
+    const yr = parseInt(d.slice(0, 4));
+    if (yr >= year) {
+      // Current year: HKEX primary, Yahoo fills missing high/low
+      const tv = (tvCache[year]    || {})[d]?.[c5];
+      const yh = (yahooCache[year] || {})[d]?.[c5];
+      if (!tv && !yh) return null;
+      if (!tv) return yh;
+      // Patch high/low from Yahoo if HKEX has zeros
+      if (tv.high === 0 && yh?.high > 0) {
+        return { ...tv, open: yh.open, high: yh.high, low: yh.low,
+                 prev_close: yh.close };
+      }
+      return tv;
+    } else if (yr === prevYear) {
+      // Previous year: prefer turnover if exists, else Yahoo
+      return (tvCache[prevYear]    || {})[d]?.[c5]
+          || (yahooCache[prevYear] || {})[d]?.[c5]
+          || null;
+    } else {
+      // Older years: Yahoo only
+      return (yahooCache[yr] || {})[d]?.[c5] || null;
+    }
+  };
+
+  // Collect all available dates across all sources
+  const allDateSet = new Set([
+    ...Object.keys(tvCache[year]     || {}),
+    ...Object.keys(tvCache[prevYear] || {}),
+    ...Object.keys(yahooCache[yahooYear1] || {}),
+    ...Object.keys(yahooCache[yahooYear2] || {}),
+  ]);
+  const allDates = [...allDateSet].sort();
 
   // Build arrays
   const dates = [], closeArr = [], highArr = [], lowArr = [], volArr = [];
   for (const d of allDates) {
-    const rec = byDate[d]?.[code5] || byDatePrev[d]?.[code5];
+    const rec = getMergedRec(d, code5);
     if (rec && rec.close > 0) {
       dates.push(d);
       closeArr.push(rec.close);
-      highArr.push(rec.high   || rec.close);
-      lowArr.push(rec.low     || rec.close);
-      volArr.push(rec.vol     || 0);
+      highArr.push(rec.high  > 0 ? rec.high  : rec.close);
+      lowArr.push( rec.low   > 0 ? rec.low   : rec.close);
+      volArr.push(rec.vol    || 0);
     }
   }
   if (closeArr.length < 5) return;
