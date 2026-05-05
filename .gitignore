@@ -4,3 +4,10 @@ ccass_sdw.db
 __pycache__/ 
 ccass_cache/ 
 "*.pyc" 
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
