@@ -554,6 +554,13 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   background: #fff;
 }
 .cai-controls label { font-size: 12px; color: var(--muted); }
+.cai-range-btn {
+  padding: 3px 9px; font-size: 12px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--card); color: var(--muted);
+  transition: all 0.15s; font-family: 'Noto Sans TC', sans-serif;
+}
+.cai-range-btn:hover { color: var(--text); border-color: var(--red); }
+.cai-range-btn.active { background: var(--red); color: #fff; border-color: var(--red); }
 .cai-chart-area {
   position: relative;
   height: 300px;
@@ -1356,6 +1363,19 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <input type="text" id="cai-search" placeholder="輸入代號或名稱…"
           style="width:180px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;">
         <div id="cai-dropdown" style="display:none;position:absolute;top:100%;left:0;width:240px;max-height:220px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:999;font-size:13px;"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;margin-left:8px;">
+        <button class="cai-range-btn" data-range="1M">1M</button>
+        <button class="cai-range-btn" data-range="3M">3M</button>
+        <button class="cai-range-btn" data-range="6M">6M</button>
+        <button class="cai-range-btn" data-range="1Y">1Y</button>
+        <button class="cai-range-btn active" data-range="All">All</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;margin-left:8px;">
+        <input type="date" id="cai-from" style="padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:12px;">
+        <span style="color:var(--muted);font-size:12px;">至</span>
+        <input type="date" id="cai-to" style="padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:12px;">
+        <button onclick="caiApplyDateRange()" style="padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:12px;cursor:pointer;">套用</button>
       </div>
     </div>
 
@@ -4504,11 +4524,39 @@ function renderCaiStockSelect() {
     }
   });
 
+  // Pill range buttons
+  document.querySelectorAll('.cai-range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.cai-range-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      caiRange  = btn.dataset.range;
+      caiFromDs = '';
+      caiToDs   = '';
+      document.getElementById('cai-from').value = '';
+      document.getElementById('cai-to').value   = '';
+      drawCai().catch(e => console.warn('drawCai error:', e));
+    });
+  });
+
   const caiActive = document.querySelector('.tab-btn[data-tab="cai"]')?.classList.contains('active');
   if (caiActive) drawCai();
 }
 
+function caiApplyDateRange() {
+  const from = document.getElementById('cai-from').value;
+  const to   = document.getElementById('cai-to').value;
+  if (!from && !to) return;
+  caiFromDs = from;
+  caiToDs   = to;
+  // Deactivate all pills when custom range is applied
+  document.querySelectorAll('.cai-range-btn').forEach(b => b.classList.remove('active'));
+  drawCai().catch(e => console.warn('drawCai error:', e));
+}
+
 let caiCharts = [];
+let caiRange   = 'All';   // active pill: '1M','3M','6M','1Y','All'
+let caiFromDs  = '';      // custom from date (YYYY-MM-DD), empty = use pill
+let caiToDs    = '';      // custom to date (YYYY-MM-DD), empty = today
 function caiDestroyCharts() {
   caiCharts.forEach(c => { try { c.destroy(); } catch(e){} });
   caiCharts = [];
@@ -4630,25 +4678,33 @@ async function drawCai() {
     lower25.push(+(c - sigmaDown* vr5 * 2.5).toFixed(3));
   }
 
-  // Only show current year on chart, use full history for σ
-  const curYearStr = String(year);
-  const viewStart  = dates.findIndex(d => d.startsWith(curYearStr));
-  const vi = viewStart >= 0 ? viewStart : 0;
+  // Determine view window based on pill range or custom date inputs
+  const todayStr = dates[dates.length - 1] || new Date().toISOString().slice(0, 10);
+  let fromDs = caiFromDs, toDs = caiToDs || todayStr;
+  if (!caiFromDs) {
+    const msPerDay = 86400000;
+    const todayMs  = new Date(todayStr).getTime();
+    const rangeMap = { '1M': 30, '3M': 90, '6M': 180, '1Y': 365, 'All': 99999 };
+    const days     = rangeMap[caiRange] || 99999;
+    fromDs = new Date(todayMs - days * msPerDay).toISOString().slice(0, 10);
+  }
+  const vi = Math.max(0, dates.findIndex(d => d >= fromDs));
+  const ve = dates.findLastIndex(d => d <= toDs) + 1 || dates.length;
 
-  // Shift bands +1 day: band[i] computed from close[i-1] → displayed at day i
+  // Shift bands +1 day: band[i] computed from close[i-1] -> displayed at day i
   // This makes each day's bands a PREDICTION based on previous day's close
   // Insert null at start (no prediction for first day), drop last (tomorrow = future)
-  const shiftBands = arr => [null, ...arr.slice(vi, arr.length - 1)];
+  const shiftBands = arr => [null, ...arr.slice(vi, Math.min(ve + 1, arr.length) - 1)];
   const u3ViewS  = shiftBands(upper3);
   const l3ViewS  = shiftBands(lower3);
   const u25ViewS = shiftBands(upper25);
   const l25ViewS = shiftBands(lower25);
 
-  const dateView  = dates.slice(vi);
-  const closeView = closeArr.slice(vi);
-  const highView  = highArr.slice(vi);
-  const lowView   = lowArr.slice(vi);
-  const volView   = volArr.slice(vi);
+  const dateView  = dates.slice(vi, ve);
+  const closeView = closeArr.slice(vi, ve);
+  const highView  = highArr.slice(vi, ve);
+  const lowView   = lowArr.slice(vi, ve);
+  const volView   = volArr.slice(vi, ve);
   const N = dateView.length;
 
   // Tomorrow's prediction: last band values computed from today's close
