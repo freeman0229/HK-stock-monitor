@@ -1343,9 +1343,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div class="sum-sub">今日 ÷ 5日均量</div>
     </div>
     <div class="sum-card">
-      <div class="sum-label">通道闊度</div>
-      <div class="sum-val" id="cai-width">--</div>
-      <div class="sum-sub">3σ 上下幅</div>
+      <div class="sum-label">明日預測範圍</div>
+      <div class="sum-val" id="cai-width" style="font-size:13px;font-weight:600">--</div>
+      <div class="sum-sub">3σ 預測高/低</div>
     </div>
   </div>
 
@@ -1368,11 +1368,12 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     </div>
 
     <div class="cai-legend">
-      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>3σ 上軌</div>
-      <div class="leg-item"><div class="leg-dot" style="background:rgba(192,37,45,0.4);height:2px;border-top:2px dashed rgba(192,37,45,0.5)"></div>2.5σ 上軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>3σ 預測上軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(192,37,45,0.4);height:2px;border-top:2px dashed rgba(192,37,45,0.5)"></div>2.5σ 預測上軌</div>
       <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>收市價</div>
-      <div class="leg-item"><div class="leg-dot" style="background:rgba(26,122,60,0.4);height:2px;border-top:2px dashed rgba(26,122,60,0.5)"></div>2.5σ 下軌</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>3σ 下軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(26,122,60,0.4);height:2px;border-top:2px dashed rgba(26,122,60,0.5)"></div>2.5σ 預測下軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>3σ 預測下軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(128,128,128,0.3);height:8px;border-radius:1px"></div>高/低範圍</div>
       <div class="leg-item"><div class="leg-dot" style="background:rgba(192,37,45,0.6);height:8px;border-radius:1px"></div>高 − 5日均</div>
       <div class="leg-item"><div class="leg-dot" style="background:rgba(42,157,143,0.6);height:8px;border-radius:1px"></div>低 − 5日均</div>
     </div>
@@ -4578,31 +4579,42 @@ async function drawCai() {
   const viewStart  = dates.findIndex(d => d.startsWith(curYearStr));
   const vi = viewStart >= 0 ? viewStart : 0;
 
-  const dateView   = dates.slice(vi);
-  const closeView  = closeArr.slice(vi);
-  const volView    = volArr.slice(vi);
-  const u3View     = upper3.slice(vi);
-  const l3View     = lower3.slice(vi);
-  const u25View    = upper25.slice(vi);
-  const l25View    = lower25.slice(vi);
+  // Shift bands +1 day: band[i] computed from close[i-1] → displayed at day i
+  // This makes each day's bands a PREDICTION based on previous day's close
+  // Insert null at start (no prediction for first day), drop last (tomorrow = future)
+  const shiftBands = arr => [null, ...arr.slice(vi, arr.length - 1)];
+  const u3ViewS  = shiftBands(upper3);
+  const l3ViewS  = shiftBands(lower3);
+  const u25ViewS = shiftBands(upper25);
+  const l25ViewS = shiftBands(lower25);
+
+  const dateView  = dates.slice(vi);
+  const closeView = closeArr.slice(vi);
+  const highView  = highArr.slice(vi);
+  const lowView   = lowArr.slice(vi);
+  const volView   = volArr.slice(vi);
   const N = dateView.length;
 
-  // Update summary cards
-  const lastVols5 = volArr.slice(Math.max(0, closeArr.length-6), closeArr.length-1).filter(v=>v>0);
-  const lastAvgVol5 = lastVols5.length > 0 ? _mean(lastVols5) : 0;
-  const lastVr5 = (volArr[volArr.length-1] > 0 && lastAvgVol5 > 0) ? volArr[volArr.length-1] / lastAvgVol5 : 1.0;
-  const lastClose = closeArr[closeArr.length-1];
-  const bandWidth3 = ((sigmaUp + sigmaDown) * lastVr5 * 3.0);
+  // Tomorrow's prediction: last band values computed from today's close
+  const todayClose  = closeArr[closeArr.length - 1];
+  const todayVols5  = volArr.slice(Math.max(0, closeArr.length - 5), closeArr.length).filter(v => v > 0);
+  const todayAvgV5  = todayVols5.length > 0 ? _mean(todayVols5) : 0;
+  const todayVr5    = (volArr[closeArr.length-1] > 0 && todayAvgV5 > 0) ? volArr[closeArr.length-1] / todayAvgV5 : 1.0;
+  const tmrHigh3    = +(todayClose + sigmaUp   * todayVr5 * 3.0).toFixed(3);
+  const tmrLow3     = +(todayClose - sigmaDown * todayVr5 * 3.0).toFixed(3);
+  const tmrHigh25   = +(todayClose + sigmaUp   * todayVr5 * 2.5).toFixed(3);
+  const tmrLow25    = +(todayClose - sigmaDown * todayVr5 * 2.5).toFixed(3);
+  const tmrWidth    = +((sigmaUp + sigmaDown) * todayVr5 * 3.0).toFixed(3);
 
   const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   setEl('cai-sigma-up', sigmaUp   > 0 ? sigmaUp.toFixed(3)   : '--');
   setEl('cai-sigma-dn', sigmaDown > 0 ? sigmaDown.toFixed(3) : '--');
-  setEl('cai-vr5',      lastVr5   > 0 ? lastVr5.toFixed(2) + 'x' : '--');
-  setEl('cai-width',    bandWidth3 > 0 ? bandWidth3.toFixed(2) : '--');
+  setEl('cai-vr5',      todayVr5  > 0 ? todayVr5.toFixed(2) + 'x' : '--');
+  setEl('cai-width',    tmrWidth  > 0 ? `${tmrLow3} – ${tmrHigh3}` : '--');
 
   // Update title
   const titleEl = document.getElementById('cai-title');
-  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 個股波幅通道  σ↑=${sigmaUp.toFixed(3)}  σ↓=${sigmaDown.toFixed(3)}`;
+  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 個股波幅通道  明日預測: ${tmrLow3} – ${tmrHigh3}  (3σ)`;
 
   // Crosshair state
   let caiActiveIdx = null;
@@ -4642,17 +4654,21 @@ async function drawCai() {
     const wrap = document.getElementById('cai-charts-wrap');
     if (!tip || !wrap) return;
     if (idx === null) { tip.style.display = 'none'; return; }
-    const c  = closeView[idx];
-    const u3 = u3View[idx], l3 = l3View[idx], u25 = u25View[idx], l25 = l25View[idx];
+    const c   = closeView[idx];
+    const hi  = highView[idx], lo = lowView[idx];
+    const u3  = u3ViewS[idx],  l3 = l3ViewS[idx];
+    const u25 = u25ViewS[idx], l25 = l25ViewS[idx];
     const hlH = hlOscHigh[idx], hlL = hlOscLow[idx];
     const row = (lbl, val, col) => `<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
     tip.innerHTML =
       `<b style="color:#bbb">${dateView[idx]}</b><br>` +
+      row('高',      hi?.toFixed(3),  '#aaa') +
       row('收市',    c?.toFixed(3),   '#378ADD') +
-      row('3σ上軌',  u3?.toFixed(3),  '#c0252d') +
-      row('2.5σ上軌',u25?.toFixed(3), 'rgba(192,37,45,0.7)') +
-      row('2.5σ下軌',l25?.toFixed(3), 'rgba(26,122,60,0.7)') +
-      row('3σ下軌',  l3?.toFixed(3),  '#1a7a3c') +
+      row('低',      lo?.toFixed(3),  '#aaa') +
+      row('預測上3σ', u3?.toFixed(3),  '#c0252d') +
+      row('預測上2.5σ',u25?.toFixed(3),'rgba(192,37,45,0.7)') +
+      row('預測下2.5σ',l25?.toFixed(3),'rgba(26,122,60,0.7)') +
+      row('預測下3σ', l3?.toFixed(3),  '#1a7a3c') +
       row('高−5MA',  hlH != null ? (hlH >= 0 ? '+' : '') + hlH.toFixed(3) : '—', '#c0252d') +
       row('低−5MA',  hlL != null ? (hlL >= 0 ? '+' : '') + hlL.toFixed(3) : '—', '#2a9d8f');
     tip.style.display = 'block';
@@ -4694,11 +4710,15 @@ async function drawCai() {
   const c1 = new Chart(document.getElementById('caiCanvas'), {
     type: 'line', plugins: [makeCaiCross()],
     data: { labels: dateView, datasets: [
-      { type:'line', label:'3σ上軌',  data:u3View,    borderColor:'#c0252d',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false },
-      { type:'line', label:'2.5σ上軌',data:u25View,   borderColor:'rgba(192,37,45,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3] },
-      { type:'line', label:'收市價',  data:closeView, borderColor:'#378ADD',            borderWidth:2,   pointRadius:0, fill:false,  tension:0.3, spanGaps:true  },
-      { type:'line', label:'2.5σ下軌',data:l25View,   borderColor:'rgba(26,122,60,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3] },
-      { type:'line', label:'3σ下軌',  data:l3View,    borderColor:'#1a7a3c',            borderWidth:1.5, pointRadius:0, fill:'-4',   tension:0.3, spanGaps:false, backgroundColor:'rgba(192,37,45,0.04)' },
+      // High/low shaded range (actual)
+      { type:'line', label:'當日高位', data:highView,  borderColor:'transparent', borderWidth:0, pointRadius:0, fill:'+1', backgroundColor:'rgba(128,128,128,0.12)', tension:0.3, spanGaps:true, order:5 },
+      { type:'line', label:'當日低位', data:lowView,   borderColor:'transparent', borderWidth:0, pointRadius:0, fill:false, tension:0.3, spanGaps:true, order:5 },
+      // Predicted bands (shifted +1 day)
+      { type:'line', label:'3σ上軌',   data:u3ViewS,   borderColor:'#c0252d',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false, order:2 },
+      { type:'line', label:'2.5σ上軌', data:u25ViewS,  borderColor:'rgba(192,37,45,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3], order:2 },
+      { type:'line', label:'收市價',   data:closeView, borderColor:'#378ADD',            borderWidth:2,   pointRadius:0, fill:false,  tension:0.3, spanGaps:true,  order:1 },
+      { type:'line', label:'2.5σ下軌', data:l25ViewS,  borderColor:'rgba(26,122,60,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3], order:2 },
+      { type:'line', label:'3σ下軌',   data:l3ViewS,   borderColor:'#1a7a3c',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false, order:2 },
     ]},
     options: { responsive:true, maintainAspectRatio:false, animation:false,
       plugins: { legend:{display:false}, tooltip:{enabled:false} },
