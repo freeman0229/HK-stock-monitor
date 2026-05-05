@@ -31,6 +31,13 @@
 #   sdw_get_total_sh_bulk() returns empty if HKEX hasn't published today's SDW.
 #   Now falls back to most recent available date in total_sh table, preventing
 #   concentration/top10_pct/turnover_24d from being zeroed out for all stocks.
+#
+# [Fix 9 — 2026-05-05] sc_top10 fallback: wrong holiday logic + insufficient lookback.
+#   Old code used last_trading_day() (HK holidays only) and only tried 1 day back.
+#   Stock Connect requires BOTH HK and CN exchanges open — CN Golden Week causes
+#   sc_top10 to be empty for multiple consecutive HK trading days.
+#   Fix: walk back using joint HK+CN open check (_is_sc_open), up to 5 valid SC
+#   trading days (14 calendar days max). Handles Golden Week and other long holidays.
 # ──────────────────────────────────────────────────────────────────────────────
 
 import json
@@ -769,13 +776,29 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         sb_map = {}
 
     if not sb_map:
-        prev_td = last_trading_day(trading_day - timedelta(days=1))
-        prev_ds = prev_td.strftime("%Y-%m-%d")
-        sb_map  = _build_sb_map(get_top10(prev_ds))
-        if sb_map:
-            sb_date_used = prev_ds
-            log.info("Southbound top10: using previous day %s (%d stocks)", prev_ds, len(sb_map))
-        else:
+        # Walk back up to 10 calendar days, skipping days where EITHER HK or CN is closed.
+        # Stock Connect requires BOTH exchanges open — CN Golden Week / HK holidays both count.
+        def _is_sc_open(d: datetime) -> bool:
+            hk_open = d.weekday() < 5 and d.date() not in HK_HOLIDAYS
+            cn_open = d.weekday() < 5 and not _is_cn_holiday(d)
+            return hk_open and cn_open
+
+        d = trading_day - timedelta(days=1)
+        found_days = 0
+        for _ in range(14):  # safety limit
+            if _is_sc_open(d):
+                prev_ds = d.strftime("%Y-%m-%d")
+                sb_map  = _build_sb_map(get_top10(prev_ds))
+                if sb_map:
+                    sb_date_used = prev_ds
+                    log.info("Southbound top10: using previous day %s (%d stocks)",
+                             prev_ds, len(sb_map))
+                    break
+                found_days += 1
+                if found_days >= 5:
+                    break  # tried 5 valid SC trading days, give up
+            d -= timedelta(days=1)
+        if not sb_map:
             log.warning("Southbound top10: no data — run sc_top10_library.py --update")
 
     log.info("Southbound top10: %d stocks for %s", len(sb_map), sb_date_used)
