@@ -831,7 +831,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 /* ── HSI panel ─────────────────── */
 #panel-hsi { padding: 0 0 40px; }
 .hsi-chart-wrap { position: relative; width: 100%; height: 380px; margin-bottom: 0; }
-.hsi-vol-wrap   { position: relative; width: 100%; height: 100px; }
+.hsi-vol-wrap   { position: relative; width: 100%; height: 130px; }
 .hsi-loading    { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
 
 </style>
@@ -5405,10 +5405,13 @@ function renderHsiPanel() {
     id: 'hsiVline',
     afterDraw(chart) {
       if (hsiVlineIdx === null) return;
-      const {ctx, canvas, chartArea, scales} = chart;
-      if (!chartArea || !scales.x) return;
-      // Use getPixelForValue — consistent with sub-chart vline
-      const xp = scales.x.getPixelForValue(hsiVlineIdx);
+      const {ctx, canvas, chartArea, scales:{x}} = chart;
+      if (!x || !chartArea) return;
+      // Label-lookup pattern (same as makeCaiCross) — works correctly for both line and bar
+      const label = chartLabels[hsiVlineIdx];
+      const labelIdx = chart.data.labels ? chart.data.labels.indexOf(label) : -1;
+      if (labelIdx === -1) return;
+      const xp = x.getPixelForValue(labelIdx);
       if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
@@ -5434,13 +5437,16 @@ function renderHsiPanel() {
     }
   };
 
-  // Bottom chart vline — use scale.getPixelForValue so bar-slot positions align exactly
+  // Bottom chart vline — label-lookup (same as makeCaiCross) so line/bar charts align
   const makeHsiVolVline = () => ({
     afterDraw(chart) {
       if (hsiVlineIdx === null) return;
-      const {ctx, canvas, chartArea, scales} = chart;
-      if (!chartArea || !scales.x) return;
-      const xp = scales.x.getPixelForValue(hsiVlineIdx);
+      const {ctx, canvas, chartArea, scales:{x}} = chart;
+      if (!x || !chartArea) return;
+      const label = chartLabels[hsiVlineIdx];
+      const labelIdx = chart.data.labels ? chart.data.labels.indexOf(label) : -1;
+      if (labelIdx === -1) return;
+      const xp = x.getPixelForValue(labelIdx);
       if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
@@ -5596,27 +5602,49 @@ function renderHsiPanel() {
     }
   });
 
+  // Custom overlap plugin: draws both bars on the same slot.
+  // Larger absolute value drawn first (behind), smaller on top — works for all sign combos.
+  const hsiOverlapPlugin = {
+    id: 'hsiOverlap',
+    beforeDatasetsDraw(chart) {
+      const {ctx, chartArea:{left,right}, scales:{x,y}} = chart;
+      if (!x || !y) return;
+      const n      = chartLabels.length;
+      const slotW  = (right - left) / n;
+      const barW   = slotW * 0.75;
+      const zero   = y.getPixelForValue(0);
+      ctx.save();
+      highVsMa.forEach((hv, i) => {
+        const lv   = lowVsMa[i];
+        const cx   = x.getPixelForValue(i);
+        const x0   = cx - barW / 2;
+        const hp   = y.getPixelForValue(hv);
+        const lp   = y.getPixelForValue(lv);
+        const hCol = isDark ? 'rgba(226,75,74,0.85)' : 'rgba(226,75,74,0.85)';
+        const lCol = isDark ? 'rgba(55,138,221,0.85)' : 'rgba(55,138,221,0.85)';
+        // Draw larger absolute value behind, smaller in front
+        if (Math.abs(lv) >= Math.abs(hv)) {
+          ctx.fillStyle = lCol;
+          ctx.fillRect(x0, Math.min(lp, zero), barW, Math.abs(lp - zero));
+          ctx.fillStyle = hCol;
+          ctx.fillRect(x0, Math.min(hp, zero), barW, Math.abs(hp - zero));
+        } else {
+          ctx.fillStyle = hCol;
+          ctx.fillRect(x0, Math.min(hp, zero), barW, Math.abs(hp - zero));
+          ctx.fillStyle = lCol;
+          ctx.fillRect(x0, Math.min(lp, zero), barW, Math.abs(lp - zero));
+        }
+      });
+      ctx.restore();
+    }
+  };
+
   hsiVolInst = new Chart(document.getElementById('hsiVolCanvas'), {
-    type: 'line',
-    plugins: [makeHsiVolVline()],
+    type: 'bar',
+    plugins: [makeHsiVolVline(), hsiOverlapPlugin],
     data: {
       labels: chartLabels,
-      datasets: [
-        {
-          label: '週高 − 4週均',
-          type: 'bar',
-          data: [...highVsMa, null],
-          backgroundColor: 'rgba(226,75,74,0.55)',
-          borderWidth: 0,
-        },
-        {
-          label: '週低 − 4週均',
-          type: 'bar',
-          data: [...lowVsMa, null],
-          backgroundColor: 'rgba(55,138,221,0.55)',
-          borderWidth: 0,
-        }
-      ]
+      datasets: [] // bars drawn by hsiOverlapPlugin; empty datasets keep scale alive
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -5636,7 +5664,9 @@ function renderHsiPanel() {
           }, grid: { display: false } },
         y: {
           afterFit: s => { s.width = 52; },
-          ticks: { callback: v => v > 0 ? '+'+v : v, font: { size: 10 }, color: isDark ? 'rgba(255,255,255,0.4)' : '#888' },
+          min: Math.min(...lowVsMa) * 1.1,
+          max: Math.max(...highVsMa) * 1.1,
+          ticks: { callback: v => v > 0 ? '+'+v : String(v), font: { size: 10 }, color: isDark ? 'rgba(255,255,255,0.4)' : '#888' },
           grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
         }
       }
