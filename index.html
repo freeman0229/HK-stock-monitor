@@ -1333,29 +1333,6 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
 <!-- ═══ Panel 4: 蔡氏通道 ════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-cai">
-  <div class="summary-bar">
-    <div class="sum-card">
-      <div class="sum-label">σ 上行</div>
-      <div class="sum-val" id="cai-sigma-up">--</div>
-      <div class="sum-sub">上行標準差</div>
-    </div>
-    <div class="sum-card">
-      <div class="sum-label">σ 下行</div>
-      <div class="sum-val" id="cai-sigma-dn">--</div>
-      <div class="sum-sub">下行標準差</div>
-    </div>
-    <div class="sum-card">
-      <div class="sum-label">成交量倍數</div>
-      <div class="sum-val" id="cai-vr5">--</div>
-      <div class="sum-sub">今日 ÷ 5日均量</div>
-    </div>
-    <div class="sum-card">
-      <div class="sum-label">明日預測範圍</div>
-      <div class="sum-val" id="cai-width" style="font-size:13px;font-weight:600">--</div>
-      <div class="sum-sub">3σ 預測高/低</div>
-    </div>
-  </div>
-
   <div class="chart-placeholder">
     <div class="cai-controls">
       <label>股票代號</label>
@@ -1368,8 +1345,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <button class="cai-range-btn" data-range="1M">1M</button>
         <button class="cai-range-btn" data-range="3M">3M</button>
         <button class="cai-range-btn" data-range="6M">6M</button>
-        <button class="cai-range-btn" data-range="1Y">1Y</button>
-        <button class="cai-range-btn active" data-range="All">All</button>
+        <button class="cai-range-btn active" data-range="1Y">1Y</button>
+        <button class="cai-range-btn" data-range="All">All</button>
       </div>
       <div style="display:flex;align-items:center;gap:4px;margin-left:8px;">
         <input type="date" id="cai-from" style="padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:12px;">
@@ -2483,7 +2460,8 @@ async function loadTvYear(year) {
 // Stores OHLCV data from yahoo_{YYYY}.json (R2) for years before current year.
 // Structure: yahooCache[year] = {date_str: {code5: {open,high,low,close,vol}}}
 let yahooCache = {};
-const YAHOO_R2_BASE = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
+const YAHOO_R2_BASE    = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
+const YAHOO_START_YEAR = 2000;  // earliest year to fetch from R2
 
 async function loadYahooYear(year) {
   if (yahooCache[year]) return yahooCache[year];
@@ -4554,7 +4532,7 @@ function caiApplyDateRange() {
 }
 
 let caiCharts = [];
-let caiRange   = 'All';   // active pill: '1M','3M','6M','1Y','All'
+let caiRange   = '1Y';    // active pill: '1M','3M','6M','1Y','All'
 let caiFromDs  = '';      // custom from date (YYYY-MM-DD), empty = use pill
 let caiToDs    = '';      // custom to date (YYYY-MM-DD), empty = today
 function caiDestroyCharts() {
@@ -4595,46 +4573,44 @@ async function drawCai() {
   if (!tvCache[year])     await loadTvYear(year);
   if (!tvCache[prevYear]) await loadTvYear(prevYear);
 
-  // Preload last 2 Yahoo years for σ computation (2024, 2025 for 2026)
-  const yahooYear1 = year - 2;  // e.g. 2024
-  const yahooYear2 = year - 1;  // e.g. 2025 (also in tvCache if available)
-  await loadYahooYear(yahooYear1);
-  await loadYahooYear(yahooYear2);
+  // Fetch all Yahoo years from YAHOO_START_YEAR up to prevYear (lazy, cached).
+  // Current year is covered by tvCache; prevYear overlaps but Yahoo fills gaps.
+  await Promise.all(
+    Array.from({ length: year - YAHOO_START_YEAR },
+               (_, i) => loadYahooYear(YAHOO_START_YEAR + i))
+  );
 
-  // Merge all sources: Yahoo (older) + turnover (current year primary)
-  // HKEX turnover always takes priority over Yahoo for current year
+  // Merge all sources: Yahoo (older) + turnover (current/prev year primary).
+  // HKEX turnover always takes priority for dates it covers.
   const getMergedRec = (d, c5) => {
     const yr = parseInt(d.slice(0, 4));
     if (yr >= year) {
-      // Current year: HKEX primary, Yahoo fills missing high/low
+      // Current year: HKEX primary, Yahoo patches missing high/low
       const tv = (tvCache[year]    || {})[d]?.[c5];
       const yh = (yahooCache[year] || {})[d]?.[c5];
       if (!tv && !yh) return null;
       if (!tv) return yh;
-      // Patch high/low from Yahoo if HKEX has zeros
-      if (tv.high === 0 && yh?.high > 0) {
-        return { ...tv, open: yh.open, high: yh.high, low: yh.low,
-                 prev_close: yh.close };
-      }
+      if (tv.high === 0 && yh?.high > 0)
+        return { ...tv, open: yh.open, high: yh.high, low: yh.low, prev_close: yh.close };
       return tv;
     } else if (yr === prevYear) {
-      // Previous year: prefer turnover if exists, else Yahoo
-      return (tvCache[prevYear]    || {})[d]?.[c5]
-          || (yahooCache[prevYear] || {})[d]?.[c5]
+      // Previous year: HKEX preferred, Yahoo as fallback
+      return (tvCache[prevYear] || {})[d]?.[c5]
+          || (yahooCache[yr]    || {})[d]?.[c5]
           || null;
     } else {
-      // Older years: Yahoo only
+      // All older years: Yahoo only
       return (yahooCache[yr] || {})[d]?.[c5] || null;
     }
   };
 
-  // Collect all available dates across all sources
+  // Collect all available dates across every loaded source
   const allDateSet = new Set([
     ...Object.keys(tvCache[year]     || {}),
     ...Object.keys(tvCache[prevYear] || {}),
-    ...Object.keys(yahooCache[yahooYear1] || {}),
-    ...Object.keys(yahooCache[yahooYear2] || {}),
   ]);
+  for (const byDate of Object.values(yahooCache))
+    for (const d of Object.keys(byDate)) allDateSet.add(d);
   const allDates = [...allDateSet].sort();
 
   // Build arrays
@@ -4691,10 +4667,11 @@ async function drawCai() {
   const vi = Math.max(0, dates.findIndex(d => d >= fromDs));
   const ve = dates.findLastIndex(d => d <= toDs) + 1 || dates.length;
 
-  // Shift bands +1 day: band[i] computed from close[i-1] -> displayed at day i
-  // This makes each day's bands a PREDICTION based on previous day's close
-  // Insert null at start (no prediction for first day), drop last (tomorrow = future)
-  const shiftBands = arr => [null, ...arr.slice(vi, Math.min(ve + 1, arr.length) - 1)];
+  // Shift bands +1 day: band[i] is computed from close[i-1], representing a
+  // prediction for day i based on the previous day's close.
+  // Prepend null (no prediction for first visible day).
+  // Include arr[ve] as the final point — that is tomorrow's prediction.
+  const shiftBands = arr => [null, ...arr.slice(vi, Math.min(ve + 1, arr.length))];
   const u3ViewS  = shiftBands(upper3);
   const l3ViewS  = shiftBands(lower3);
   const u25ViewS = shiftBands(upper25);
@@ -4705,24 +4682,24 @@ async function drawCai() {
   const highView  = highArr.slice(vi, ve);
   const lowView   = lowArr.slice(vi, ve);
   const volView   = volArr.slice(vi, ve);
-  const N = dateView.length;
 
-  // Tomorrow's prediction: last band values computed from today's close
-  const todayClose  = closeArr[closeArr.length - 1];
-  const todayVols5  = volArr.slice(Math.max(0, closeArr.length - 5), closeArr.length).filter(v => v > 0);
-  const todayAvgV5  = todayVols5.length > 0 ? _mean(todayVols5) : 0;
-  const todayVr5    = (volArr[closeArr.length-1] > 0 && todayAvgV5 > 0) ? volArr[closeArr.length-1] / todayAvgV5 : 1.0;
-  const tmrHigh3    = +(todayClose + sigmaUp   * todayVr5 * 3.0).toFixed(3);
-  const tmrLow3     = +(todayClose - sigmaDown * todayVr5 * 3.0).toFixed(3);
-  const tmrHigh25   = +(todayClose + sigmaUp   * todayVr5 * 2.5).toFixed(3);
-  const tmrLow25    = +(todayClose - sigmaDown * todayVr5 * 2.5).toFixed(3);
-  const tmrWidth    = +((sigmaUp + sigmaDown) * todayVr5 * 3.0).toFixed(3);
+  // Append a synthetic "tomorrow" label so the final shifted-band prediction point
+  // has a matching x-axis slot. Price/high/low get null for that slot.
+  const lastDate   = dateView[dateView.length - 1] || toDs;
+  const tmrLabel   = new Date(new Date(lastDate).getTime() + 86400000).toISOString().slice(0, 10);
+  const chartLabels = [...dateView, tmrLabel];
+  const chartClose  = [...closeView, null];
+  const chartHigh   = [...highView,  null];
+  const chartLow    = [...lowView,   null];
+  const N = chartLabels.length;
 
-  const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  setEl('cai-sigma-up', sigmaUp   > 0 ? sigmaUp.toFixed(3)   : '--');
-  setEl('cai-sigma-dn', sigmaDown > 0 ? sigmaDown.toFixed(3) : '--');
-  setEl('cai-vr5',      todayVr5  > 0 ? todayVr5.toFixed(2) + 'x' : '--');
-  setEl('cai-width',    tmrWidth  > 0 ? `${tmrLow3} – ${tmrHigh3}` : '--');
+  // Tomorrow's prediction range (shown in chart title)
+  const todayClose = closeArr[closeArr.length - 1];
+  const todayVols5 = volArr.slice(Math.max(0, closeArr.length - 5), closeArr.length).filter(v => v > 0);
+  const todayVr5   = (volArr[closeArr.length-1] > 0 && todayVols5.length > 0)
+                     ? volArr[closeArr.length-1] / (todayVols5.reduce((a,b)=>a+b,0) / todayVols5.length) : 1.0;
+  const tmrHigh3   = +(todayClose + sigmaUp   * todayVr5 * 3.0).toFixed(3);
+  const tmrLow3    = +(todayClose - sigmaDown * todayVr5 * 3.0).toFixed(3);
 
   // Update title
   const titleEl = document.getElementById('cai-title');
@@ -4773,7 +4750,7 @@ async function drawCai() {
     const hlH = hlOscHigh[idx], hlL = hlOscLow[idx];
     const row = (lbl, val, col) => `<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
     tip.innerHTML =
-      `<b style="color:#bbb">${dateView[idx]}</b><br>` +
+      `<b style="color:#bbb">${chartLabels[idx]}</b><br>` +
       row('高',      hi?.toFixed(3),  '#aaa') +
       row('收市',    c?.toFixed(3),   '#378ADD') +
       row('低',      lo?.toFixed(3),  '#aaa') +
@@ -4815,20 +4792,20 @@ async function drawCai() {
   const aFitR = s => { s.width = 32; };
   const xHide = {offset:false, ticks:{display:false}, grid:{color:gc}, border:{display:false}};
   const xShow = {offset:false, ticks:{font:{size:10}, color:'#888', maxRotation:0,
-    callback:(v,i) => i % Math.max(1, Math.floor(N/8)) === 0 ? dateView[i].slice(2,10) : ''},
+    callback:(v,i) => i % Math.max(1, Math.floor(N/8)) === 0 ? chartLabels[i].slice(2,10) : ''},
     grid:{color:gc}, border:{display:false}};
 
   // Main price + channel chart
   const c1 = new Chart(document.getElementById('caiCanvas'), {
     type: 'line', plugins: [makeCaiCross()],
-    data: { labels: dateView, datasets: [
+    data: { labels: chartLabels, datasets: [
       // High/low shaded range (actual)
-      { type:'line', label:'當日高位', data:highView,  borderColor:'transparent', borderWidth:0, pointRadius:0, fill:'+1', backgroundColor:'rgba(128,128,128,0.12)', tension:0.3, spanGaps:true, order:5 },
-      { type:'line', label:'當日低位', data:lowView,   borderColor:'transparent', borderWidth:0, pointRadius:0, fill:false, tension:0.3, spanGaps:true, order:5 },
+      { type:'line', label:'當日高位', data:chartHigh,  borderColor:'transparent', borderWidth:0, pointRadius:0, fill:'+1', backgroundColor:'rgba(128,128,128,0.12)', tension:0.3, spanGaps:true, order:5 },
+      { type:'line', label:'當日低位', data:chartLow,   borderColor:'transparent', borderWidth:0, pointRadius:0, fill:false, tension:0.3, spanGaps:true, order:5 },
       // Predicted bands (shifted +1 day)
       { type:'line', label:'3σ上軌',   data:u3ViewS,   borderColor:'#c0252d',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false, order:2 },
       { type:'line', label:'2.5σ上軌', data:u25ViewS,  borderColor:'rgba(192,37,45,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3], order:2 },
-      { type:'line', label:'收市價',   data:closeView, borderColor:'#378ADD',            borderWidth:2,   pointRadius:0, fill:false,  tension:0.3, spanGaps:true,  order:1 },
+      { type:'line', label:'收市價',   data:chartClose, borderColor:'#378ADD',            borderWidth:2,   pointRadius:0, fill:false,  tension:0.3, spanGaps:true,  order:1 },
       { type:'line', label:'2.5σ下軌', data:l25ViewS,  borderColor:'rgba(26,122,60,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3], order:2 },
       { type:'line', label:'3σ下軌',   data:l3ViewS,   borderColor:'#1a7a3c',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false, order:2 },
     ]},
@@ -4848,15 +4825,18 @@ async function drawCai() {
   for (let i = 0; i < closeView.length; i++) {
     const win = closeView.slice(Math.max(0, i - 4), i + 1);
     const ma5  = win.reduce((a, b) => a + b, 0) / win.length;
-    hlOscHigh.push(i < closeView.length ? +(highArr.slice(vi)[i] - ma5).toFixed(3) : null);
-    hlOscLow.push( i < closeView.length ? +(lowArr.slice(vi)[i]  - ma5).toFixed(3) : null);
+    hlOscHigh.push(+(highArr.slice(vi)[i] - ma5).toFixed(3));
+    hlOscLow.push( +(lowArr.slice(vi)[i]  - ma5).toFixed(3));
   }
+  // Pad with null for the synthetic tomorrow label slot
+  hlOscHigh.push(null);
+  hlOscLow.push(null);
   const maxOsc = Math.max(...hlOscHigh.filter(v=>v!=null).map(Math.abs),
                            ...hlOscLow.filter(v=>v!=null).map(Math.abs), 0.01);
 
   const c2 = new Chart(document.getElementById('caiVol'), {
     type: 'bar', plugins: [makeCaiCross()],
-    data: { labels: dateView, datasets: [
+    data: { labels: chartLabels, datasets: [
       { label:'高 − 5日均', data:hlOscHigh,
         backgroundColor: hlOscHigh.map(v => v == null ? 'transparent' : v >= 0 ? 'rgba(192,37,45,0.55)' : 'rgba(42,157,143,0.35)'),
         borderWidth:0 },
@@ -5854,7 +5834,20 @@ async function stkEnsureSdw(code5) {
   try {
     const r = await fetch(`${SDW_BASE_URL}/sdw_${code5}.json`, {cache:'no-cache'});
     if (!r.ok) return;
-    stkSdwCache[code5] = await r.json();
+    const lib = await r.json();
+    stkSdwCache[code5] = lib;
+    // Merge into global sdwData/sdwDates so drawSdwChart (持倉集中度趨勢) can use it
+    // without a second network request via fetchSdwCodeHistory.
+    if (typeof sdwData !== 'undefined') {
+      const byDate = lib.by_date || {};
+      for (const [ds, entry] of Object.entries(byDate)) {
+        if (!sdwData[ds]) sdwData[ds] = {};
+        sdwData[ds][code5] = entry;
+      }
+      const newDates = Object.keys(byDate).filter(d => !sdwDates.includes(d));
+      if (newDates.length)
+        sdwDates = [...new Set([...sdwDates, ...newDates])].sort();
+    }
   } catch(e) {}
 }
 
@@ -5865,7 +5858,7 @@ async function stkBuildSeries(code5, fromDs, toDs) {
   // y-1 included for warmup period; y+1 removed — future year files don't exist
   const curYear = new Date().getFullYear();
   const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
-    .flatMap(y => [y-1, y]).filter(y => y >= 2020 && y <= curYear))];
+    .flatMap(y => [y-1, y]).filter(y => y >= YAHOO_START_YEAR && y <= curYear))];
   for (const y of years) {
     await loadTvYear(y);
     await stkEnsureSfc(y);
@@ -5981,7 +5974,7 @@ function stkDrawCharts(series) {
     }},
     grid:{color:gc}, border:{display:false} };
 
-  let afterFitR = scale => { scale.width = YW; };
+  const afterFitR = scale => { scale.width = 38; };  // narrower: vol/% ticks shorter than price ticks
 
   // ── Crosshair plugin factory — each chart gets its own instance
   // Sharing one plugin object across multiple charts causes Chart.js 4.x conflicts.
@@ -6113,7 +6106,7 @@ function stkDrawCharts(series) {
       scales:{
         x:xHide,
         yP:{position:'left',  afterFit:afterFitY, ticks:{font:{size:10},color:'#888'},grid:{color:gc},border:{display:false}},
-        yV:{position:'right', afterFit:afterFitR, min:0, max:maxVol*4,
+        yV:{position:'right', afterFit:afterFitR, min:0, max:maxVol*3,
           ticks:{font:{size:9},color:'rgba(128,128,128,0.6)',maxTicksLimit:4,
             callback: v => {
               if (v === 0) return '0';
