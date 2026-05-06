@@ -399,31 +399,35 @@ def get_prev_ranks(exclude_date: datetime = None) -> dict:
     }
 
 # ── Stock classification ──────────────────────────────────────────────────────
+# ETF code list — checked FIRST before stock_ref so it cannot be overridden by
+# a wrong type in stock_ref. Name keywords catch future listings not yet in the list.
+_ETF_CODES = {
+    "02800","02801","02809","02816","02817","02819","02821","02822","02823","02825",
+    "02827","02828","02832","02835","02836","02838","02839","02840","02846",
+    "03009","03010","03011","03012","03013","03019","03020","03021","03024",
+    "03032","03033","03035","03037","03040","03041","03049","03056","03060",
+    "03067","03070","03072","03079","03081","03086","03087","03096","03097",
+    "03110","03115","03118","03122","03127","03128","03129","03143","03145",
+    "03147","03150","03160","03161","03162","03165","03171","03175","03188",
+    "02803","02820",
+}
+_ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND", "LEVERAGED", "INVERSE",
+                "FUTURES ETF", "BOND ETF", "GOLD ETF", "MONEY MARKET ETF")
+
 def classify_stock(code: str, name: str) -> str:
-    t = get_type(code)
-    if t:
-        return t
     n = name.upper()
-    # ETF codes: known list + name-based catch-all so new listings are covered automatically.
-    # Name keywords cover standard ETFs, tracker funds, index funds, L&I products.
-    ETF_CODES = {
-        "02800","02801","02809","02816","02817","02819","02821","02822","02823","02825",
-        "02827","02828","02832","02835","02836","02838","02839","02840","02846",
-        "03009","03010","03011","03012","03013","03019","03020","03021","03024",
-        "03032","03033","03035","03037","03040","03041","03049","03056","03060",
-        "03067","03070","03072","03079","03081","03086","03087","03096","03097",
-        "03110","03115","03118","03122","03127","03128","03129","03143","03145",
-        "03147","03150","03160","03161","03162","03165","03171","03175","03188",
-        "02803",
-    }
-    ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND", "LEVERAGED", "INVERSE",
-                   "FUTURES ETF", "BOND ETF", "GOLD ETF", "MONEY MARKET ETF")
+    # ETF check FIRST — code list + name keywords take priority over stock_ref
+    # This prevents a stock_ref entry with wrong type from masking an ETF.
+    if code in _ETF_CODES or any(k in n for k in _ETF_NAME_KW): return "etf"
+    # stock_ref explicit types (bluechip/stable/general) come next
+    t = get_type(code)
+    if t: return t
+    # Keyword fallback for stocks not in stock_ref
     STABLE_KW   = ("BANK","ENERGY","POWER","GAS","PETRO","SINOPEC","CNOOC","MTR","UTILITY")
     BLUECHIP_KW = ("TENCENT","MEITUAN","ALIBABA","BABA","XIAOMI","HSBC","AIA","PING AN",
                    "HKEX","CK ","HENDERSON","SHK","SWIRE","GALAXY","SANDS","MELCO")
-    if code in ETF_CODES or any(k in n for k in ETF_NAME_KW): return "etf"
-    if any(k in n for k in STABLE_KW):                 return "stable"
-    if any(k in n for k in BLUECHIP_KW):               return "bluechip"
+    if any(k in n for k in STABLE_KW):   return "stable"
+    if any(k in n for k in BLUECHIP_KW): return "bluechip"
     return "general"
 
 THRESHOLDS = {

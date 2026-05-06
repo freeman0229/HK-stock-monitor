@@ -148,10 +148,8 @@ FIX LOG
   (c) offset:false on both chart x-axes — bar chart default offset:true was misaligning
       pixel mapping vs the line chart (same fix as Fix 13).
   (d) Click handler + clear button both call hsiVolInst.draw() after hsiChartInst.update().
-  (e) makeHsiVolVline uses proportional pixel calculation (chartArea.left + idx/(N-1) *
-      chartArea.width) instead of x.getPixelForValue() — the bar chart's null last entry
-      (下週 prediction slot) causes offset drift in getPixelForValue(), while proportional
-      calculation always aligns with the top line chart regardless of bar positioning.
+  (e) makeHsiVolVline uses scales.x.getPixelForValue(idx) so vline lands on the bar
+      chart's actual slot centre — aligned with the top chart's vlinePlugin.
   Location: vlinePlugin, makeHsiVolVline, hsiChartInst/hsiVolInst x-axis, click handler.
 
 [Fix 16 — 2026-05-04] 異常信號 tab added (panel-signal) after 大戶持倉.
@@ -3358,6 +3356,7 @@ function renderSqueezeTop10(stocks) {
   // squeeze_score is pre-computed in main.py and written to data.json
   const eligible = stocks.filter(s =>
     s.turnover > 0 && (s.short_ratio||0) > 0 && (s.days_to_cover||0) > 0
+    && s.stock_type !== 'etf'  // ETFs excluded: high concentration/short is structural
   );
   const top10 = [...eligible]
     .sort((a,b) => (b.squeeze_score||0) - (a.squeeze_score||0))
@@ -5435,13 +5434,13 @@ function renderHsiPanel() {
     }
   };
 
-  // Bottom chart vline — use identical xp calculation as top chart
+  // Bottom chart vline — use scale.getPixelForValue so bar-slot positions align exactly
   const makeHsiVolVline = () => ({
     afterDraw(chart) {
       if (hsiVlineIdx === null) return;
-      const {ctx, canvas, chartArea} = chart;
-      if (!chartArea) return;
-      const xp = chartArea.left + (hsiVlineIdx / (N - 1)) * (chartArea.right - chartArea.left);
+      const {ctx, canvas, chartArea, scales} = chart;
+      if (!chartArea || !scales.x) return;
+      const xp = scales.x.getPixelForValue(hsiVlineIdx);
       if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
@@ -5609,7 +5608,6 @@ function renderHsiPanel() {
           data: [...highVsMa, null],
           backgroundColor: 'rgba(226,75,74,0.55)',
           borderWidth: 0,
-          stack: 'dev',
         },
         {
           label: '週低 − 4週均',
@@ -5617,7 +5615,6 @@ function renderHsiPanel() {
           data: [...lowVsMa, null],
           backgroundColor: 'rgba(55,138,221,0.55)',
           borderWidth: 0,
-          stack: 'dev',
         }
       ]
     },
@@ -5629,7 +5626,7 @@ function renderHsiPanel() {
         tooltip: { enabled: false }
       },
       scales: {
-        x: { offset: false, stacked: true, ticks: {
+        x: { offset: false, ticks: {
             callback: (v,i) => {
               if (i === N-1) return '下週 ' + predLabel.slice(5);
               return i % tickEvery === 0 ? chartLabels[i].slice(0,7) : '';
@@ -5639,7 +5636,6 @@ function renderHsiPanel() {
           }, grid: { display: false } },
         y: {
           afterFit: s => { s.width = 52; },
-          stacked: true,
           ticks: { callback: v => v > 0 ? '+'+v : v, font: { size: 10 }, color: isDark ? 'rgba(255,255,255,0.4)' : '#888' },
           grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
         }
