@@ -5405,10 +5405,10 @@ function renderHsiPanel() {
     id: 'hsiVline',
     afterDraw(chart) {
       if (hsiVlineIdx === null) return;
-      const {ctx, canvas, chartArea} = chart;
-      if (!chartArea) return;
-      // Use chartArea coordinates — afterFit ensures both charts have same chartArea.left
-      const xp = chartArea.left + (hsiVlineIdx / (N - 1)) * (chartArea.right - chartArea.left);
+      const {ctx, canvas, chartArea, scales} = chart;
+      if (!chartArea || !scales.x) return;
+      // Use getPixelForValue — consistent with sub-chart vline
+      const xp = scales.x.getPixelForValue(hsiVlineIdx);
       if (xp < chartArea.left - 1 || xp > chartArea.right + 1) return;
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, canvas.width, canvas.height); ctx.clip();
