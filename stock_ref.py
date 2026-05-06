@@ -70,11 +70,12 @@ STOCKS: dict[str, dict] = {
     "00945": {"en":"MANULIFE",              "zh":"宏利金融",          "industry":"INS","ind_zh":"保險",     "type":"bluechip"},
     "06161": {"en":"CHINA TAIPING",         "zh":"中國太平",          "industry":"INS","ind_zh":"保險",     "type":"bluechip"},
     "02378": {"en":"PRUDENTIAL",            "zh":"保誠",              "industry":"INS","ind_zh":"保險",     "type":"bluechip"},
+    "02338": {"en":"PICC GROUP",             "zh":"中國人民保險集團",  "industry":"INS","ind_zh":"保險",     "type":"bluechip"},
 
     # ── 科技平台 ─────────────────────────────────────────────────────────────
     "00700": {"en":"TENCENT",               "zh":"騰訊控股",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "09988": {"en":"BABA-W",                "zh":"阿里巴巴",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
-    "00981": {"en":"SMIC",                   "zh":"中芯國際",          "industry":"TEC","ind_zh":"科技",     "type":"general"},
+    "00981": {"en":"SMIC",                   "zh":"中芯國際",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "01810": {"en":"XIAOMI-W",              "zh":"小米集團",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "09618": {"en":"JD-SW",                 "zh":"京東集團",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "09888": {"en":"BAIDU-SW",              "zh":"百度集團",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
@@ -87,6 +88,8 @@ STOCKS: dict[str, dict] = {
     "02382": {"en":"SUNNY OPT.",            "zh":"舜宇光學科技",      "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "03750": {"en":"CATL",                  "zh":"寧德時代",          "industry":"TEC","ind_zh":"科技",     "type":"bluechip"},
     "09660": {"en":"HORIZONROBOT-W",         "zh":"地平線機器人-W",    "industry":"TEC","ind_zh":"科技",     "type":"general"},
+    "09866": {"en":"NIO-SW",                 "zh":"蔚來",              "industry":"AUT","ind_zh":"汽車",     "type":"bluechip"},
+    "09901": {"en":"NEW ORIENTAL-S",         "zh":"新東方",            "industry":"SNS","ind_zh":"軟件服務", "type":"bluechip"},
 
     # ── 軟件服務 ─────────────────────────────────────────────────────────────
     "00241": {"en":"ALI HEALTH",            "zh":"阿里健康",          "industry":"SNS","ind_zh":"軟件服務", "type":"bluechip"},
@@ -116,9 +119,16 @@ STOCKS: dict[str, dict] = {
     "00003": {"en":"HK & CHINA GAS",        "zh":"香港中華煤氣",      "industry":"UTL","ind_zh":"公用事業", "type":"stable"},
     "00006": {"en":"POWER ASSETS",          "zh":"電能實業",          "industry":"UTL","ind_zh":"公用事業", "type":"stable"},
     "00066": {"en":"MTR CORPORATION",       "zh":"港鐵公司",          "industry":"UTL","ind_zh":"公用事業", "type":"stable"},
+    "00855": {"en":"CHINA WATER AFF",        "zh":"中國水務",          "industry":"UTL","ind_zh":"公用事業", "type":"stable"},
+    "00270": {"en":"GUANGDONG INV",          "zh":"粵海投資",          "industry":"UTL","ind_zh":"公用事業", "type":"stable"},
+    "00177": {"en":"JIANGSU EXP",            "zh":"江蘇高速",          "industry":"UTL","ind_zh":"公用事業", "type":"stable"},
+    "00107": {"en":"SICHUAN EXP",            "zh":"四川成渝高速",      "industry":"UTL","ind_zh":"公用事業", "type":"stable"},
+    "00995": {"en":"ANHUI EXP",              "zh":"安徽高速",          "industry":"UTL","ind_zh":"公用事業", "type":"stable"},
     "00941": {"en":"CHINA MOBILE",          "zh":"中國移動",          "industry":"TEL","ind_zh":"電訊",     "type":"stable"},
     "00762": {"en":"CHINA UNICOM",          "zh":"中國聯通",          "industry":"TEL","ind_zh":"電訊",     "type":"stable"},
     "00008": {"en":"PCCW",                  "zh":"電訊盈科",          "industry":"TEL","ind_zh":"電訊",     "type":"stable"},
+    "01816": {"en":"CHINA TELECOM",          "zh":"中國電信",          "industry":"TEL","ind_zh":"電訊",     "type":"stable"},
+    "00763": {"en":"ZTE CORP",               "zh":"中興通訊",          "industry":"TEL","ind_zh":"電訊",     "type":"stable"},
 
     # ── 地產 ─────────────────────────────────────────────────────────────────
     "00016": {"en":"SHK PPT",               "zh":"新鴻基地產",        "industry":"REP","ind_zh":"地產",     "type":"bluechip"},
@@ -128,7 +138,7 @@ STOCKS: dict[str, dict] = {
     "00101": {"en":"HANG LUNG PPT",         "zh":"恒隆地產",          "industry":"REP","ind_zh":"地產",     "type":"general"},
     "00014": {"en":"HYSAN DEV",             "zh":"希慎興業",          "industry":"REP","ind_zh":"地產",     "type":"general"},
     "01109": {"en":"CR LAND",               "zh":"華潤置地",          "industry":"REP","ind_zh":"地產",     "type":"bluechip"},
-    "00960": {"en":"LONGFOR PPT",           "zh":"龍湖集團",          "industry":"REP","ind_zh":"地產",     "type":"general"},
+    "00960": {"en":"LONGFOR PPT",           "zh":"龍湖集團",          "industry":"REP","ind_zh":"地產",     "type":"bluechip"},
     "00823": {"en":"LINK REIT",             "zh":"領展房產基金",      "industry":"REP","ind_zh":"地產",     "type":"stable"},
 
     # ── 醫療 ─────────────────────────────────────────────────────────────────
@@ -143,7 +153,11 @@ STOCKS: dict[str, dict] = {
     "06869": {"en":"YANGTZE OFC",             "zh":"長飛光纖光纜",       "industry":"IND","ind_zh":"工業",     "type":"general"},
     "00390": {"en":"CHINA RAILWAY",         "zh":"中國中鐵",          "industry":"IND","ind_zh":"工業",     "type":"stable"},
     "01186": {"en":"CR CONSTRUCTION",       "zh":"中國鐵建",          "industry":"IND","ind_zh":"工業",     "type":"stable"},
+    "01800": {"en":"CHINA COMM CONST",       "zh":"中國交通建設",      "industry":"IND","ind_zh":"工業",     "type":"stable"},
+    "03969": {"en":"CRRC CORP",              "zh":"中國中車",          "industry":"IND","ind_zh":"工業",     "type":"stable"},
     "06690": {"en":"HAIER SMART HOME",      "zh":"海爾智家",          "industry":"IND","ind_zh":"工業",     "type":"general"},
+    "02313": {"en":"SHENZHOU INTL",          "zh":"申洲國際",          "industry":"IND","ind_zh":"工業",     "type":"bluechip"},
+    "00669": {"en":"TECHTRONIC IND",          "zh":"創科實業",          "industry":"IND","ind_zh":"工業",     "type":"bluechip"},
 
     # ── 金屬礦產 ─────────────────────────────────────────────────────────────
     "02899": {"en":"CHALCO",                  "zh":"中國鋁業",           "industry":"MET","ind_zh":"金屬礦產", "type":"general"},
@@ -155,6 +169,8 @@ STOCKS: dict[str, dict] = {
     "00316": {"en":"OOIL",                  "zh":"東方海外國際",      "industry":"TRN","ind_zh":"運輸",     "type":"general"},
     "01199": {"en":"COSCO SHIPPING",        "zh":"中遠海控",          "industry":"TRN","ind_zh":"運輸",     "type":"general"},
     "00144": {"en":"CM PORT",               "zh":"招商局港口",        "industry":"TRN","ind_zh":"運輸",     "type":"general"},
+    "00753": {"en":"AIR CHINA",              "zh":"中國國航",          "industry":"TRN","ind_zh":"運輸",     "type":"bluechip"},
+    "00670": {"en":"CHINA EASTERN AIR",      "zh":"中國東方航空",      "industry":"TRN","ind_zh":"運輸",     "type":"bluechip"},
 
     # ── 零售消費 ─────────────────────────────────────────────────────────────
     "02020": {"en":"ANTA SPORTS",            "zh":"安踏體育",          "industry":"RET","ind_zh":"零售消費", "type":"bluechip"},
@@ -175,6 +191,8 @@ STOCKS: dict[str, dict] = {
     "00001": {"en":"CKH HOLDINGS",          "zh":"長和",              "industry":"CGM","ind_zh":"綜合企業", "type":"bluechip"},
     "00019": {"en":"SWIRE PACIFIC A",       "zh":"太古股份Ａ",        "industry":"CGM","ind_zh":"綜合企業", "type":"bluechip"},
     "00267": {"en":"CITIC",                 "zh":"中信股份",          "industry":"CGM","ind_zh":"綜合企業", "type":"bluechip"},
+    "01038": {"en":"CKI HOLDINGS",           "zh":"長江基建",          "industry":"CGM","ind_zh":"綜合企業", "type":"bluechip"},
+    "06098": {"en":"CR MIXC",                "zh":"華潤萬象生活",      "industry":"REP","ind_zh":"地產",     "type":"bluechip"},
 }
 
 # ── Lookup helpers ────────────────────────────────────────────────────────────

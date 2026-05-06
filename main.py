@@ -404,11 +404,24 @@ def classify_stock(code: str, name: str) -> str:
     if t:
         return t
     n = name.upper()
-    ETF_CODES   = {"02800","02828","03033","03032","03188","02846","03140","03037","03011","02823"}
+    # ETF codes: known list + name-based catch-all so new listings are covered automatically.
+    # Name keywords cover standard ETFs, tracker funds, index funds, L&I products.
+    ETF_CODES = {
+        "02800","02801","02809","02816","02817","02819","02821","02822","02823","02825",
+        "02827","02828","02832","02835","02836","02838","02839","02840","02846",
+        "03009","03010","03011","03012","03013","03019","03020","03021","03024",
+        "03032","03033","03035","03037","03040","03041","03049","03056","03060",
+        "03067","03070","03072","03079","03081","03086","03087","03096","03097",
+        "03110","03115","03118","03122","03127","03128","03129","03143","03145",
+        "03147","03150","03160","03161","03162","03165","03171","03175","03188",
+        "02803",
+    }
+    ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND", "LEVERAGED", "INVERSE",
+                   "FUTURES ETF", "BOND ETF", "GOLD ETF", "MONEY MARKET ETF")
     STABLE_KW   = ("BANK","ENERGY","POWER","GAS","PETRO","SINOPEC","CNOOC","MTR","UTILITY")
     BLUECHIP_KW = ("TENCENT","MEITUAN","ALIBABA","BABA","XIAOMI","HSBC","AIA","PING AN",
                    "HKEX","CK ","HENDERSON","SHK","SWIRE","GALAXY","SANDS","MELCO")
-    if code in ETF_CODES:                               return "etf"
+    if code in ETF_CODES or any(k in n for k in ETF_NAME_KW): return "etf"
     if any(k in n for k in STABLE_KW):                 return "stable"
     if any(k in n for k in BLUECHIP_KW):               return "bluechip"
     return "general"
@@ -472,7 +485,8 @@ def classify_insight(stock_type, short_ratio, short_avg,
     if delta_turnover_24d >= _TURNOVER_DELTA_ELEVATED:            return "🔼 換手上升"
 
     flow_out   = sb_net < 0 and pct_delta < 0
-    high_short = short_ratio > hi + spike_warn and vol_ratio > 2
+    # ETFs excluded: high short ratios are structural (hedging/arbitrage), not signals
+    high_short = stock_type != "etf" and short_ratio > hi + spike_warn and vol_ratio > 2
     if flow_out:                  return "🚨 北水流出"
     if high_short:                return "🚨 不尋常沽空"
 
