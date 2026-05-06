@@ -3951,12 +3951,16 @@ function renderSdwPanel() {
   renderDetailCard(sdwCurCode, ds, holders, raw, _prevRaw, prevHolders);
 
   // ── Chart ────────────────────────────────────────────────────────────────
-  drawSdwChart(sdwCurCode, ds);
-  drawGroupHistoryChart(sdwCurCode);
+  // Build shared date array so both charts use identical x-axis
+  const _cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
+  const _sharedDates = [...new Set(sdwDates)].sort()
+    .filter(d => d >= _cutoff && (sdwData[d]||{})[sdwCurCode]);
+  drawSdwChart(sdwCurCode, ds, _sharedDates);
+  drawGroupHistoryChart(sdwCurCode, _sharedDates);
 }
 
 // ── Canvas chart: concentration trend across all stored dates ───────────────
-function drawSdwChart(code, selectedDs) {
+function drawSdwChart(code, selectedDs, sharedDates) {
   const canvas = document.getElementById('sdwCanvas');
   if (!canvas) return;
   const dpr = window.devicePixelRatio || 1;
@@ -3970,11 +3974,13 @@ function drawSdwChart(code, selectedDs) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
 
-  // Collect time series: last 1 year only
+  // Use caller-provided shared dates for x-axis alignment with group chart
   const _chartTopN = sdwTopN || 5;
-  const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
-  const series = [...new Set(sdwDates)].sort()
-    .filter(ds => ds >= cutoff && (sdwData[ds]||{})[code])
+  const _dates = sharedDates || (() => {
+    const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
+    return [...new Set(sdwDates)].sort().filter(ds => ds >= cutoff && (sdwData[ds]||{})[code]);
+  })();
+  const series = _dates
     .map(ds => {
       const _raw = sdwData[ds][code];
       const h = _raw ? (Array.isArray(_raw) ? _raw : (_raw.p || [])) : [];
@@ -4243,7 +4249,7 @@ function renderDetailCard(code, ds, holders, rawEntry, prevRawEntry, prevHolders
 }
 
 // ── Group history chart: 大戶/北水/散戶 grouped bars (weekly, 0–100% Y) ─────────
-function drawGroupHistoryChart(code) {
+function drawGroupHistoryChart(code, sharedDates) {
   const canvas = document.getElementById('sdwGroupCanvas');
   if (!canvas) return;
   const dpr = window.devicePixelRatio || 1;
@@ -4257,8 +4263,11 @@ function drawGroupHistoryChart(code) {
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
 
-  const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
-  const dates  = [...new Set(sdwDates)].filter(d => d >= cutoff && (sdwData[d]||{})[code]).sort();
+  // Use caller-provided shared dates for x-axis alignment with concentration chart
+  const dates = sharedDates || (() => {
+    const cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
+    return [...new Set(sdwDates)].filter(d => d >= cutoff && (sdwData[d]||{})[code]).sort();
+  })();
 
   if (dates.length < 2) {
     ctx.fillStyle = '#aaa'; ctx.font = '12px sans-serif';
