@@ -4,3 +4,7 @@ ccass_sdw.db
 __pycache__/ 
 ccass_cache/ 
 "*.pyc" 
+.wrangler/ccass.db 
+ccass.db-shm 
+ccass.db-wal 
+sdw_*.json 
