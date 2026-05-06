@@ -1254,9 +1254,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <div class="sum-sub">隻</div>
     </div>
     <div class="sum-card">
-      <div class="sum-label">數據日期</div>
-      <div class="sum-val" id="sig-date" style="font-size:14px;font-weight:600">--</div>
-      <div class="sum-sub">最後更新</div>
+      <div class="sum-label">分析日期</div>
+      <div class="sum-val" id="sig-run-date" style="font-size:14px;font-weight:600">--</div>
+      <div class="sum-sub">CCASS交易日: <span id="sig-date">--</span></div>
     </div>
   </div>
 
@@ -3996,14 +3996,15 @@ function drawSdwChart(code, selectedDs, sharedDates) {
     return;
   }
 
-  const PAD   = { top: 18, right: 16, bottom: 34, left: 44 };
+  const PAD   = { top: 16, right: 48, bottom: 28, left: 44 };  // matches group chart
   const cW    = W - PAD.left - PAD.right;
   const cH    = H - PAD.top  - PAD.bottom;
   const n     = series.length;
 
   // y-range: 0 to max topNsum + 10%
   const maxY = Math.max(...series.map(s => s.topNsum)) * 1.1;
-  const xAt  = i => PAD.left + (i / (n-1)) * cW;
+  // xAt: bar-slot centre — matches drawGroupHistoryChart for x-axis alignment
+  const xAt  = i => PAD.left + i * (cW / n) + (cW / n) / 2;
   const yAt  = v => PAD.top + cH - (v / maxY) * cH;
 
   // ── Grid lines ────────────────────────────────────────────────────────────
@@ -4094,11 +4095,9 @@ function drawSdwChart(code, selectedDs, sharedDates) {
       const mx   = e.clientX - rect.left;
       // Use rect.width for consistent CSS coordinate space
       const _cW  = rect.width - PAD.left - PAD.right;
-      // Map mouse to nearest point index using i/(n-1) spacing
-      const frac = Math.max(0, Math.min(1, (mx - PAD.left) / _cW));
-      const xAt2 = i => PAD.left + (n > 1 ? i/(n-1) : 0.5) * _cW;
-      // Map to nearest index using fraction
-      const nearIdx = Math.max(0, Math.min(n-1, Math.round(frac * (n-1))));
+      // Map mouse to nearest bar-slot index — matches bar-slot xAt formula
+      const _slotW = _cW / n;
+      const nearIdx = Math.max(0, Math.min(n-1, Math.floor((mx - PAD.left) / _slotW)));
       const best = series[nearIdx];
       if (!best) { tip2.style.display = 'none'; return; }
       tip2.innerHTML = `<b>${best.ds}</b><br>前${_chartTopN}大合計 <span style="color:#c0252d;font-weight:600">${best.topNsum.toFixed(2)}%</span>`;
@@ -4296,7 +4295,7 @@ function drawGroupHistoryChart(code, sharedDates) {
   const n      = series.length;
   const groupW = cW / n;
   const yAt    = v => PAD.top + cH - (v / 100) * cH;
-  // xAt points to center of each group — same formula as bar drawing
+  // xAt: bar-slot centre — matches drawSdwChart for x-axis alignment
   const xAt    = i => PAD.left + i * groupW + groupW / 2;
 
   // Grid: fixed 0–100%
@@ -5098,6 +5097,7 @@ function renderSignalPanel() {
   // Update date card
   const tradingDate = allStocks[0]?.ccass_trade_date || '';
   if (sigEl('sig-date')) sigEl('sig-date').textContent = tradingDate || '--';
+  if (sigEl('sig-run-date')) sigEl('sig-run-date').textContent = (updateTime || '--').slice(0, 10);
 
   // ── Section 1: 不尋常沽空 ──────────────────────────────────────────────────
   const shortStocks = allStocks
