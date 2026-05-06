@@ -1000,14 +1000,14 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <tr style="color:var(--muted);border-bottom:0.5px solid var(--border)">
             <th style="text-align:left;padding:3px 4px;font-weight:400">#</th>
             <th style="text-align:left;padding:3px 4px;font-weight:400">股票</th>
-            <th style="text-align:right;padding:3px 4px;font-weight:400">DTC</th>
-            <th style="text-align:right;padding:3px 4px;font-weight:400">集中度</th>
+            <th class="mob-hide" style="text-align:right;padding:3px 4px;font-weight:400">DTC</th>
+            <th class="mob-hide" style="text-align:right;padding:3px 4px;font-weight:400">集中度</th>
             <th style="text-align:right;padding:3px 4px;font-weight:400">沽空%</th>
             <th style="text-align:right;padding:3px 4px;font-weight:400">評分</th>
           </tr>
         </thead>
         <tbody id="squeeze-top10-body">
-          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:12px">載入中…</td></tr>
+          <tr><td colspan="4" style="text-align:center;color:var(--muted);padding:12px">載入中…</td></tr>
         </tbody>
       </table>
     </div>
@@ -3363,7 +3363,7 @@ function renderSqueezeTop10(stocks) {
     .sort((a,b) => (b.squeeze_score||0) - (a.squeeze_score||0))
     .slice(0, 15);
   if (!top10.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:12px">暫無數據</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:12px">暫無數據</td></tr>';
     return;
   }
   tbody.innerHTML = top10.map((s, i) => {
@@ -3376,8 +3376,8 @@ function renderSqueezeTop10(stocks) {
         <span style="font-weight:500;color:var(--text)">${s.name_chi||s.code}</span>
         <span style="font-size:10px;color:var(--muted);margin-left:3px">${s.code}</span>
       </td>
-      <td style="text-align:right;padding:4px 4px">${(s.days_to_cover||0).toFixed(1)}d</td>
-      <td style="text-align:right;padding:4px 4px">${(s.concentration||0).toFixed(1)}%</td>
+      <td class="mob-hide" style="text-align:right;padding:4px 4px">${(s.days_to_cover||0).toFixed(1)}d</td>
+      <td class="mob-hide" style="text-align:right;padding:4px 4px">${(s.concentration||0).toFixed(1)}%</td>
       <td style="text-align:right;padding:4px 4px">${(s.short_ratio||0).toFixed(1)}%</td>
       <td style="text-align:right;padding:4px 4px;font-weight:500;color:${risk.color}">${score}
         <span style="font-size:9px;color:var(--muted);margin-left:2px">${risk.label}</span>
