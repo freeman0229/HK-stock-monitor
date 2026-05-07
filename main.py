@@ -27,7 +27,7 @@
 #   Post-loop name re-resolution for max_holder/max_conc now correctly looks up
 #   by stored code, not last loop iteration's _sc_name. Added clarifying comment.
 #
-# [Fix 8 — 2026-05-04] SDW total_sh fallback when today's data not yet published.
+# [Fix 8 — 2026-05-07] SDW total_sh fallback queried non-existent 'total_sh' table.
 #   sdw_get_total_sh_bulk() returns empty if HKEX hasn't published today's SDW.
 #   Now falls back to most recent available date in total_sh table, preventing
 #   concentration/top10_pct/turnover_24d from being zeroed out for all stocks.
@@ -409,10 +409,11 @@ _ETF_CODES = {
     "03067","03070","03072","03079","03081","03086","03087","03096","03097",
     "03110","03115","03118","03122","03127","03128","03129","03143","03145",
     "03147","03150","03160","03161","03162","03165","03171","03175","03188",
-    "02803","02820",
+    "02803","02820","03003","03191","03486",
 }
 _ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND", "LEVERAGED", "INVERSE",
-                "FUTURES ETF", "BOND ETF", "GOLD ETF", "MONEY MARKET ETF")
+                "FUTURES ETF", "BOND ETF", "GOLD ETF", "MONEY MARKET ETF",
+                "GX CHINA", "GX HK", "CSOP", "PREMIA")
 
 def classify_stock(code: str, name: str) -> str:
     n = name.upper()
@@ -664,14 +665,16 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         _sdw_total_sh_map = {normalize_code(k): v for k, v in _sdw_total_sh_map.items()}
         log.info("SDW total_sh: %d stocks from %s", len(_sdw_total_sh_map), _sdw_total_sh_date)
         # Fallback: if today's total_sh not yet published, use most recent available date
+        # Note: get_total_sh_bulk already uses MAX(date) <= before_or_eq per code,
+        # so empty result means the DB itself has no data (e.g. failed download).
         if not _sdw_total_sh_map:
             try:
                 with _sdw_get_conn(_SDW_DB_PATH) as _sc:
                     _fb_date = _sc.execute(
-                        "SELECT date FROM total_sh WHERE date < ? ORDER BY date DESC LIMIT 1",
+                        "SELECT MAX(date) FROM metadata WHERE date < ?",
                         (_sdw_total_sh_date,)
                     ).fetchone()
-                if _fb_date:
+                if _fb_date and _fb_date[0]:
                     _sdw_total_sh_date = _fb_date[0]
                     _sdw_total_sh_map = {normalize_code(k): v
                                          for k, v in sdw_get_total_sh_bulk(_sdw_total_sh_date).items()}

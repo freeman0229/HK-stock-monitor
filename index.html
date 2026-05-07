@@ -5616,7 +5616,9 @@ function renderHsiPanel() {
       ctx.save();
       highVsMa.forEach((hv, i) => {
         const lv   = lowVsMa[i];
-        const cx   = x.getPixelForValue(i);
+        // Label-lookup for pixel — consistent with vline and main chart
+        const lIdx = chart.data.labels ? chart.data.labels.indexOf(chartLabels[i]) : i;
+        const cx   = x.getPixelForValue(lIdx < 0 ? i : lIdx);
         const x0   = cx - barW / 2;
         const hp   = y.getPixelForValue(hv);
         const lp   = y.getPixelForValue(lv);
@@ -5644,7 +5646,14 @@ function renderHsiPanel() {
     plugins: [makeHsiVolVline(), hsiOverlapPlugin],
     data: {
       labels: chartLabels,
-      datasets: [] // bars drawn by hsiOverlapPlugin; empty datasets keep scale alive
+      datasets: [{
+        // Dummy dataset — anchors x-scale and tick rendering; bars drawn by hsiOverlapPlugin
+        data: chartLabels.map(() => null),
+        backgroundColor: "transparent",
+        borderWidth: 0,
+        barPercentage: 1.0,
+        categoryPercentage: 1.0,
+      }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
