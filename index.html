@@ -2399,7 +2399,8 @@ function computeSfcCards() {
       const name  = (stock && stock.name_chi) || sfcName || code;
       return { code, name, hkd: v.hkd || 0, hkd_delta };
     })
-    .filter(e => e.hkd > 0);
+    .filter(e => e.hkd > 0)
+    .filter(e => { const s = allStocks.find(x => norm5(x.code) === e.code); return !s || s.stock_type !== 'etf'; });
 
   if (!entries.length) return;
 
@@ -3402,6 +3403,7 @@ function drawShortRiskMap(stocks) {
   const pts = stocks.filter(s =>
     s.turnover > 0 && s.short_ratio > 0 && (s.days_to_cover||0) > 0
     && (s.squeeze_score || 0) >= 6
+    && s.stock_type !== 'etf'  // ETFs excluded: structural short activity
   );
 
   const PAD = {top:24, right:72, bottom:50, left:56};
