@@ -755,7 +755,7 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
             --exclude "*" --include "sdw_*.json" \
             --no-progress
-          echo "Downloaded $(ls sdw_*.json 2>/dev/null | wc -l) JSON files"
+          echo "Downloaded $(ls sdw_*.json 2>/dev/null | wc -l) JSON files" || true
       - name: Import JSON files into SQLite DB
         run: |
           python3 - <<'EOF'
