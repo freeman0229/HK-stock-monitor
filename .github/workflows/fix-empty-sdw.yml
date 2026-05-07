@@ -208,10 +208,11 @@ jobs:
       - name: Verify DB before export
         if: ${{ inputs.dry_run == 'false' }}
         run: |
-          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
-          echo "DB has $COUNT distinct dates in holdings"
-          [ "$COUNT" -gt 1 ] || \
-            { echo "ERROR: DB has only $COUNT date — aborting export"; exit 1; }
+          DATES=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
+          ROWS=$(sqlite3 ccass_sdw.db "SELECT COUNT(*) FROM holdings;")
+          echo "DB has $DATES distinct dates and $ROWS total holdings rows"
+          [ "$ROWS" -gt 100 ] || \
+            { echo "ERROR: DB has only $ROWS holdings rows — aborting export"; exit 1; }
 
       - name: Export SDW chart files
         if: ${{ inputs.dry_run == 'false' }}

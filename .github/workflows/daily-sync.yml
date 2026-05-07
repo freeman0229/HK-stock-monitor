@@ -259,8 +259,14 @@ jobs:
           export AWS_SECRET_ACCESS_KEY="${{ secrets.R2_SECRET_ACCESS_KEY }}"
           export AWS_DEFAULT_REGION="auto"
           python ccass_sdw_library.py
+      - name: Verify DB before upload
+        run: |
+          DATES=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
+          ROWS=$(sqlite3 ccass_sdw.db "SELECT COUNT(*) FROM holdings;")
+          echo "DB has $DATES distinct dates and $ROWS total holdings rows"
+          [ "$ROWS" -gt 100 ] || \
+            { echo "ERROR: DB has only $ROWS holdings rows — aborting upload to protect R2 data"; exit 1; }
       - name: Upload DB to R2
-        if: always()
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -268,12 +274,6 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
-      - name: Verify DB before export
-        run: |
-          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
-          echo "DB has $COUNT distinct dates"
-          [ "$COUNT" -gt 1 ] || \
-            { echo "ERROR: DB has only $COUNT date — aborting export to protect R2 data"; exit 1; }
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
       - name: Upload SDW chart files to R2
@@ -333,8 +333,14 @@ jobs:
           export AWS_SECRET_ACCESS_KEY="${{ secrets.R2_SECRET_ACCESS_KEY }}"
           export AWS_DEFAULT_REGION="auto"
           python ccass_sdw_library.py --update
+      - name: Verify DB before upload
+        run: |
+          DATES=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
+          ROWS=$(sqlite3 ccass_sdw.db "SELECT COUNT(*) FROM holdings;")
+          echo "DB has $DATES distinct dates and $ROWS total holdings rows"
+          [ "$ROWS" -gt 100 ] || \
+            { echo "ERROR: DB has only $ROWS holdings rows — aborting upload to protect R2 data"; exit 1; }
       - name: Upload DB to R2
-        if: always()
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -342,12 +348,6 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
-      - name: Verify DB before export
-        run: |
-          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
-          echo "DB has $COUNT distinct dates"
-          [ "$COUNT" -gt 1 ] || \
-            { echo "ERROR: DB has only $COUNT date — aborting export to protect R2 data"; exit 1; }
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
       - name: Upload SDW chart files to R2
@@ -635,8 +635,14 @@ jobs:
         env:
           SDW_WORKERS: "2"
         run: python ccass_sdw_library.py --date "${{ inputs.backfill_date }}"
+      - name: Verify DB before upload
+        run: |
+          DATE="${{ inputs.backfill_date }}"
+          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(*) FROM holdings WHERE date='${DATE}';")
+          echo "DB has $COUNT holdings rows for ${DATE}"
+          [ "$COUNT" -gt 100 ] || \
+            { echo "ERROR: DB has only $COUNT rows for ${DATE} — aborting upload to protect R2 data"; exit 1; }
       - name: Upload DB to R2
-        if: always()
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -644,12 +650,6 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
-      - name: Verify DB before export
-        run: |
-          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
-          echo "DB has $COUNT distinct dates"
-          [ "$COUNT" -gt 1 ] || \
-            { echo "ERROR: DB has only $COUNT date — aborting export to protect R2 data"; exit 1; }
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
       - name: Upload SDW chart files to R2
@@ -697,8 +697,14 @@ jobs:
         env:
           SDW_WORKERS: "3"
         run: python ccass_sdw_library.py --date "${{ inputs.backfill_date }}"
+      - name: Verify DB before upload
+        run: |
+          DATE="${{ inputs.backfill_date }}"
+          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(*) FROM holdings WHERE date='${DATE}';")
+          echo "DB has $COUNT holdings rows for ${DATE}"
+          [ "$COUNT" -gt 100 ] || \
+            { echo "ERROR: DB has only $COUNT rows for ${DATE} — aborting upload to protect R2 data"; exit 1; }
       - name: Upload DB to R2
-        if: always()
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -706,12 +712,6 @@ jobs:
         run: |
           [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
-      - name: Verify DB before export
-        run: |
-          COUNT=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
-          echo "DB has $COUNT distinct dates"
-          [ "$COUNT" -gt 1 ] || \
-            { echo "ERROR: DB has only $COUNT date — aborting export to protect R2 data"; exit 1; }
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
       - name: Upload SDW chart files to R2
@@ -745,6 +745,17 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
+      - name: Download sdw_*.json files from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 sync s3://hk-stock-monitor/ . \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
+            --exclude "*" --include "sdw_*.json" \
+            --no-progress
+          echo "Downloaded $(ls sdw_*.json 2>/dev/null | wc -l) JSON files"
       - name: Import JSON files into SQLite DB
         run: python ccass_sdw_library.py --migrate-json
       - name: Show DB stats
