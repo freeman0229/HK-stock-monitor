@@ -757,7 +757,80 @@ jobs:
             --no-progress
           echo "Downloaded $(ls sdw_*.json 2>/dev/null | wc -l) JSON files"
       - name: Import JSON files into SQLite DB
-        run: python ccass_sdw_library.py --migrate-json
+        run: |
+          python3 - <<'EOF'
+          import glob, json, os, sqlite3, re
+          from datetime import datetime
+
+          DB = "ccass_sdw.db"
+          files = sorted(glob.glob("sdw_*.json"))
+          print(f"Found {len(files)} sdw_*.json files to import")
+          if not files:
+              print("ERROR: no sdw_*.json files found"); exit(1)
+
+          conn = sqlite3.connect(DB)
+          conn.executescript("""
+              CREATE TABLE IF NOT EXISTS metadata (
+                  date TEXT NOT NULL, code TEXT NOT NULL,
+                  total_sh INTEGER NOT NULL DEFAULT 0,
+                  issued_sh INTEGER NOT NULL DEFAULT 0,
+                  fetched_at TEXT,
+                  PRIMARY KEY (date, code));
+              CREATE TABLE IF NOT EXISTS holdings (
+                  date TEXT NOT NULL, code TEXT NOT NULL,
+                  pid TEXT NOT NULL, name TEXT NOT NULL,
+                  shares INTEGER NOT NULL, pct REAL NOT NULL,
+                  PRIMARY KEY (date, code, pid));
+              CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+              CREATE INDEX IF NOT EXISTS idx_meta_date ON metadata(date);
+              CREATE INDEX IF NOT EXISTS idx_hold_date_code ON holdings(date, code);
+          """)
+          conn.execute("INSERT OR REPLACE INTO settings VALUES ('schema_version','4')")
+
+          total_imported = 0
+          total_skipped  = 0
+          now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+          for fpath in files:
+              # Derive 5-digit code from filename: sdw_00700.json -> 00700
+              code = os.path.basename(fpath).replace("sdw_","").replace(".json","")
+              if not re.match(r'^\d{5}$', code):
+                  print(f"  skip {fpath}: cannot parse code")
+                  continue
+              try:
+                  with open(fpath, encoding="utf-8") as f:
+                      data = json.load(f)
+              except Exception as e:
+                  print(f"  skip {fpath}: {e}"); continue
+
+              by_date = data.get("by_date", {})
+              imported = 0
+              for ds, payload in by_date.items():
+                  exists = conn.execute(
+                      "SELECT 1 FROM metadata WHERE date=? AND code=?", (ds, code)
+                  ).fetchone()
+                  if exists:
+                      total_skipped += 1; continue
+                  conn.execute(
+                      "INSERT OR REPLACE INTO metadata (date,code,total_sh,issued_sh,fetched_at) VALUES (?,?,?,?,?)",
+                      (ds, code, payload.get("total_sh",0), payload.get("issued_sh",0), now)
+                  )
+                  for p in payload.get("p", []):
+                      conn.execute(
+                          "INSERT OR REPLACE INTO holdings (date,code,pid,name,shares,pct) VALUES (?,?,?,?,?,?)",
+                          (ds, code, p.get("pid",""), p.get("name",""), p.get("sh",0), p.get("pct",0.0))
+                      )
+                  imported += 1
+              total_imported += imported
+
+          conn.commit()
+          conn.close()
+
+          n_dates = sqlite3.connect(DB).execute("SELECT COUNT(DISTINCT date) FROM holdings").fetchone()[0]
+          n_rows  = sqlite3.connect(DB).execute("SELECT COUNT(*) FROM holdings").fetchone()[0]
+          print(f"Done — imported={total_imported} skipped={total_skipped}")
+          print(f"DB now has {n_dates} distinct dates, {n_rows:,} holdings rows")
+          EOF
       - name: Show DB stats
         run: python ccass_sdw_library.py --stats
       - name: Upload DB to R2
