@@ -980,7 +980,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   </div>
   <div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:12px 12px 8px;margin-bottom:16px;position:relative;display:flex;gap:16px;align-items:flex-start">
     <!-- Left: chart -->
-    <div style="flex:0 0 60%;min-width:0">
+    <div class="mob-hide" style="flex:0 0 60%;min-width:0">
       <canvas id="shortRiskCanvas" style="cursor:crosshair;display:block;width:100%"></canvas>
       <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px;font-size:11px;color:var(--muted);align-items:center">
         <span>X → 回補天數 DTC</span>
@@ -993,7 +993,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       </div>
     </div>
     <!-- Right: top-10 table -->
-    <div style="flex:1;min-width:0">
+    <div style="flex:1 1 100%;min-width:0">
       <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:8px">挾倉風險 Top 15</div>
       <table id="squeeze-top10" style="width:100%;font-size:11px;border-collapse:collapse">
         <thead>
