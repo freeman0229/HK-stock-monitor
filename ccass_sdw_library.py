@@ -609,7 +609,7 @@ def get_total_sh_bulk(
                INNER JOIN (
                    SELECT code, MAX(date) AS max_date
                    FROM   metadata
-                   WHERE  date <= ?
+                   WHERE  date <= ? AND total_sh > 0
                    GROUP  BY code
                ) latest ON m.code = latest.code AND m.date = latest.max_date""",
             (before_or_eq,),

@@ -774,9 +774,11 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                     sfc_week_delta = round(sfc_pct - sfc_prev_pct, 4) if sfc_prev_pct > 0 else 0.0
                     sfc_prev_hkd   = (sfc_hist[0].get("hkd") or 0.0) if sfc_hist else 0.0
                     sfc_hkd_delta  = int(round(sfc_hkd - sfc_prev_hkd, 0)) if sfc_prev_hkd > 0 else 0
+                    sfc_sh_delta   = int(sfc_sh - _prev_sh) if _prev_sh > 0 else 0
 
                     sfc_map[code] = {
                         "sfc_sh":         sfc_sh,
+                        "sfc_sh_delta":   sfc_sh_delta,
                         "sfc_hkd":        sfc_hkd,
                         "sfc_hkd_delta":  sfc_hkd_delta,
                         "sfc_pct":        sfc_pct,
@@ -1111,6 +1113,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             "days_to_cover":  days_to_cover,
             "vol_ratio":      vol_ratio,
             "sfc_sh":         sfc_map.get(code, {}).get("sfc_sh",         0),
+            "sfc_sh_delta":   sfc_map.get(code, {}).get("sfc_sh_delta",   0),
             "sfc_hkd":        sfc_map.get(code, {}).get("sfc_hkd",        0.0),
             "sfc_hkd_delta":  sfc_map.get(code, {}).get("sfc_hkd_delta",  0.0),
             "sfc_pct":        sfc_map.get(code, {}).get("sfc_pct",        0.0),

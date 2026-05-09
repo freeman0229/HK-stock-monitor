@@ -1087,6 +1087,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <th>股票</th>
           <th class="num-r" data-col="sfc_sh">累積沽空股數</th>
           <th class="num-r" data-col="sfc_hkd">累積沽空金額</th>
+          <th class="num-r mob-hide" data-col="sfc_sh_delta" title="週比週累積沽空股數變動%">累積沽空變動</th>
           <th class="num-r mob-hide" data-col="sfc_pct" title="賣空比例 = SFC累積沽空股數 ÷ CCASS總數｜&lt;5% 正常｜5–10% 留意｜10–20% 偏高｜20–30% 高度集中｜30%+ 極端">賣空比例</th>
           <th class="num-r mob-hide" data-col="days_to_cover" title="回補天數 DTC = 累積沽空股數 ÷ 日均成交股數｜&lt;1日 正常｜1–3日 留意｜3–5日 偏高｜5–10日 高度集中｜10日+ 極端擠壓風險">回補天數</th>
           <th class="num-r mob-hide" data-col="concentration" title="前5大CCASS持倉人佔總數%｜0–5% 正常｜5–10% 留意｜10–20% 偏高｜20–30% 高度集中｜30%+ 極端">持倉集中度</th>
@@ -1098,7 +1099,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         </tr>
       </thead>
       <tbody id="body-short">
-        <tr><td colspan="12"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
+        <tr><td colspan="13"><div class="loading-box"><div class="spinner"></div>載入中…</div></td></tr>
       </tbody>
     </table>
   </div>
@@ -1164,9 +1165,16 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     </div>
 
     <!-- Group history chart (持倉比例趨勢 — FIRST) -->
-    <div style="margin:14px 0 6px">
-      <div style="font-size:13px;font-weight:500;color:var(--text)">持倉比例趨勢（週度）</div>
-      <div id="sdw-group-sub" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
+    <div style="margin:14px 0 6px;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:13px;font-weight:500;color:var(--text)">持倉比例趨勢（週度）</div>
+        <div id="sdw-group-sub" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
+      </div>
+      <div id="sdw-range-btns" style="display:flex;gap:6px;align-items:center">
+        <button onclick="sdwSetRange(13)"  id="sdw-range-13"  style="padding:4px 10px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">3M</button>
+        <button onclick="sdwSetRange(26)"  id="sdw-range-26"  style="padding:4px 10px;font-size:11px;border-radius:6px;border:0.5px solid var(--red);background:var(--red);color:#fff;cursor:pointer;font-family:inherit">6M</button>
+        <button onclick="sdwSetRange(52)"  id="sdw-range-52"  style="padding:4px 10px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">1Y</button>
+      </div>
     </div>
     <canvas id="sdwGroupCanvas" style="width:100%;display:block;min-height:200px"></canvas>
     <div id="sdw-group-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);justify-content:center"></div>
@@ -1549,6 +1557,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 let allStocks = [];
 const NON_EQUITY_TYPES = new Set(['etf', 'bond', 'derivative']);
+let sdwRangeWeeks = 26; // default 6M
 let updateTime = '';
 let sbDate = '';          // date of southbound data (may be yesterday)
 let sbSummary = {};       // market-wide SSE+SZSE totals from sc_top10_library
@@ -3280,7 +3289,7 @@ function renderShort() {
   const display = sorted.slice(0, 20);
   if (!display.length) {
     document.getElementById('body-short').innerHTML =
-      `<tr><td colspan="12"><div class="loading-box" style="padding:24px">
+      `<tr><td colspan="13"><div class="loading-box" style="padding:24px">
         ${sfcLoaded ? '⚠️ 無數據' : '📡 數據載入中…請稍候'}
       </div></td></tr>`;
     return;
@@ -3293,6 +3302,13 @@ function renderShort() {
     const dtcTxt    = dtc > 0 ? dtc.toFixed(1) + '日' : '—';
     const sfcHkd    = s.sfc_hkd || 0;
     const sfcSh     = s.sfc_sh  || 0;
+    const sfcShDelta = s.sfc_sh_delta || 0;
+    const sfcPrevSh  = sfcSh - sfcShDelta;
+    const sfcShChg   = sfcShDelta !== 0 && sfcPrevSh > 0
+      ? (sfcShDelta / sfcPrevSh * 100) : null;
+    const sfcShChgTxt = sfcShChg !== null
+      ? `<span class="${sfcShChg > 0 ? 'up-txt' : 'dn-txt'}">${sfcShChg > 0 ? '+' : ''}${sfcShChg.toFixed(2)}%</span>`
+      : '—';
     const sfcPct    = s.sfc_pct || 0;
     const sfcPctFlag = sfcPct > 100 ? ' <span style="font-size:10px;color:var(--muted)" title="超過100%可能源於結算股數差異">*</span>' : '';
     const conc      = s.concentration || 0;
@@ -3308,6 +3324,7 @@ function renderShort() {
       <td><span class="name-cell">${s.name_chi}</span><span class="name-zh">${s.code}</span></td>
       <td class="num-r">${sfcSh  > 0 ? sfcSh.toLocaleString('zh-HK') : '—'}</td>
       <td class="num-r">${sfcHkd > 0 ? fmtM(sfcHkd) : '—'}</td>
+      <td class="num-r mob-hide">${sfcShChgTxt}</td>
       <td class="num-r mob-hide">${sfcPct > 0 ? sfcPct.toFixed(2) + '%' + sfcPctFlag : '—'}</td>
       <td class="num-r mob-hide ${dtcClass}">${dtcTxt}</td>
       <td class="num-r mob-hide ${tier.cls}">${concTxt}</td>
@@ -3589,6 +3606,18 @@ let sdwTopN       = 5;    // current top-n selection
 let sdwData       = {};   // { ds: { code: {p, total_sh, issued_sh} } }
 let sdwDates      = [];   // sorted ascending list of all known dates
 let sdwCodeCache  = {};   // { code: true } — per-stock files already fetched
+
+function sdwSetRange(weeks) {
+  sdwRangeWeeks = weeks;
+  [13, 26, 52].forEach(w => {
+    const btn = document.getElementById(`sdw-range-${w}`);
+    if (!btn) return;
+    btn.style.cssText = `padding:4px 10px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;` +
+      (w === weeks ? 'border:0.5px solid var(--red);background:var(--red);color:#fff'
+                   : 'border:0.5px solid var(--border);background:var(--card);color:var(--muted)');
+  });
+  renderSdwPanel();
+}
 
 function sdwSetTopN(n) {
   sdwTopN = n;
@@ -3963,7 +3992,7 @@ function renderSdwPanel() {
 
   // ── Chart ────────────────────────────────────────────────────────────────
   // Build shared date array so both charts use identical x-axis
-  const _cutoff = new Date(Date.now() - 365*86400000).toISOString().slice(0,10);
+  const _cutoff = new Date(Date.now() - sdwRangeWeeks*7*86400000).toISOString().slice(0,10);
   const _sharedDates = [...new Set(sdwDates)].sort()
     .filter(d => d >= _cutoff && (sdwData[d]||{})[sdwCurCode]);
   drawSdwChart(sdwCurCode, ds, _sharedDates);
@@ -5670,7 +5699,7 @@ function renderHsiPanel() {
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
             maxRotation: 0, font: { size: 10 }, padding: 4, autoSkip: false
-          }, afterFit: s => { s.height = s.height; }, grid: { display: false }, border: { display: false } },
+          }, afterFit: s => { s.height = Math.max(s.height, 28); }, grid: { display: false }, border: { display: false } },
         y: {
           afterFit: s => { s.width = 52; },
           min: -maxOscHsi * 1.3,
