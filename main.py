@@ -409,11 +409,11 @@ _ETF_CODES = {
     "03067","03070","03072","03079","03081","03086","03087","03096","03097",
     "03110","03115","03118","03122","03127","03128","03129","03143","03145",
     "03147","03150","03160","03161","03162","03165","03171","03175","03188",
-    "02803","02820","03003","03191","03486",
+    "02803","02820","02845","03003","03191","03486",
 }
 _ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND", "LEVERAGED", "INVERSE",
                 "FUTURES ETF", "BOND ETF", "GOLD ETF", "MONEY MARKET ETF",
-                "GX CHINA", "GX HK", "CSOP", "PREMIA")
+                "GX CHINA", "GX HK", "GX ", "CSOP", "PREMIA")
 
 def classify_stock(code: str, name: str) -> str:
     n = name.upper()
