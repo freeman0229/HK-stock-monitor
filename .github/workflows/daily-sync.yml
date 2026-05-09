@@ -707,15 +707,15 @@ jobs:
             --no-progress
 
   # ── SDW migrate JSON → SQLite (one-time) ─────────────────────────────────────
-  # Place all ccass_sdw_*.json files in the repo root, then run this job.
-  # Imports them into ccass_sdw.db and commits the DB.
+  # Downloads existing DB from R2, migrates schema if needed, then imports any
+  # missing dates from sdw_*.json files in R2. Never deletes existing data.
   sdw-migrate-json:
     name: SDW migrate ccass_sdw_*.json → ccass_sdw.db
     runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
-      group: sdw-migrate-json
-      cancel-in-progress: true
+      group: sdw-db-lock
+      cancel-in-progress: false
     permissions:
       contents: write
     if: |
@@ -726,6 +726,17 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
+      - name: Download existing DB from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          { echo "ERROR: DB download failed — aborting"; exit 1; }
+      - name: Migrate schema to v5 (normalise participants)
+        run: python ccass_sdw_library.py --migrate-schema
       - name: Download sdw_*.json files from R2
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -737,23 +748,24 @@ jobs:
             --exclude "*" --include "sdw_*.json" \
             --no-progress
           echo "Downloaded $(ls sdw_*.json 2>/dev/null | wc -l) JSON files" || true
-      - name: Import JSON files into SQLite DB
+      - name: Import missing dates from JSON files into DB
         run: |
           python3 - <<'EOF'
           import glob, json, os, sqlite3, re
           from datetime import datetime
 
           DB = "ccass_sdw.db"
-          # Remove any existing DB — stale schema causes NOT NULL constraint errors
-          if os.path.exists(DB):
-              os.remove(DB)
-              print(f"Removed existing {DB}")
+          if not os.path.exists(DB):
+              print(f"ERROR: {DB} not found — DB must be downloaded first"); exit(1)
+
           files = sorted(glob.glob("sdw_*.json"))
           print(f"Found {len(files)} sdw_*.json files to import")
           if not files:
               print("ERROR: no sdw_*.json files found"); exit(1)
 
           conn = sqlite3.connect(DB)
+
+          # Ensure v5 schema tables exist (safe — CREATE TABLE IF NOT EXISTS)
           conn.executescript("""
               CREATE TABLE IF NOT EXISTS metadata (
                   date TEXT NOT NULL, code TEXT NOT NULL,
@@ -773,14 +785,12 @@ jobs:
               CREATE INDEX IF NOT EXISTS idx_meta_date ON metadata(date);
               CREATE INDEX IF NOT EXISTS idx_hold_date_code ON holdings(date, code);
           """)
-          conn.execute("INSERT OR REPLACE INTO settings VALUES ('schema_version','5')")
 
           total_imported = 0
           total_skipped  = 0
           now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
           for fpath in files:
-              # Derive 5-digit code from filename: sdw_00700.json -> 00700
               code = os.path.basename(fpath).replace("sdw_","").replace(".json","")
               if not re.match(r'^\d{5}$', code):
                   print(f"  skip {fpath}: cannot parse code")
@@ -794,24 +804,25 @@ jobs:
               by_date = data.get("by_date", {})
               imported = 0
               for ds, payload in by_date.items():
+                  # Skip if already in DB — never overwrite existing data
                   exists = conn.execute(
                       "SELECT 1 FROM metadata WHERE date=? AND code=?", (ds, code)
                   ).fetchone()
                   if exists:
                       total_skipped += 1; continue
                   conn.execute(
-                      "INSERT OR REPLACE INTO metadata (date,code,total_sh,issued_sh,fetched_at) VALUES (?,?,?,?,?)",
+                      "INSERT OR IGNORE INTO metadata (date,code,total_sh,issued_sh,fetched_at) VALUES (?,?,?,?,?)",
                       (ds, code, payload.get("total_sh",0), payload.get("issued_sh",0), now)
                   )
                   for p in payload.get("p", []):
                       pid  = p.get("pid","")
                       name = p.get("name","")
                       conn.execute(
-                          "INSERT OR REPLACE INTO participants (pid, name) VALUES (?,?)",
+                          "INSERT OR IGNORE INTO participants (pid, name) VALUES (?,?)",
                           (pid, name)
                       )
                       conn.execute(
-                          "INSERT OR REPLACE INTO holdings (date,code,pid,shares,pct) VALUES (?,?,?,?,?)",
+                          "INSERT OR IGNORE INTO holdings (date,code,pid,shares,pct) VALUES (?,?,?,?,?)",
                           (ds, code, pid, p.get("sh",0), p.get("pct",0.0))
                       )
                   imported += 1
@@ -827,10 +838,12 @@ jobs:
           EOF
       - name: Show DB stats
         run: python ccass_sdw_library.py --stats
-      - name: Migrate schema to v5 (normalise participants)
-        run: python ccass_sdw_library.py --migrate-schema
-      - name: Show DB stats after migration
-        run: python ccass_sdw_library.py --stats
+      - name: Verify DB before upload
+        run: |
+          ROWS=$(sqlite3 ccass_sdw.db "SELECT COUNT(*) FROM holdings;")
+          echo "DB has $ROWS total holdings rows"
+          [ "$ROWS" -gt 100 ] || \
+            { echo "ERROR: DB has only $ROWS holdings rows — aborting upload"; exit 1; }
       - name: Upload DB to R2
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
