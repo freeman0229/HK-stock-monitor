@@ -744,6 +744,10 @@ jobs:
           from datetime import datetime
 
           DB = "ccass_sdw.db"
+          # Remove any existing DB — stale schema causes NOT NULL constraint errors
+          if os.path.exists(DB):
+              os.remove(DB)
+              print(f"Removed existing {DB}")
           files = sorted(glob.glob("sdw_*.json"))
           print(f"Found {len(files)} sdw_*.json files to import")
           if not files:
