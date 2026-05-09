@@ -410,16 +410,31 @@ _ETF_CODES = {
     "03110","03115","03118","03122","03127","03128","03129","03143","03145",
     "03147","03150","03160","03161","03162","03165","03171","03175","03188",
     "02803","02820","02845","03003","03191","03486",
+    # previously missing ETFs
+    "03451","03190","03415","03195","03455",
 }
-_ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND", "LEVERAGED", "INVERSE",
-                "FUTURES ETF", "BOND ETF", "GOLD ETF", "MONEY MARKET ETF",
+_ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND",
                 "GX CHINA", "GX HK", "GX ", "CSOP", "PREMIA")
+
+# Derivative products — leveraged/inverse/futures; structurally extreme short ratios
+_DERIV_NAME_KW = ("LEVERAGED", "INVERSE", "FUTURES ETF", "L&I")
+
+# Bond instruments — bond ETFs + retail/govt bonds (04xxx series)
+_BOND_CODES = {
+    "02829",  # iShares China Govt Bond ETF 安碩中國國債
+    "03108",  # Premia ESG領先債券ETF 嗎實ESG領
+}
+_BOND_NAME_KW = ("BOND ETF", "GOLD ETF", "MONEY MARKET ETF",
+                 "IBOND", "EXCHANGE FUND NOTE", "EFN", " BOND ")
 
 def classify_stock(code: str, name: str) -> str:
     n = name.upper()
-    # ETF check FIRST — code list + name keywords take priority over stock_ref
-    # This prevents a stock_ref entry with wrong type from masking an ETF.
-    if code in _ETF_CODES or any(k in n for k in _ETF_NAME_KW): return "etf"
+    # Non-equity checks FIRST — take priority over stock_ref
+    if code in _BOND_CODES or any(k in n for k in _BOND_NAME_KW): return "bond"
+    if any(k in n for k in _DERIV_NAME_KW):                        return "derivative"
+    if code in _ETF_CODES or any(k in n for k in _ETF_NAME_KW):   return "etf"
+    # Also treat any 04xxx code as bond (HK retail/govt bonds)
+    if code.startswith("04"):                                       return "bond"
     # stock_ref explicit types (bluechip/stable/general) come next
     t = get_type(code)
     if t: return t
@@ -434,6 +449,8 @@ def classify_stock(code: str, name: str) -> str:
 THRESHOLDS = {
     #              lo    hi  spike  cover_drop
     "etf":      (40.0, 70.0, 15.0, 0.60),
+    "bond":     (40.0, 70.0, 15.0, 0.60),
+    "derivative":(40.0,70.0, 15.0, 0.60),
     "stable":   ( 5.0, 10.0, 15.0, 0.60),
     "bluechip": (10.0, 20.0, 10.0, 0.60),
     "general":  (10.0, 25.0, 15.0, 0.60),
@@ -442,6 +459,8 @@ THRESHOLDS = {
 SFC_THRESHOLDS = {
     #              spike_up  unwind
     "etf":      (    3.0,    -3.0 ),
+    "bond":     (    3.0,    -3.0 ),
+    "derivative":(   3.0,    -3.0 ),
     "stable":   (    1.0,    -1.0 ),
     "bluechip": (    1.5,    -1.5 ),
     "general":  (    1.0,    -1.0 ),
@@ -470,6 +489,8 @@ def classify_insight(stock_type, short_ratio, short_avg,
                      sb_net=0,
                      sfc_week_delta=0.0,
                      delta_turnover_24d=0.0) -> str | None:
+    # ETFs, bonds and derivatives never generate signals — structural behaviour
+    if stock_type in ("etf", "bond", "derivative"):               return None
     lo, hi, spike_warn, cover_drop = THRESHOLDS.get(stock_type, THRESHOLDS["general"])
     sfc_up, sfc_dn = SFC_THRESHOLDS.get(stock_type, SFC_THRESHOLDS["general"])
     r_today = turnover / tv_avg5 if tv_avg5 > 0 else 0.0
@@ -490,8 +511,7 @@ def classify_insight(stock_type, short_ratio, short_avg,
     if delta_turnover_24d >= _TURNOVER_DELTA_ELEVATED:            return "🔼 換手上升"
 
     flow_out   = sb_net < 0 and pct_delta < 0
-    # ETFs excluded: high short ratios are structural (hedging/arbitrage), not signals
-    high_short = stock_type != "etf" and short_ratio > hi + spike_warn and vol_ratio > 2
+    high_short = short_ratio > hi + spike_warn and vol_ratio > 2
     if flow_out:                  return "🚨 北水流出"
     if high_short:                return "🚨 不尋常沽空"
 

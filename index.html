@@ -474,6 +474,8 @@ thead th {
   user-select: none;
 }
 thead th:hover { color: var(--red); }
+#short-tbl-wrap { max-height: 480px; overflow-y: auto; }
+#tbl-short thead th { position: sticky; top: 0; z-index: 1; }
 thead th.sort-asc::after { content: ' ↑'; color: var(--red); }
 thead th.sort-desc::after { content: ' ↓'; color: var(--red); }
 tbody tr { border-bottom: 1px solid #f0ede8; transition: background .15s; }
@@ -1546,6 +1548,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 let allStocks = [];
+const NON_EQUITY_TYPES = new Set(['etf', 'bond', 'derivative']);
 let updateTime = '';
 let sbDate = '';          // date of southbound data (may be yesterday)
 let sbSummary = {};       // market-wide SSE+SZSE totals from sc_top10_library
@@ -2402,11 +2405,11 @@ function computeSfcCards() {
     .filter(e => e.hkd > 0)
     .filter(e => {
       const s = allStocks.find(x => norm5(x.code) === e.code);
-      if (s && s.stock_type === 'etf') return false;
-      // Name-based fallback: catch ETFs misclassified in data.json
+      if (s && NON_EQUITY_TYPES.has(s.stock_type)) return false;
+      // Name-based fallback: catch non-equity instruments misclassified in data.json
       const n = (e.name || '').toUpperCase();
-      const ETF_KW = ['ETF','TRACKER FUND','INDEX FUND','LEVERAGED','INVERSE','GX ','CSOP','PREMIA'];
-      return !ETF_KW.some(k => n.includes(k));
+      const EXCL_KW = ['ETF','TRACKER FUND','INDEX FUND','LEVERAGED','INVERSE','GX ','CSOP','PREMIA','BOND'];
+      return !EXCL_KW.some(k => n.includes(k));
     });
 
   if (!entries.length) return;
@@ -3223,11 +3226,11 @@ function renderShort() {
   const avg = sorted.reduce((a,s) => a + s.short_ratio, 0) / sorted.length;
 
   // 日沽空 TOP — highest 沽空金額($) from adj_short section of HKEX dayquot (short_st = 沽空金額 HKD), exclude ETFs
-  const topVol  = [...sorted].filter(s => s.short_st > 0 && s.stock_type !== 'etf')
+  const topVol  = [...sorted].filter(s => s.short_st > 0 && !NON_EQUITY_TYPES.has(s.stock_type))
                              .sort((a,b) => (b.short_st||0) - (a.short_st||0))[0];
   // 日沽空比率 TOP — highest short_ratio = 沽空股數(SH) / 成交股數 × 100, exclude ETFs
   const topRatio = [...sorted].filter(s => s.short_ratio > 0 && s.short_ratio <= 100
-                                        && s.stock_type !== 'etf' && s.turnover > 0)
+                                        && !NON_EQUITY_TYPES.has(s.stock_type) && s.turnover > 0)
                               .sort((a,b) => b.short_ratio - a.short_ratio)[0];
   // 累積沽空 TOP — highest Aggregated Reportable Short Positions (HK$) from SFC
   const topSfc  = [...sorted].filter(s => s.sfc_hkd > 0)
@@ -5109,7 +5112,7 @@ function renderSignalPanel() {
 
   // ── Section 1: 不尋常沽空 ──────────────────────────────────────────────────
   const shortStocks = allStocks
-    .filter(s => s.insight === '🚨 不尋常沽空')
+    .filter(s => s.insight === '🚨 不尋常沽空' && !NON_EQUITY_TYPES.has(s.stock_type))
     .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
     .slice(0, 10);
 
@@ -5140,7 +5143,7 @@ function renderSignalPanel() {
 
   // ── Section 2: 大戶增持 ────────────────────────────────────────────────────
   const dahuStocks = allStocks
-    .filter(s => s.insight === '🏦 大戶增持')
+    .filter(s => s.insight === '🏦 大戶增持' && !NON_EQUITY_TYPES.has(s.stock_type))
     .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
     .slice(0, 10);
 
@@ -5171,7 +5174,7 @@ function renderSignalPanel() {
 
   // ── Section 3: 空頭平倉 ────────────────────────────────────────────────────
   const coverStocks = allStocks
-    .filter(s => s.insight === '📉 空頭平倉')
+    .filter(s => s.insight === '📉 空頭平倉' && !NON_EQUITY_TYPES.has(s.stock_type))
     .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
     .slice(0, 10);
 
@@ -5204,6 +5207,14 @@ let hsiData = null;
 let hsiChartInst = null;
 let hsiVolInst   = null;
 let hsiVlineIdx  = null;   // index of the interactive reference line
+
+function hsiClearVline() {
+  hsiVlineIdx = null;
+  const bar = document.getElementById('hsi-vline-bar');
+  if (bar) bar.innerHTML = '<span style="color:var(--muted)">— 點擊圖表設定基準線</span>';
+  if (hsiChartInst) hsiChartInst.update('none');
+  if (hsiVolInst)   hsiVolInst.draw();
+}
 
 async function loadHsiData() {
   try {
@@ -5607,7 +5618,8 @@ function renderHsiPanel() {
           ticks: { display: false },
           grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
         },
-        y: { afterFit: s => { s.width = 52; }, ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } }
+        y:  { afterFit: s => { s.width = 52; }, ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } },
+        yR: { position: 'right', afterFit: s => { s.width = 32; }, display: true, ticks: { display: false }, grid: { display: false }, border: { display: false } }
       }
     }
   });
@@ -5657,15 +5669,16 @@ function renderHsiPanel() {
               return i % tickEvery === 0 ? chartLabels[i].slice(0,7) : '';
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
-            maxRotation: 0, font: { size: 10 }, padding: 4
-          }, grid: { display: false }, border: { display: false } },
+            maxRotation: 0, font: { size: 10 }, padding: 4, autoSkip: false
+          }, afterFit: s => { s.height = s.height; }, grid: { display: false }, border: { display: false } },
         y: {
           afterFit: s => { s.width = 52; },
           min: -maxOscHsi * 1.3,
           max:  maxOscHsi * 1.3,
           ticks: { callback: v => v > 0 ? '+'+v : String(v), font: { size: 10 }, color: isDark ? 'rgba(255,255,255,0.4)' : '#888' },
           grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
-        }
+        },
+        yR: { position: 'right', afterFit: s => { s.width = 32; }, display: true, ticks: { display: false }, grid: { display: false }, border: { display: false } }
       }
     }
   });
@@ -5774,7 +5787,7 @@ function _updateHsiVlineBar(chartLabels, weekly, lastDs, predLabel) {
     item('現價',      lastRec.c.toLocaleString()) +
     item('變動',      chgStr, cc) +
     item('週數',      weeks) +
-    `<button onclick="hsiVlineIdx=null;document.getElementById('hsi-vline-bar').innerHTML='<span style=\\'color:var(--muted)\\'>— 點擊圖表設定基準線</span>';if(hsiChartInst)hsiChartInst.update(\\'none\\');if(hsiVolInst)hsiVolInst.draw();" ` +
+    `<button onclick="hsiClearVline()" ` +
     `style="margin-left:auto;font-size:11px;padding:2px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);cursor:pointer">清除</button>`;
 }
 

@@ -28,10 +28,12 @@ Industry codes (etnet nature= parameter):
   CGM  綜合企業     FIN  金融        GEN  其他
 
 Type buckets (for signal thresholds):
-  etf      — normal short 40–70%
-  stable   — normal short  5–10%  (banks, utilities, energy)
-  bluechip — normal short 10–20%  (large-cap tech, insurance, transport)
-  general  — normal short 10–25%  (everything else)
+  etf        — normal short 40–70%
+  bond       — bond ETFs + retail/govt bonds; no signals generated
+  derivative — leveraged/inverse/futures products; no signals generated
+  stable     — normal short  5–10%  (banks, utilities, energy)
+  bluechip   — normal short 10–20%  (large-cap tech, insurance, transport)
+  general    — normal short 10–25%  (everything else)
 """
 
 from ccass_universe import normalize_code
@@ -49,6 +51,14 @@ STOCKS: dict[str, dict] = {
     "03037": {"en":"HUAXIA HS TECH ETF",    "zh":"華夏恒生科技ETF",   "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
     "03011": {"en":"CSOP HSI ETF",          "zh":"南方恒生指數ETF",   "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
     "02823": {"en":"ISHARES A50",           "zh":"iShares A50 ETF",   "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
+    "03451": {"en":"AGX NASDAQ ETF",        "zh":"AGX納指兌",         "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
+    "03190": {"en":"FUBON CSI HS DIV ETF",  "zh":"富邦滬深港高股息",  "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
+    "03415": {"en":"AGX SP500 ETF",         "zh":"AGX標普兌",         "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
+    "03195": {"en":"HS SP500 ETF",          "zh":"恒生標普五百",      "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
+    "03455": {"en":"INVESCO QQQ ETF",       "zh":"景順QQQ",           "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
+    # ── 債券 / 國債 ───────────────────────────────────────────────────────────
+    "02829": {"en":"ISHARES CHINA GOVT BOND","zh":"安碩中國國債ETF",  "industry":"ETF","ind_zh":"債券",     "type":"bond"},
+    "03108": {"en":"PREMIA ESG BOND ETF",   "zh":"嗎實ESG領先債券ETF","industry":"ETF","ind_zh":"債券",     "type":"bond"},
 
     # ── 銀行 ─────────────────────────────────────────────────────────────────
     "00005": {"en":"HSBC HOLDINGS",         "zh":"滙豐控股",          "industry":"BNK","ind_zh":"銀行",     "type":"stable"},
