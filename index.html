@@ -1966,6 +1966,11 @@ function stockSortCmp(a, b, col, dir) {
   } else if (col === 'short_dev') {
     av = (a.short_ratio || 0) - (a.short_avg || 0);
     bv = (b.short_ratio || 0) - (b.short_avg || 0);
+  } else if (col === 'sfc_sh_delta') {
+    const aPrev = (a.sfc_sh||0) - (a.sfc_sh_delta||0);
+    const bPrev = (b.sfc_sh||0) - (b.sfc_sh_delta||0);
+    av = aPrev > 0 ? (a.sfc_sh_delta||0) / aPrev * 100 : 0;
+    bv = bPrev > 0 ? (b.sfc_sh_delta||0) / bPrev * 100 : 0;
   } else {
     av = a[col] ?? 0;
     bv = b[col] ?? 0;
@@ -5937,12 +5942,19 @@ async function stkBuildSeries(code5, fromDs, toDs) {
     await loadTvYear(y);
     await stkEnsureSfc(y);
   }
+  // Also load yahoo years for the full range — needed when turnover files don't exist
+  const fromYear = parseInt(fromDs.slice(0,4));
+  const toYear   = parseInt(toDs.slice(0,4));
+  for (let y = fromYear - 1; y <= toYear; y++) {
+    if (y >= YAHOO_START_YEAR && y <= curYear) await loadYahooYear(y);
+  }
   await stkEnsureSdw(code5);
 
-  // Build date list from turnover files
-  const allDates = [...new Set(
-    years.flatMap(y => Object.keys(tvCache[y] || {}))
-  )].filter(d => d >= fromDs && d <= toDs).sort();
+  // Build date list from turnover AND yahoo files
+  const allDates = [...new Set([
+    ...years.flatMap(y => Object.keys(tvCache[y] || {})),
+    ...Object.values(yahooCache).flatMap(byDate => Object.keys(byDate)),
+  ])].filter(d => d >= fromDs && d <= toDs).sort();
 
   const tradingDays = stkAllDates(allDates);
   if (!tradingDays.length) return null;
@@ -5962,7 +5974,7 @@ async function stkBuildSeries(code5, fromDs, toDs) {
 
   const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[];
 
-  // Pre-build vol array for turnover_24d computation
+  // Pre-build vol array for turnover_24d computation — include yahoo as fallback
   const allVolByDate = {};
   for (const y of years) {
     for (const [ds, stocks] of Object.entries(tvCache[y] || {})) {
@@ -5970,17 +5982,26 @@ async function stkBuildSeries(code5, fromDs, toDs) {
       if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
     }
   }
+  // Fill gaps from yahoo
+  for (const [yr, byDate] of Object.entries(yahooCache)) {
+    for (const [ds, stocks] of Object.entries(byDate)) {
+      if (!allVolByDate[ds] && stocks[code5]?.vol > 0)
+        allVolByDate[ds] = stocks[code5].vol;
+    }
+  }
   const sortedVolDates = Object.keys(allVolByDate).sort();
 
   for (let i = 0; i < tradingDays.length; i++) {
     const ds   = tradingDays[i];
-    const year = ds.slice(0, 4);
-    const tvRec = tvCache[+year]?.[ds]?.[code5];
+    const year = parseInt(ds.slice(0, 4));
+    const tvRec  = tvCache[year]?.[ds]?.[code5];
+    const yhRec  = !tvRec ? (yahooCache[year]?.[ds]?.[code5] || null) : null;
+    const priceRec = tvRec || yhRec;
 
     labels.push(ds);
-    closeArr.push(tvRec?.close > 0 ? tvRec.close : null);
+    closeArr.push(priceRec?.close > 0 ? priceRec.close : null);
     vwapArr .push(tvRec?.vwap  > 0 ? tvRec.vwap  : null);
-    volArr  .push(tvRec?.vol   > 0 ? tvRec.vol   : null);
+    volArr  .push(priceRec?.vol > 0 ? priceRec.vol : null);
 
     // Compute turnover_24d: vol of last 24 days / total_sh (from SDW)
     // Approximate: use rolling 24-day vol sum / latest SDW total_sh

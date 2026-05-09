@@ -662,10 +662,11 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                     log.info("SDW holders: today not available — using %s", _sdw_best_date)
                 with _sdw_get_conn(_SDW_DB_PATH) as _sc:
                     _sdw_rows = _sc.execute(
-                        """SELECT code, pid, name, shares, pct
-                           FROM   holdings
-                           WHERE  date = ?
-                           ORDER  BY code, shares DESC""",
+                        """SELECT h.code, h.pid, COALESCE(p.name,'') AS name, h.shares, h.pct
+                           FROM   holdings h
+                           LEFT JOIN participants p ON p.pid = h.pid
+                           WHERE  h.date = ?
+                           ORDER  BY h.code, h.shares DESC""",
                         (_sdw_best_date,),
                     ).fetchall()
                 for _row in _sdw_rows:
@@ -716,10 +717,11 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             if _sdw_prev_date:
                 with _sdw_get_conn(_SDW_DB_PATH) as _sc:
                     _sdw_prev_rows = _sc.execute(
-                        """SELECT code, pid, name, shares, pct
-                           FROM   holdings
-                           WHERE  date = ?
-                           ORDER  BY code, shares DESC""",
+                        """SELECT h.code, h.pid, COALESCE(p.name,'') AS name, h.shares, h.pct
+                           FROM   holdings h
+                           LEFT JOIN participants p ON p.pid = h.pid
+                           WHERE  h.date = ?
+                           ORDER  BY h.code, h.shares DESC""",
                         (_sdw_prev_date,),
                     ).fetchall()
                 for _row in _sdw_prev_rows:
