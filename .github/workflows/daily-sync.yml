@@ -248,16 +248,6 @@ jobs:
           SDW_WORKERS: "3"
           SDW_WORKER_TIMEOUT: "5400"
         run: |
-          # Upload DB to R2 on exit (including cancellation via SIGTERM)
-          _upload_db() {
-            echo "Uploading DB to R2 on exit..."
-            [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
-              --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || true
-          }
-          trap _upload_db EXIT
-          export AWS_ACCESS_KEY_ID="${{ secrets.R2_ACCESS_KEY_ID }}"
-          export AWS_SECRET_ACCESS_KEY="${{ secrets.R2_SECRET_ACCESS_KEY }}"
-          export AWS_DEFAULT_REGION="auto"
           python ccass_sdw_library.py
       - name: Verify DB before upload
         run: |
@@ -323,15 +313,6 @@ jobs:
           SDW_WORKERS: "3"
           SDW_WORKER_TIMEOUT: "5400"
         run: |
-          _upload_db() {
-            echo "Uploading DB to R2 on exit..."
-            [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
-              --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || true
-          }
-          trap _upload_db EXIT
-          export AWS_ACCESS_KEY_ID="${{ secrets.R2_ACCESS_KEY_ID }}"
-          export AWS_SECRET_ACCESS_KEY="${{ secrets.R2_SECRET_ACCESS_KEY }}"
-          export AWS_DEFAULT_REGION="auto"
           python ccass_sdw_library.py --update
       - name: Verify DB before upload
         run: |
@@ -731,7 +712,7 @@ jobs:
   sdw-migrate-json:
     name: SDW migrate ccass_sdw_*.json → ccass_sdw.db
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     concurrency:
       group: sdw-migrate-json
       cancel-in-progress: true
@@ -776,16 +757,19 @@ jobs:
                   issued_sh INTEGER NOT NULL DEFAULT 0,
                   fetched_at TEXT,
                   PRIMARY KEY (date, code));
+              CREATE TABLE IF NOT EXISTS participants (
+                  pid   TEXT PRIMARY KEY,
+                  name  TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS holdings (
                   date TEXT NOT NULL, code TEXT NOT NULL,
-                  pid TEXT NOT NULL, name TEXT NOT NULL,
+                  pid TEXT NOT NULL,
                   shares INTEGER NOT NULL, pct REAL NOT NULL,
                   PRIMARY KEY (date, code, pid));
               CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
               CREATE INDEX IF NOT EXISTS idx_meta_date ON metadata(date);
               CREATE INDEX IF NOT EXISTS idx_hold_date_code ON holdings(date, code);
           """)
-          conn.execute("INSERT OR REPLACE INTO settings VALUES ('schema_version','4')")
+          conn.execute("INSERT OR REPLACE INTO settings VALUES ('schema_version','5')")
 
           total_imported = 0
           total_skipped  = 0
@@ -816,9 +800,15 @@ jobs:
                       (ds, code, payload.get("total_sh",0), payload.get("issued_sh",0), now)
                   )
                   for p in payload.get("p", []):
+                      pid  = p.get("pid","")
+                      name = p.get("name","")
                       conn.execute(
-                          "INSERT OR REPLACE INTO holdings (date,code,pid,name,shares,pct) VALUES (?,?,?,?,?,?)",
-                          (ds, code, p.get("pid",""), p.get("name",""), p.get("sh",0), p.get("pct",0.0))
+                          "INSERT OR REPLACE INTO participants (pid, name) VALUES (?,?)",
+                          (pid, name)
+                      )
+                      conn.execute(
+                          "INSERT OR REPLACE INTO holdings (date,code,pid,shares,pct) VALUES (?,?,?,?,?)",
+                          (ds, code, pid, p.get("sh",0), p.get("pct",0.0))
                       )
                   imported += 1
               total_imported += imported
@@ -832,6 +822,10 @@ jobs:
           print(f"DB now has {n_dates} distinct dates, {n_rows:,} holdings rows")
           EOF
       - name: Show DB stats
+        run: python ccass_sdw_library.py --stats
+      - name: Migrate schema to v5 (normalise participants)
+        run: python ccass_sdw_library.py --migrate-schema
+      - name: Show DB stats after migration
         run: python ccass_sdw_library.py --stats
       - name: Upload DB to R2
         env:

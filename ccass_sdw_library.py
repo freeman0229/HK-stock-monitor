@@ -11,8 +11,9 @@ Schedule: every Friday; Thursday fallback if Friday is a HK holiday.
 Start:    2025-04-05
 
 Storage: SQLite database (ccass_sdw.db) with two tables:
-  metadata   — per (date, code): total_sh, issued_sh, fetched_at
-  holdings   — per (date, code, pid): name, shares, pct
+  metadata     — per (date, code): total_sh, issued_sh, fetched_at
+  holdings     — per (date, code, pid): shares, pct
+  participants — per pid: name
 
 Fetch strategy: Playwright Chromium (headless) — fills the search form
 like a real user, bypassing Akamai BotManager detection entirely.
@@ -36,6 +37,7 @@ Usage:
   python ccass_sdw_library.py --export-charts         # write sdw_{code}.json files
   python ccass_sdw_library.py --verify                # check DB integrity
   python ccass_sdw_library.py --migrate-json          # import old JSON range files
+  python ccass_sdw_library.py --migrate-schema        # migrate DB from v4 to v5 schema
   python ccass_sdw_library.py --vacuum                # reclaim DB disk space
 """
 
@@ -120,7 +122,7 @@ _DEAD_PATTERNS: tuple[str, ...] = (
 # Data
 START_DATE         : date = date(2025, 4, 5)
 HKEX_WINDOW_MONTHS : int  = 12     # rolling availability window on HKEX SDW
-SCHEMA_VERSION     : int  = 4
+SCHEMA_VERSION     : int  = 5
 
 # Known-empty cache
 EMPTY_SKIP_WEEKS   : int  = 4      # skip a code after this many consecutive empty weeks
@@ -357,11 +359,15 @@ def init_db(path: str = DB_PATH) -> None:
                 PRIMARY KEY (date, code)
             );
 
+            CREATE TABLE IF NOT EXISTS participants (
+                pid   TEXT PRIMARY KEY,
+                name  TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS holdings (
                 date    TEXT    NOT NULL,
                 code    TEXT    NOT NULL,
                 pid     TEXT    NOT NULL,
-                name    TEXT    NOT NULL,
                 shares  INTEGER NOT NULL,
                 pct     REAL    NOT NULL,
                 PRIMARY KEY (date, code, pid)
@@ -506,7 +512,7 @@ def _ensure_db(path: str = DB_PATH) -> None:
             tables = {r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()}
-        if not {"metadata", "holdings"}.issubset(tables):
+        if not {"metadata", "holdings", "participants"}.issubset(tables):
             init_db(path)
     except Exception:
         init_db(path)
@@ -522,10 +528,11 @@ def get_holders(code: str, ds: str, path: str = DB_PATH) -> list[dict]:
     code5 = normalize_code(code)
     with get_conn(path) as conn:
         rows = conn.execute(
-            """SELECT pid, name, shares AS sh, pct
-               FROM   holdings
-               WHERE  code = ? AND date = ?
-               ORDER  BY shares DESC""",
+            """SELECT h.pid, p.name, h.shares AS sh, h.pct
+               FROM   holdings h
+               JOIN   participants p USING (pid)
+               WHERE  h.code = ? AND h.date = ?
+               ORDER  BY h.shares DESC""",
             (code5, ds),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -555,10 +562,11 @@ def get_holders_history(
         result = []
         for (ds,) in dates:
             rows = conn.execute(
-                """SELECT pid, name, shares AS sh, pct
-                   FROM   holdings
-                   WHERE  code = ? AND date = ?
-                   ORDER  BY shares DESC""",
+                """SELECT h.pid, p.name, h.shares AS sh, h.pct
+                   FROM   holdings h
+                   JOIN   participants p USING (pid)
+                   WHERE  h.code = ? AND h.date = ?
+                   ORDER  BY h.shares DESC""",
                 (code5, ds),
             ).fetchall()
             result.append([dict(r) for r in rows])
@@ -659,10 +667,11 @@ def export_charts(
             for row in meta_rows:
                 ds, total_sh, issued_sh = row["date"], row["total_sh"], row["issued_sh"]
                 holders = conn.execute(
-                    """SELECT pid, name, shares AS sh, pct
-                       FROM   holdings
-                       WHERE  code = ? AND date = ?
-                       ORDER  BY shares DESC""",
+                    """SELECT h.pid, p.name, h.shares AS sh, h.pct
+                       FROM   holdings h
+                       JOIN   participants p USING (pid)
+                       WHERE  h.code = ? AND h.date = ?
+                       ORDER  BY h.shares DESC""",
                     (code, ds),
                 ).fetchall()
                 by_date[ds] = {
@@ -1415,10 +1424,15 @@ def _save_results(
             )
             for p in entry.participants:
                 conn.execute(
+                    """INSERT OR REPLACE INTO participants (pid, name)
+                       VALUES (?, ?)""",
+                    (p.pid, p.name),
+                )
+                conn.execute(
                     """INSERT OR REPLACE INTO holdings
-                       (date, code, pid, name, shares, pct)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (ds, code, p.pid, p.name, p.sh, p.pct),
+                       (date, code, pid, shares, pct)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (ds, code, p.pid, p.sh, p.pct),
                 )
             if entry.participants:
                 saved += 1
@@ -1824,9 +1838,10 @@ def _query(code: str, path: str = DB_PATH) -> None:
     code5 = normalize_code(code)
     with get_conn(path) as conn:
         rows = conn.execute(
-            """SELECT h.date, h.pid, h.name, h.shares, h.pct,
+            """SELECT h.date, h.pid, p.name, h.shares, h.pct,
                       m.total_sh, m.issued_sh
                FROM   holdings h
+               JOIN   participants p USING (pid)
                JOIN   metadata m USING (date, code)
                WHERE  h.code = ?
                ORDER  BY h.date DESC, h.shares DESC""",
@@ -1892,9 +1907,10 @@ def _export_csv(code: str, path: str = DB_PATH) -> None:
     out_path = f"{code5}_holdings.csv"
     with get_conn(path) as conn:
         rows = conn.execute(
-            """SELECT h.date, h.code, h.pid, h.name, h.shares, h.pct,
+            """SELECT h.date, h.code, h.pid, p.name, h.shares, h.pct,
                       m.total_sh, m.issued_sh
                FROM   holdings h
+               JOIN   participants p USING (pid)
                JOIN   metadata m USING (date, code)
                WHERE  h.code = ?
                ORDER  BY h.date, h.shares DESC""",
@@ -1913,6 +1929,102 @@ def _export_csv(code: str, path: str = DB_PATH) -> None:
             writer.writerow(list(r))
 
     print(f"Exported {len(rows):,} rows → {out_path}")
+
+
+def _migrate_schema(path: str = DB_PATH) -> None:
+    """Migrate DB from schema v4 (name in holdings) to v5 (participants table).
+
+    Safe to run multiple times — checks schema_version before doing anything.
+    Steps:
+      1. Create participants table if not exists
+      2. Populate participants from holdings.name
+      3. Rebuild holdings without the name column
+      4. Update schema_version to 5
+    """
+    conn = sqlite3.connect(path, isolation_level=None)  # autocommit for DDL
+    try:
+        # Check current version
+        try:
+            version = conn.execute(
+                "SELECT value FROM settings WHERE key='schema_version'"
+            ).fetchone()
+            current = int(version[0]) if version else 0
+        except Exception:
+            current = 0
+
+        if current >= 5:
+            print(f"DB is already at schema_version={current} — nothing to do.")
+            conn.close()
+            return
+
+        print(f"Migrating schema v{current} → v5 …")
+
+        # Check holdings has a name column
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(holdings)").fetchall()]
+        if "name" not in cols:
+            print("holdings.name column not found — already migrated or empty DB.")
+            # Still create participants and update version
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS participants (
+                    pid  TEXT PRIMARY KEY,
+                    name TEXT NOT NULL
+                )
+            """)
+            conn.execute("INSERT OR REPLACE INTO settings VALUES ('schema_version','5')")
+            print("Done.")
+            conn.close()
+            return
+
+        # Step 1 — create participants table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS participants (
+                pid  TEXT PRIMARY KEY,
+                name TEXT NOT NULL
+            )
+        """)
+        print("  Created participants table.")
+
+        # Step 2 — populate participants from holdings.name
+        conn.execute("""
+            INSERT OR REPLACE INTO participants (pid, name)
+            SELECT DISTINCT pid, name FROM holdings WHERE name != ''
+        """)
+        n_participants = conn.execute("SELECT COUNT(*) FROM participants").fetchone()[0]
+        print(f"  Populated {n_participants} participant rows.")
+
+        # Step 3 — rebuild holdings without name column
+        conn.executescript("""
+            CREATE TABLE holdings_new (
+                date    TEXT    NOT NULL,
+                code    TEXT    NOT NULL,
+                pid     TEXT    NOT NULL,
+                shares  INTEGER NOT NULL,
+                pct     REAL    NOT NULL,
+                PRIMARY KEY (date, code, pid)
+            );
+            INSERT INTO holdings_new (date, code, pid, shares, pct)
+                SELECT date, code, pid, shares, pct FROM holdings;
+            DROP TABLE holdings;
+            ALTER TABLE holdings_new RENAME TO holdings;
+            CREATE INDEX IF NOT EXISTS idx_hold_date_code ON holdings(date, code);
+            CREATE INDEX IF NOT EXISTS idx_hold_code ON holdings(code);
+        """)
+        n_holdings = conn.execute("SELECT COUNT(*) FROM holdings").fetchone()[0]
+        print(f"  Rebuilt holdings table: {n_holdings:,} rows, name column removed.")
+
+        # Step 4 — update schema version
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('schema_version','5')")
+        print("  Schema version → 5.")
+
+        # Step 5 — vacuum to reclaim space from dropped name column
+        print("  Running VACUUM to reclaim disk space …")
+        conn.execute("VACUUM")
+
+        db_mb = os.path.getsize(path) / 1_048_576
+        print(f"Done. DB size: {db_mb:.1f} MB")
+
+    finally:
+        conn.close()
 
 
 def _migrate_json(path: str = DB_PATH) -> None:
@@ -2035,13 +2147,19 @@ def _migrate_json(path: str = DB_PATH) -> None:
                     (ds, code5, total_sh, issued_sh, _now_iso()),
                 )
                 for p in payload.get("participants", []):
+                    pid  = p.get("pid",  "")
+                    name = p.get("name", "")
+                    conn.execute(
+                        """INSERT OR REPLACE INTO participants (pid, name)
+                           VALUES (?, ?)""",
+                        (pid, name),
+                    )
                     conn.execute(
                         """INSERT OR REPLACE INTO holdings
-                           (date, code, pid, name, shares, pct)
-                           VALUES (?, ?, ?, ?, ?, ?)""",
+                           (date, code, pid, shares, pct)
+                           VALUES (?, ?, ?, ?, ?)""",
                         (ds, code5,
-                         p.get("pid",  ""),
-                         p.get("name", ""),
+                         pid,
                          p.get("sh", p.get("shares", 0)),
                          p.get("pct", 0.0)),
                     )
@@ -2085,6 +2203,8 @@ def _parse_args() -> argparse.Namespace:
                    help="Run DB integrity checks and exit")
     p.add_argument("--migrate-json", action="store_true",
                    help="Import legacy JSON range files into the DB and exit")
+    p.add_argument("--migrate-schema", action="store_true",
+                   help="Migrate DB from schema v4 (name in holdings) to v5 (participants table)")
     p.add_argument("--export-charts", action="store_true",
                    help="Export per-stock sdw_{code}.json chart files and exit")
     p.add_argument("--charts-dir",   default=".", metavar="DIR",
@@ -2121,6 +2241,10 @@ def main() -> None:
         _migrate_json(db)
         return
 
+    if args.migrate_schema:
+        _migrate_schema(db)
+        return
+
     if args.export_charts:
         export_charts(out_dir=args.charts_dir, weeks=args.charts_weeks, path=db)
         return
@@ -2137,6 +2261,14 @@ def main() -> None:
             log.error("Invalid date format: %r  (expected YYYY-MM-DD)", args.date)
             sys.exit(1)
         dates = [d]
+    elif args.update:
+        # --update: fetch only the single latest scheduled date.
+        # all_fetch_dates() returns all 52 Fridays — passing all of them to
+        # build_clean causes a 90-min worker timeout per incomplete date,
+        # easily exceeding the 2-hour CI limit.  Weekly update should only
+        # ever need the most recent Friday.
+        all_dates = all_fetch_dates()
+        dates = [all_dates[-1]] if all_dates else []
     else:
         dates = all_fetch_dates()
 
