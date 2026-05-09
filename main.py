@@ -1205,6 +1205,9 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             _sc_total = _sdw_total_sh_map.get(_sc_code, 0)
             # Resolve name once per code — used by all four summary metrics below
             _sc_name = _uni_names.get(_sc_code, {}).get("zh") or _sc_code
+            _sc_en   = _uni_names.get(_sc_code, {}).get("en") or ""
+            # Skip non-equity instruments — ETFs/bonds/derivatives distort all four metrics
+            if classify_stock(_sc_code, _sc_en) in ("etf", "bond", "derivative"): continue
             _sc_top_pct = _sc_holders[0].get("pct", 0.0) if _sc_holders else 0.0
             if _sc_top_pct > _sc_max_pct:
                 _sc_max_pct = _sc_top_pct; _sc_max_pct_code = _sc_code
