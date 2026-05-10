@@ -1437,10 +1437,10 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <select id="stock-range" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
+        <option value="4">1個月</option>
         <option value="13">3個月</option>
         <option value="26">6個月</option>
         <option value="52" selected>1年</option>
-        <option value="104">2年</option>
       </select>
       <label style="font-size:12px;color:var(--muted)">自</label>
       <input type="date" id="stock-from" style="font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
@@ -5932,9 +5932,8 @@ async function stkEnsureSdw(code5) {
 
 // ── Data assembly ─────────────────────────────────────────────────────────────
 async function stkBuildSeries(code5, fromDs, toDs) {
-  // Use turnover_YYYY.json as date backbone and price/volume source
-  // rank_history is now only 2 days — not suitable as a historical data source
-  // y-1 included for warmup period; y+1 removed — future year files don't exist
+  // Use turnover_YYYY.json as date backbone and price/volume source.
+  // Max range is 1Y — only current and previous year files needed.
   const curYear = new Date().getFullYear();
   const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
     .flatMap(y => [y-1, y]).filter(y => y >= YAHOO_START_YEAR && y <= curYear))];
@@ -5942,19 +5941,12 @@ async function stkBuildSeries(code5, fromDs, toDs) {
     await loadTvYear(y);
     await stkEnsureSfc(y);
   }
-  // Also load yahoo years for the full range — needed when turnover files don't exist
-  const fromYear = parseInt(fromDs.slice(0,4));
-  const toYear   = parseInt(toDs.slice(0,4));
-  for (let y = fromYear - 1; y <= toYear; y++) {
-    if (y >= YAHOO_START_YEAR && y <= curYear) await loadYahooYear(y);
-  }
   await stkEnsureSdw(code5);
 
-  // Build date list from turnover AND yahoo files
-  const allDates = [...new Set([
-    ...years.flatMap(y => Object.keys(tvCache[y] || {})),
-    ...Object.values(yahooCache).flatMap(byDate => Object.keys(byDate)),
-  ])].filter(d => d >= fromDs && d <= toDs).sort();
+  // Build date list from turnover files only
+  const allDates = [...new Set(
+    years.flatMap(y => Object.keys(tvCache[y] || {}))
+  )].filter(d => d >= fromDs && d <= toDs).sort();
 
   const tradingDays = stkAllDates(allDates);
   if (!tradingDays.length) return null;
@@ -5974,7 +5966,7 @@ async function stkBuildSeries(code5, fromDs, toDs) {
 
   const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[];
 
-  // Pre-build vol array for turnover_24d computation — include yahoo as fallback
+  // Pre-build vol array for turnover_24d computation
   const allVolByDate = {};
   for (const y of years) {
     for (const [ds, stocks] of Object.entries(tvCache[y] || {})) {
@@ -5982,26 +5974,17 @@ async function stkBuildSeries(code5, fromDs, toDs) {
       if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
     }
   }
-  // Fill gaps from yahoo
-  for (const [yr, byDate] of Object.entries(yahooCache)) {
-    for (const [ds, stocks] of Object.entries(byDate)) {
-      if (!allVolByDate[ds] && stocks[code5]?.vol > 0)
-        allVolByDate[ds] = stocks[code5].vol;
-    }
-  }
   const sortedVolDates = Object.keys(allVolByDate).sort();
 
   for (let i = 0; i < tradingDays.length; i++) {
     const ds   = tradingDays[i];
     const year = parseInt(ds.slice(0, 4));
-    const tvRec  = tvCache[year]?.[ds]?.[code5];
-    const yhRec  = !tvRec ? (yahooCache[year]?.[ds]?.[code5] || null) : null;
-    const priceRec = tvRec || yhRec;
+    const tvRec = tvCache[year]?.[ds]?.[code5];
 
     labels.push(ds);
-    closeArr.push(priceRec?.close > 0 ? priceRec.close : null);
+    closeArr.push(tvRec?.close > 0 ? tvRec.close : null);
     vwapArr .push(tvRec?.vwap  > 0 ? tvRec.vwap  : null);
-    volArr  .push(priceRec?.vol > 0 ? priceRec.vol : null);
+    volArr  .push(tvRec?.vol   > 0 ? tvRec.vol   : null);
 
     // Compute turnover_24d: vol of last 24 days / total_sh (from SDW)
     // Approximate: use rolling 24-day vol sum / latest SDW total_sh
