@@ -1,14 +1,18 @@
 """
 yahoo_library.py - Yahoo Finance OHLCV History Library
 
-Fetches adjusted OHLCV data from Yahoo Finance for HK stocks.
+Fetches OHLCV data from Yahoo Finance for HK stocks.
 Stores data in yahoo_{YYYY}.json files, one per year.
 
 File structure matches turnover_{YYYY}.json but with 'open' added:
   meta: year, last_updated, total_days, source
   by_date: date_str -> code5 -> {open, high, low, close, vol}
 
-All prices are Yahoo split/dividend adjusted.
+Price convention:
+  open, high, low  — raw unadjusted traded prices
+  close            — dividend/split adjusted closing price (Adj Close)
+  vol              — raw traded volume
+
 Codes stored as 5-digit zero-padded strings.
 """
 
@@ -92,7 +96,7 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
                 tickers,
                 start=start.isoformat(),
                 end=(end + timedelta(days=1)).isoformat(),
-                auto_adjust=True,
+                auto_adjust=False,  # keep raw OHLC; use Adj Close separately for close
                 progress=False,
                 group_by="ticker",
                 threads=True,
@@ -113,11 +117,13 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
                         continue
                     for idx, row in df.iterrows():
                         ds = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
-                        # Support both capitalized and lowercase column names
+                        # open/high/low: raw unadjusted traded prices
                         o = float(row.get("Open",   row.get("open",   0)) or 0)
                         h = float(row.get("High",   row.get("high",   0)) or 0)
                         l = float(row.get("Low",    row.get("low",    0)) or 0)
-                        c = float(row.get("Close",  row.get("close",  0)) or 0)
+                        # close: dividend/split adjusted (Adj Close) for price continuity
+                        c = float(row.get("Adj Close", row.get("adj close",
+                                  row.get("Close",     row.get("close", 0)))) or 0)
                         v = int(  row.get("Volume", row.get("volume", 0)) or 0)
                         if c > 0:
                             result[code5][ds] = {
@@ -288,7 +294,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Yahoo Finance OHLCV library builder")
     ap.add_argument("--year",        type=int)
     ap.add_argument("--from-year",   type=int, default=START_YEAR, dest="from_year")
-    ap.add_argument("--to-year",     type=int, default=date.today().year - 1, dest="to_year")
+    ap.add_argument("--to-year",     type=int, default=date.today().year,     dest="to_year")
     ap.add_argument("--rebuild",     action="store_true")
     ap.add_argument("--patch-2026",  action="store_true", dest="patch_2026")
     args = ap.parse_args()
