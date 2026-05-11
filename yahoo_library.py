@@ -33,8 +33,8 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 START_YEAR  = 1995
-SLEEP_BATCH = 5
-BATCH_SIZE  = 100
+SLEEP_BATCH = 10
+BATCH_SIZE  = 20
 MAX_RETRIES = 3
 RETRY_SLEEP = 30
 
@@ -99,7 +99,7 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
                 auto_adjust=False,  # keep raw OHLC; use Adj Close separately for close
                 progress=False,
                 group_by="ticker",
-                threads=True,
+                threads=False,
             )
             if raw is None or raw.empty:
                 return result
