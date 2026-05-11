@@ -33,10 +33,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 START_YEAR  = 1995
-SLEEP_BATCH = 1.5
+SLEEP_BATCH = 5
 BATCH_SIZE  = 100
 MAX_RETRIES = 3
-RETRY_SLEEP = 10
+RETRY_SLEEP = 30
 
 
 def lib_path(year: int) -> str:
