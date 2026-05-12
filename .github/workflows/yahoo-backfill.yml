@@ -2,35 +2,34 @@ name: Yahoo Finance Backfill
 
 # Fetches historical OHLCV data from Yahoo Finance for HK stocks.
 # Two modes:
-#   historical  — fetch 1995–2025 into yahoo_{YYYY}.json → upload each year to R2 immediately
+#   historical  — fetch START_YEAR to to_year into yahoo_{code5}.json → upload each to R2
 #   patch-2026  — fill missing high/low/open/prev_close in turnover_2026.json → commit to git
 #
-# Files stored on R2 (same bucket as sdw_*.json):
-#   pub-0b0781d969ec4b38b173f889109244a9.r2.dev/yahoo_{YYYY}.json
+# Files stored on R2 (per-stock, same bucket as sdw_*.json):
+#   pub-0b0781d969ec4b38b173f889109244a9.r2.dev/yahoo_{code5}.json
 #
-# Incremental: re-running skips years/codes already fetched.
-# Per-year upload: each year uploaded to R2 immediately — timeouts don't lose work.
+# Incremental: re-running skips stocks/dates already fetched.
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Mode: historical (1995-2025 to R2) or patch-2026 (fix turnover_2026.json)'
+        description: 'Mode: historical (to R2) or patch-2026 (fix turnover_2026.json)'
         required: true
-        default: 'patch-2026'
+        default: 'historical'
         type: choice
         options:
-          - patch-2026
           - historical
+          - patch-2026
       from_year:
         description: 'Start year for historical mode (default: 1995)'
         required: false
         default: '1995'
         type: string
       to_year:
-        description: 'End year for historical mode (default: 2025)'
+        description: 'End year for historical mode (default: current year)'
         required: false
-        default: '2025'
+        default: '2026'
         type: string
       rebuild:
         description: 'Rebuild - re-fetch even if data exists'
@@ -46,7 +45,7 @@ jobs:
   yahoo-backfill:
     name: Yahoo Finance Backfill (${{ inputs.mode }})
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 720
     permissions:
       contents: write
 
@@ -75,7 +74,7 @@ jobs:
             git pull --rebase && git push && break || sleep 10
           done
 
-      # historical: fetch year by year, upload each to R2 immediately
+      # historical: fetch all stocks per-stock file, upload each to R2 immediately
       - name: Fetch historical Yahoo data
         if: ${{ inputs.mode == 'historical' }}
         env:
@@ -91,22 +90,22 @@ jobs:
           import os, subprocess, logging
           from datetime import date
           from ccass_universe import get_universe_codes
-          from yahoo_library import fetch_and_save_year, lib_path
+          from yahoo_library import fetch_universe, stock_path
 
           logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
           log = logging.getLogger(__name__)
 
           from_year = int(os.environ.get("FROM_YEAR", "1995"))
-          to_year   = int(os.environ.get("TO_YEAR",   "2025"))
+          to_year   = int(os.environ.get("TO_YEAR",   str(date.today().year)))
           rebuild   = os.environ.get("REBUILD", "false").lower() == "true"
           endpoint  = os.environ["R2_ENDPOINT_URL"]
 
-          universe  = list(get_universe_codes())
+          universe = list(get_universe_codes())
           log.info("Universe: %d stocks | years: %d-%d | rebuild: %s",
                    len(universe), from_year, to_year, rebuild)
 
-          def upload_year(year):
-              f = lib_path(year)
+          def upload_stock(code5):
+              f = stock_path(code5)
               if not os.path.exists(f):
                   return
               cmd = ["aws", "s3", "cp", f, f"s3://hk-stock-monitor/{f}",
@@ -117,12 +116,10 @@ jobs:
               else:
                   log.warning("Upload failed for %s: %s", f, r.stderr[:200])
 
-          for yr in range(from_year, to_year + 1):
-              log.info("=== Year %d ===", yr)
-              fetch_and_save_year(yr, universe, rebuild=rebuild, upload_fn=upload_year)
-              upload_year(yr)  # final upload after year completes
+          fetch_universe(universe, from_year, to_year,
+                         rebuild=rebuild, upload_fn=upload_stock)
 
-          log.info("All years complete.")
+          log.info("All stocks complete.")
           EOF
 
       - name: List uploaded yahoo files in R2
@@ -131,7 +128,8 @@ jobs:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
         run: |
           aws s3 ls s3://hk-stock-monitor/ \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
-            | grep yahoo_ | sort
+            | grep yahoo_ | sort | tail -20

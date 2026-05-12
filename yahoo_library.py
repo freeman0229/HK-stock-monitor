@@ -2,11 +2,11 @@
 yahoo_library.py - Yahoo Finance OHLCV History Library
 
 Fetches OHLCV data from Yahoo Finance for HK stocks.
-Stores data in yahoo_{YYYY}.json files, one per year.
+Stores data in per-stock files: yahoo_{code5}.json
 
-File structure matches turnover_{YYYY}.json but with 'open' added:
-  meta: year, last_updated, total_days, source
-  by_date: date_str -> code5 -> {open, high, low, close, vol}
+File structure:
+  meta: code5, last_updated, source
+  by_date: date_str -> {open, high, low, close, vol}
 
 Price convention:
   open, high, low  — raw unadjusted traded prices
@@ -14,6 +14,7 @@ Price convention:
   vol              — raw traded volume
 
 Codes stored as 5-digit zero-padded strings.
+Files stored on R2: pub-0b0781d969ec4b38b173f889109244a9.r2.dev/yahoo_{code5}.json
 """
 
 import json
@@ -39,42 +40,28 @@ MAX_RETRIES = 3
 RETRY_SLEEP = 30
 
 
-def lib_path(year: int) -> str:
-    return f"yahoo_{year}.json"
+def stock_path(code5: str) -> str:
+    return f"yahoo_{code5}.json"
 
 
-def load_year(year: int) -> dict:
-    p = lib_path(year)
+def load_stock(code5: str) -> dict:
+    p = stock_path(code5)
     if os.path.exists(p):
         with open(p, encoding="utf-8") as f:
             return json.load(f)
-    return {"meta": {"year": year, "source": "yahoo"}, "by_date": {}}
+    return {"meta": {"code5": code5, "source": "yahoo"}, "by_date": {}}
 
 
-def save_year(year: int, lib: dict):
+def save_stock(code5: str, lib: dict):
     lib["meta"] = {
-        "year":         year,
+        "code5":        code5,
         "last_updated": date.today().isoformat(),
         "total_days":   len(lib["by_date"]),
         "source":       "yahoo",
     }
-    p = lib_path(year)
+    p = stock_path(code5)
     with open(p, "w", encoding="utf-8") as f:
         json.dump(lib, f, ensure_ascii=False, separators=(",", ":"))
-    mb = os.path.getsize(p) / 1e6
-    log.info("Saved %s: %d days  %.2f MB", p, len(lib["by_date"]), mb)
-
-
-def all_stored_codes_for_year(year: int) -> set:
-    p = lib_path(year)
-    if not os.path.exists(p):
-        return set()
-    with open(p, encoding="utf-8") as f:
-        by_date = json.load(f).get("by_date", {})
-    codes = set()
-    for day_data in by_date.values():
-        codes.update(day_data.keys())
-    return codes
 
 
 def to_yahoo_ticker(code5: str) -> str:
@@ -85,8 +72,22 @@ def from_yahoo_ticker(ticker: str) -> str:
     return normalize_code(ticker.upper().replace(".HK", ""))
 
 
+def _get_val(row, *keys) -> float:
+    """Try multiple column name variants, return float or 0."""
+    for k in keys:
+        v = row.get(k)
+        if v is not None:
+            try:
+                f = float(v)
+                if f == f:  # NaN check
+                    return f
+            except (TypeError, ValueError):
+                pass
+    return 0.0
+
+
 def fetch_batch(codes: list, start: date, end: date) -> dict:
-    """Fetch OHLCV for a batch of codes with retry. Returns {code5: {date_str: rec}}."""
+    """Fetch OHLCV for a batch of codes. Returns {code5: {date_str: rec}}."""
     tickers = [to_yahoo_ticker(c) for c in codes]
     result  = {c: {} for c in codes}
 
@@ -96,7 +97,7 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
                 tickers,
                 start=start.isoformat(),
                 end=(end + timedelta(days=1)).isoformat(),
-                auto_adjust=False,  # keep raw OHLC; use Adj Close separately for close
+                auto_adjust=False,  # raw OHLC + separate Adj Close column
                 progress=False,
                 group_by="ticker",
                 threads=False,
@@ -109,22 +110,19 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
                     if len(tickers) == 1:
                         df = raw
                     else:
-                        lvl = raw.columns.get_level_values(0)
-                        if ticker not in lvl:
+                        # MultiIndex: columns are (field, ticker)
+                        if ticker not in raw.columns.get_level_values(1):
                             continue
-                        df = raw[ticker]
+                        df = raw.xs(ticker, axis=1, level=1)
                     if df is None or df.empty:
                         continue
                     for idx, row in df.iterrows():
                         ds = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
-                        # open/high/low: raw unadjusted traded prices
-                        o = float(row.get("Open",   row.get("open",   0)) or 0)
-                        h = float(row.get("High",   row.get("high",   0)) or 0)
-                        l = float(row.get("Low",    row.get("low",    0)) or 0)
-                        # close: dividend/split adjusted (Adj Close) for price continuity
-                        c = float(row.get("Adj Close", row.get("adj close",
-                                  row.get("Close",     row.get("close", 0)))) or 0)
-                        v = int(  row.get("Volume", row.get("volume", 0)) or 0)
+                        o = _get_val(row, "Open",      "open")
+                        h = _get_val(row, "High",      "high")
+                        l = _get_val(row, "Low",       "low")
+                        c = _get_val(row, "Adj Close", "adj close", "Close", "close")
+                        v = int(_get_val(row, "Volume", "volume"))
                         if c > 0:
                             result[code5][ds] = {
                                 "open":  round(o, 4),
@@ -149,64 +147,89 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
     return result
 
 
-def fetch_and_save_year(year: int, universe: list, rebuild: bool = False,
-                        upload_fn=None):
+def fetch_and_save_all_years(code5: str, from_year: int, to_year: int,
+                             rebuild: bool = False, upload_fn=None):
     """
-    Fetch all universe stocks for a given year from Yahoo Finance.
-    Saves incrementally after every batch - timeouts do not lose completed work.
-    Calls upload_fn(year) after each save if provided (for immediate R2 upload).
+    Fetch all years for a single stock and save to yahoo_{code5}.json.
+    Incremental: skips dates already stored unless rebuild=True.
     """
-    start = date(year, 1, 1)
-    end   = date(year, 12, 31)
-    if end > date.today():
-        end = date.today() - timedelta(days=1)
-    if start > date.today():
-        log.info("Yahoo %d: future year - skipping", year)
-        return
+    lib = load_stock(code5) if not rebuild else {"meta": {}, "by_date": {}}
+    existing_dates = set(lib["by_date"].keys()) if not rebuild else set()
 
-    lib = load_year(year) if not rebuild else {"meta": {}, "by_date": {}}
+    total_saved = 0
+    for year in range(from_year, to_year + 1):
+        start = date(year, 1, 1)
+        end   = min(date(year, 12, 31), date.today())
+        if start > date.today():
+            continue
 
-    if not rebuild:
-        existing = all_stored_codes_for_year(year)
-        to_fetch = [c for c in universe if c not in existing]
-        log.info("Yahoo %d: %d to fetch (%d already stored)", year, len(to_fetch), len(existing))
-    else:
-        to_fetch = list(universe)
-        log.info("Yahoo %d (rebuild): %d codes", year, len(to_fetch))
+        # Check if this year already has data
+        year_dates = {d for d in existing_dates if d.startswith(str(year))}
+        # Expect ~240 trading days per year; skip if reasonably complete
+        if not rebuild and len(year_dates) >= 200:
+            continue
 
-    if not to_fetch:
-        log.info("Yahoo %d: nothing to fetch", year)
-        return
+        batch_data = fetch_batch([code5], start, end)
+        days = batch_data.get(code5, {})
+        for ds, rec in days.items():
+            lib["by_date"][ds] = rec
+            total_saved += 1
+
+    if total_saved > 0 or rebuild:
+        lib["by_date"] = dict(sorted(lib["by_date"].items()))
+        save_stock(code5, lib)
+        if upload_fn:
+            try:
+                upload_fn(code5)
+            except Exception as e:
+                log.warning("upload_fn failed for %s: %s", code5, e)
+
+    return total_saved
+
+
+def fetch_universe(universe: list, from_year: int, to_year: int,
+                   rebuild: bool = False, upload_fn=None):
+    """
+    Fetch all years for all stocks in universe.
+    Processes in batches of BATCH_SIZE stocks at a time for efficiency.
+    """
+    log.info("Universe: %d stocks | years: %d-%d | rebuild: %s",
+             len(universe), from_year, to_year, rebuild)
 
     saved = failed = 0
 
-    for i in range(0, len(to_fetch), BATCH_SIZE):
-        batch = to_fetch[i:i + BATCH_SIZE]
-        log.info("Yahoo %d: batch %d-%d / %d",
-                 year, i + 1, min(i + BATCH_SIZE, len(to_fetch)), len(to_fetch))
+    for i in range(0, len(universe), BATCH_SIZE):
+        batch = universe[i:i + BATCH_SIZE]
+        log.info("Processing batch %d-%d / %d",
+                 i + 1, min(i + BATCH_SIZE, len(universe)), len(universe))
 
-        batch_data = fetch_batch(batch, start, end)
-
-        for code5, days in batch_data.items():
-            if not days:
-                failed += 1
+        for year in range(from_year, to_year + 1):
+            start = date(year, 1, 1)
+            end   = min(date(year, 12, 31), date.today())
+            if start > date.today():
                 continue
-            for ds, rec in days.items():
-                lib["by_date"].setdefault(ds, {})[code5] = rec
-            saved += 1
 
-        lib["by_date"] = dict(sorted(lib["by_date"].items()))
-        save_year(year, lib)
+            batch_data = fetch_batch(batch, start, end)
 
-        if upload_fn:
-            try:
-                upload_fn(year)
-            except Exception as e:
-                log.warning("upload_fn failed for year %d: %s", year, e)
+            for code5 in batch:
+                days = batch_data.get(code5, {})
+                if not days:
+                    continue
+                lib = load_stock(code5) if not rebuild else {"meta": {}, "by_date": {}}
+                for ds, rec in days.items():
+                    lib["by_date"][ds] = rec
+                lib["by_date"] = dict(sorted(lib["by_date"].items()))
+                save_stock(code5, lib)
+                if upload_fn:
+                    try:
+                        upload_fn(code5)
+                    except Exception as e:
+                        log.warning("upload_fn failed for %s: %s", code5, e)
+                saved += 1
 
         time.sleep(SLEEP_BATCH)
 
-    log.info("Yahoo %d: done. Saved=%d Failed=%d", year, saved, failed)
+    log.info("Done. Saved=%d Failed=%d", saved, failed)
 
 
 def patch_turnover_2026(universe: list):
@@ -245,9 +268,6 @@ def patch_turnover_2026(universe: list):
 
     fetch_start = date.fromisoformat(bad_dates[0]) - timedelta(days=5)
     fetch_end   = date.fromisoformat(bad_dates[-1])
-
-    log.info("patch-2026: fetching %s to %s for %d stocks",
-             fetch_start, fetch_end, len(universe))
 
     all_yahoo = {}
     for i in range(0, len(universe), BATCH_SIZE):
@@ -291,12 +311,11 @@ if __name__ == "__main__":
     import argparse
     from ccass_universe import get_universe_codes
 
-    ap = argparse.ArgumentParser(description="Yahoo Finance OHLCV library builder")
-    ap.add_argument("--year",        type=int)
-    ap.add_argument("--from-year",   type=int, default=START_YEAR, dest="from_year")
-    ap.add_argument("--to-year",     type=int, default=date.today().year,     dest="to_year")
-    ap.add_argument("--rebuild",     action="store_true")
-    ap.add_argument("--patch-2026",  action="store_true", dest="patch_2026")
+    ap = argparse.ArgumentParser(description="Yahoo Finance OHLCV per-stock library builder")
+    ap.add_argument("--from-year",  type=int, default=START_YEAR, dest="from_year")
+    ap.add_argument("--to-year",    type=int, default=date.today().year, dest="to_year")
+    ap.add_argument("--rebuild",    action="store_true")
+    ap.add_argument("--patch-2026", action="store_true", dest="patch_2026")
     args = ap.parse_args()
 
     universe = list(get_universe_codes())
@@ -304,9 +323,5 @@ if __name__ == "__main__":
 
     if args.patch_2026:
         patch_turnover_2026(universe)
-    elif args.year:
-        fetch_and_save_year(args.year, universe, rebuild=args.rebuild)
     else:
-        for yr in range(args.from_year, args.to_year + 1):
-            log.info("=== Year %d ===", yr)
-            fetch_and_save_year(yr, universe, rebuild=args.rebuild)
+        fetch_universe(universe, args.from_year, args.to_year, rebuild=args.rebuild)

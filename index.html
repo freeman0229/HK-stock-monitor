@@ -2480,21 +2480,19 @@ async function loadTvYear(year) {
 }
 
 // ── Yahoo Finance historical cache ────────────────────────────────────────────
-// Stores OHLCV data from yahoo_{YYYY}.json (R2) for years before current year.
-// Structure: yahooCache[year] = {date_str: {code5: {open,high,low,close,vol}}}
-let yahooCache = {};
-const YAHOO_R2_BASE    = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
-const YAHOO_START_YEAR = 2000;  // earliest year to fetch from R2
+// Per-stock Yahoo cache: yahooStockCache[code5] = {date_str: {open,high,low,close,vol}}
+let yahooStockCache = {};
+const YAHOO_R2_BASE = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
 
-async function loadYahooYear(year) {
-  if (yahooCache[year]) return yahooCache[year];
+async function loadYahooStock(code5) {
+  if (yahooStockCache[code5]) return yahooStockCache[code5];
   try {
-    const r = await fetch(`${YAHOO_R2_BASE}/yahoo_${year}.json`, { cache: 'force-cache' });
-    if (!r.ok) { yahooCache[year] = {}; return {}; }
+    const r = await fetch(`${YAHOO_R2_BASE}/yahoo_${code5}.json`, { cache: 'force-cache' });
+    if (!r.ok) { yahooStockCache[code5] = {}; return {}; }
     const lib = await r.json();
-    yahooCache[year] = lib.by_date || {};
-    return yahooCache[year];
-  } catch(e) { yahooCache[year] = {}; return {}; }
+    yahooStockCache[code5] = lib.by_date || {};
+    return yahooStockCache[code5];
+  } catch(e) { yahooStockCache[code5] = {}; return {}; }
 }
 
 // Build {ds: {close, vol}} for one stock across all relevant years
@@ -4620,27 +4618,22 @@ async function drawCai() {
   if (!stock) return;
   const code5 = norm5(stock.code);
 
-  // Load current year from turnover library (HKEX primary)
+  // Load current and previous year from turnover library (HKEX primary)
   const year     = new Date().getFullYear();
   const prevYear = year - 1;
   if (!tvCache[year])     await loadTvYear(year);
   if (!tvCache[prevYear]) await loadTvYear(prevYear);
 
-  // Fetch all Yahoo years from YAHOO_START_YEAR up to prevYear (lazy, cached).
-  // Current year is covered by tvCache; prevYear overlaps but Yahoo fills gaps.
-  await Promise.all(
-    Array.from({ length: year - YAHOO_START_YEAR },
-               (_, i) => loadYahooYear(YAHOO_START_YEAR + i))
-  );
+  // Load per-stock Yahoo data (all years in one small file, lazy-cached)
+  const yahooByDate = await loadYahooStock(code5);
 
-  // Merge all sources: Yahoo (older) + turnover (current/prev year primary).
-  // HKEX turnover always takes priority for dates it covers.
+  // Merge: HKEX turnover takes priority; Yahoo fills gaps and older years
   const getMergedRec = (d, c5) => {
     const yr = parseInt(d.slice(0, 4));
     if (yr >= year) {
       // Current year: HKEX primary, Yahoo patches missing high/low
-      const tv = (tvCache[year]    || {})[d]?.[c5];
-      const yh = (yahooCache[year] || {})[d]?.[c5];
+      const tv = (tvCache[year] || {})[d]?.[c5];
+      const yh = yahooByDate[d];
       if (!tv && !yh) return null;
       if (!tv) return yh;
       if (tv.high === 0 && yh?.high > 0)
@@ -4648,12 +4641,10 @@ async function drawCai() {
       return tv;
     } else if (yr === prevYear) {
       // Previous year: HKEX preferred, Yahoo as fallback
-      return (tvCache[prevYear] || {})[d]?.[c5]
-          || (yahooCache[yr]    || {})[d]?.[c5]
-          || null;
+      return (tvCache[prevYear] || {})[d]?.[c5] || yahooByDate[d] || null;
     } else {
       // All older years: Yahoo only
-      return (yahooCache[yr] || {})[d]?.[c5] || null;
+      return yahooByDate[d] || null;
     }
   };
 
@@ -4661,9 +4652,8 @@ async function drawCai() {
   const allDateSet = new Set([
     ...Object.keys(tvCache[year]     || {}),
     ...Object.keys(tvCache[prevYear] || {}),
+    ...Object.keys(yahooByDate),
   ]);
-  for (const byDate of Object.values(yahooCache))
-    for (const d of Object.keys(byDate)) allDateSet.add(d);
   const allDates = [...allDateSet].sort();
 
   // Build arrays
@@ -5936,7 +5926,7 @@ async function stkBuildSeries(code5, fromDs, toDs) {
   // Max range is 1Y — only current and previous year files needed.
   const curYear = new Date().getFullYear();
   const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
-    .flatMap(y => [y-1, y]).filter(y => y >= YAHOO_START_YEAR && y <= curYear))];
+    .flatMap(y => [y-1, y]).filter(y => y >= 2000 && y <= curYear))];
   for (const y of years) {
     await loadTvYear(y);
     await stkEnsureSfc(y);
