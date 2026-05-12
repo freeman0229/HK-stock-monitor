@@ -78,11 +78,11 @@ def all_stored_codes_for_year(year: int) -> set:
 
 
 def to_yahoo_ticker(code5: str) -> str:
-    return str(int(code5)) + ".HK"
+    return str(int(code5)).zfill(4) + ".HK"
 
 
 def from_yahoo_ticker(ticker: str) -> str:
-    return normalize_code(ticker.replace(".HK", "").replace(".hk", ""))
+    return normalize_code(ticker.upper().replace(".HK", ""))
 
 
 def fetch_batch(codes: list, start: date, end: date) -> dict:
