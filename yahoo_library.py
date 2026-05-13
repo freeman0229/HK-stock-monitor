@@ -110,10 +110,17 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
                     if len(tickers) == 1:
                         df = raw
                     else:
-                        # MultiIndex: columns are (field, ticker)
-                        if ticker not in raw.columns.get_level_values(1):
+                        # MultiIndex with group_by="ticker": columns are (ticker, field)
+                        cols = raw.columns
+                        if hasattr(cols, 'get_level_values'):
+                            if ticker in cols.get_level_values(0):
+                                df = raw[ticker]  # (ticker, field) → raw[ticker] gives fields
+                            elif ticker in cols.get_level_values(1):
+                                df = raw.xs(ticker, axis=1, level=1)  # (field, ticker)
+                            else:
+                                continue
+                        else:
                             continue
-                        df = raw.xs(ticker, axis=1, level=1)
                     if df is None or df.empty:
                         continue
                     for idx, row in df.iterrows():
@@ -190,14 +197,12 @@ def fetch_and_save_all_years(code5: str, from_year: int, to_year: int,
 def fetch_universe(universe: list, from_year: int, to_year: int,
                    rebuild: bool = False, upload_fn=None):
     """
-    Fetch full date range for all stocks in universe in one API call per batch.
-    Single fetch per batch across all years — minimises API calls and rate limiting.
+    Fetch year by year for batches of stocks.
+    Accumulates all years per stock before saving — one file per stock with all history.
     """
     log.info("Universe: %d stocks | years: %d-%d | rebuild: %s",
              len(universe), from_year, to_year, rebuild)
 
-    start = date(from_year, 1, 1)
-    end   = min(date(to_year, 12, 31), date.today())
     saved = failed = 0
 
     for i in range(0, len(universe), BATCH_SIZE):
@@ -205,16 +210,27 @@ def fetch_universe(universe: list, from_year: int, to_year: int,
         log.info("Processing batch %d-%d / %d",
                  i + 1, min(i + BATCH_SIZE, len(universe)), len(universe))
 
-        batch_data = fetch_batch(batch, start, end)
+        # Accumulate data for all stocks in batch across all years
+        batch_all = {code5: {} for code5 in batch}
 
+        for year in range(from_year, to_year + 1):
+            start = date(year, 1, 1)
+            end   = min(date(year, 12, 31), date.today())
+            if start > date.today():
+                continue
+            year_data = fetch_batch(batch, start, end)
+            for code5 in batch:
+                batch_all[code5].update(year_data.get(code5, {}))
+            time.sleep(2)  # short sleep between years within same batch
+
+        # Save each stock's accumulated data
         for code5 in batch:
-            days = batch_data.get(code5, {})
+            days = batch_all[code5]
             if not days:
                 failed += 1
                 continue
             lib = load_stock(code5) if not rebuild else {"meta": {}, "by_date": {}}
-            for ds, rec in days.items():
-                lib["by_date"][ds] = rec
+            lib["by_date"].update(days)
             lib["by_date"] = dict(sorted(lib["by_date"].items()))
             save_stock(code5, lib)
             if upload_fn:
@@ -225,7 +241,8 @@ def fetch_universe(universe: list, from_year: int, to_year: int,
             saved += 1
 
         time.sleep(SLEEP_BATCH)
-        log.info("Batch done. Saved so far: %d", saved)
+        log.info("Batch %d-%d done. Saved so far: %d",
+                 i + 1, min(i + BATCH_SIZE, len(universe)), saved)
 
     log.info("Done. Saved=%d Failed=%d", saved, failed)
 
