@@ -190,12 +190,14 @@ def fetch_and_save_all_years(code5: str, from_year: int, to_year: int,
 def fetch_universe(universe: list, from_year: int, to_year: int,
                    rebuild: bool = False, upload_fn=None):
     """
-    Fetch all years for all stocks in universe.
-    Processes in batches of BATCH_SIZE stocks at a time for efficiency.
+    Fetch full date range for all stocks in universe in one API call per batch.
+    Single fetch per batch across all years — minimises API calls and rate limiting.
     """
     log.info("Universe: %d stocks | years: %d-%d | rebuild: %s",
              len(universe), from_year, to_year, rebuild)
 
+    start = date(from_year, 1, 1)
+    end   = min(date(to_year, 12, 31), date.today())
     saved = failed = 0
 
     for i in range(0, len(universe), BATCH_SIZE):
@@ -203,31 +205,27 @@ def fetch_universe(universe: list, from_year: int, to_year: int,
         log.info("Processing batch %d-%d / %d",
                  i + 1, min(i + BATCH_SIZE, len(universe)), len(universe))
 
-        for year in range(from_year, to_year + 1):
-            start = date(year, 1, 1)
-            end   = min(date(year, 12, 31), date.today())
-            if start > date.today():
+        batch_data = fetch_batch(batch, start, end)
+
+        for code5 in batch:
+            days = batch_data.get(code5, {})
+            if not days:
+                failed += 1
                 continue
-
-            batch_data = fetch_batch(batch, start, end)
-
-            for code5 in batch:
-                days = batch_data.get(code5, {})
-                if not days:
-                    continue
-                lib = load_stock(code5) if not rebuild else {"meta": {}, "by_date": {}}
-                for ds, rec in days.items():
-                    lib["by_date"][ds] = rec
-                lib["by_date"] = dict(sorted(lib["by_date"].items()))
-                save_stock(code5, lib)
-                if upload_fn:
-                    try:
-                        upload_fn(code5)
-                    except Exception as e:
-                        log.warning("upload_fn failed for %s: %s", code5, e)
-                saved += 1
+            lib = load_stock(code5) if not rebuild else {"meta": {}, "by_date": {}}
+            for ds, rec in days.items():
+                lib["by_date"][ds] = rec
+            lib["by_date"] = dict(sorted(lib["by_date"].items()))
+            save_stock(code5, lib)
+            if upload_fn:
+                try:
+                    upload_fn(code5)
+                except Exception as e:
+                    log.warning("upload_fn failed for %s: %s", code5, e)
+            saved += 1
 
         time.sleep(SLEEP_BATCH)
+        log.info("Batch done. Saved so far: %d", saved)
 
     log.info("Done. Saved=%d Failed=%d", saved, failed)
 
