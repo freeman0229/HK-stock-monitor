@@ -66,16 +66,22 @@ def save_stock(code5: str, lib: dict):
 
 R2_BASE = "https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev"
 
-def exists_on_r2(code5: str) -> bool:
-    """Check if yahoo_{code5}.json already exists on R2 (HEAD request)."""
+def list_r2_yahoo_codes() -> set:
+    """List all yahoo_{code5}.json files already on R2. Returns set of code5 strings."""
     import urllib.request
-    url = f"{R2_BASE}/yahoo_{code5}.json"
+    # R2 supports S3-compatible list via ?list-type=2&prefix=yahoo_
+    url = f"{R2_BASE}?list-type=2&prefix=yahoo_0&max-keys=3000"
     try:
-        req = urllib.request.Request(url, method="HEAD")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            body = resp.read().decode("utf-8")
+        # Extract code5 from <Key>yahoo_00700.json</Key>
+        import re
+        codes = re.findall(r"<Key>yahoo_(\d{5})\.json</Key>", body)
+        log.info("R2 existing yahoo files: %d", len(codes))
+        return set(codes)
+    except Exception as e:
+        log.warning("Could not list R2 yahoo files: %s — will fetch all", e)
+        return set()
 
 
 def to_yahoo_ticker(code5: str) -> str:
@@ -219,18 +225,22 @@ def fetch_universe(universe: list, from_year: int, to_year: int,
 
     saved = failed = 0
 
+    # Get existing R2 files once upfront — much faster than per-stock checks
+    existing_on_r2 = set() if rebuild else list_r2_yahoo_codes()
+    if existing_on_r2:
+        log.info("Skipping %d stocks already on R2", len(existing_on_r2))
+
     for i in range(0, len(universe), BATCH_SIZE):
         batch = universe[i:i + BATCH_SIZE]
-        log.info("Processing batch %d-%d / %d",
-                 i + 1, min(i + BATCH_SIZE, len(universe)), len(universe))
 
         # Skip stocks already on R2 when not rebuilding
         if not rebuild:
-            batch = [c for c in batch if not exists_on_r2(c)]
+            batch = [c for c in batch if c not in existing_on_r2]
             if not batch:
-                log.info("All stocks in batch already on R2 — skipping")
-                time.sleep(SLEEP_BATCH)
                 continue
+
+        log.info("Processing batch %d-%d / %d",
+                 i + 1, min(i + BATCH_SIZE, len(universe)), len(universe))
 
         # Accumulate data for all stocks in batch across all years
         batch_all = {code5: {} for code5 in batch}
