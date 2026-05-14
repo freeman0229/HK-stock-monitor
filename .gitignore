@@ -7,4 +7,6 @@ ccass_cache/
 .wrangler/ccass.db 
 ccass.db-shm 
 ccass.db-wal 
-sdw_*.json 
+sdw_*.json
+turnover_2025.json
+turnover_2026.json

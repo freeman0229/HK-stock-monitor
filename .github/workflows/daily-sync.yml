@@ -165,9 +165,11 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in short_20*.json turnover_20*.json; do
+          for f in short_20*.json turnover_20*_??.json sfc_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
+          # turnover_20*_??.json matches monthly files only (e.g. turnover_2026_05.json)
+          # NOT turnover_2026.json / turnover_2025.json (full-year R2 working files)
           # sc_top10_20*.json and ccass_20*.json committed by early-fetch at 19:00
           git diff --staged --quiet || \
             (git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')" && git push)
