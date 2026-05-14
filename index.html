@@ -3392,7 +3392,7 @@ function renderSqueezeTop10(stocks) {
   // squeeze_score is pre-computed in main.py and written to data.json
   const eligible = stocks.filter(s =>
     s.turnover > 0 && (s.short_ratio||0) > 0 && (s.days_to_cover||0) > 0
-    && s.stock_type !== 'etf'  // ETFs excluded: high concentration/short is structural
+    && !NON_EQUITY_TYPES.has(s.stock_type)  // ETFs/bonds/derivatives excluded
   );
   const top10 = [...eligible]
     .sort((a,b) => (b.squeeze_score||0) - (a.squeeze_score||0))
@@ -3438,7 +3438,7 @@ function drawShortRiskMap(stocks) {
   const pts = stocks.filter(s =>
     s.turnover > 0 && s.short_ratio > 0 && (s.days_to_cover||0) > 0
     && (s.squeeze_score || 0) >= 6
-    && s.stock_type !== 'etf'  // ETFs excluded: structural short activity
+    && !NON_EQUITY_TYPES.has(s.stock_type)  // ETFs/bonds/derivatives excluded
   );
 
   const PAD = {top:24, right:72, bottom:50, left:56};
@@ -5928,100 +5928,115 @@ async function stkEnsureSdw(code5) {
 // ── Data assembly ─────────────────────────────────────────────────────────────
 async function stkBuildSeries(code5, fromDs, toDs) {
   // Data sources:
-  //   Current year: turnover_{YYYY}.json (HKEX — has close, vol, vwap, tv)
-  //   Older years:  yahoo_{code5}.json from R2 (has close, vol, open, high, low; no vwap)
-  const curYear = new Date().getFullYear();
+  //   Current year (2026): tvCache[curYear]  — HKEX turnover (has close, vol, vwap, tv)
+  //   Previous year (2025): tvCache[prevYear] — HKEX turnover (has close, vol; no vwap/tv)
+  //   Older years (≤2024):  yahoo_{code5}.json from R2 (has close, vol, open, high, low)
+  const curYear  = new Date().getFullYear();
+  const prevYear = curYear - 1;
 
-  // Load current year turnover + SFC
+  // Load current + previous year turnover and SFC
   await loadTvYear(curYear);
+  await loadTvYear(prevYear);
   await stkEnsureSfc(curYear);
+  await stkEnsureSfc(prevYear);
 
-  // Load per-stock yahoo for all years (covers pre-curYear dates)
+  // Load per-stock yahoo for all years (fills gaps and ≤2024 dates)
   const yahooByDate = await loadYahooStock(code5);
 
   await stkEnsureSdw(code5);
 
-  // Build date list from turnover (current year) + yahoo (older years)
+  // Build date list: tvCache both years + yahoo (older years), filtered to range
   const allDates = [...new Set([
-    ...Object.keys(tvCache[curYear] || {}),
+    ...Object.keys(tvCache[curYear]  || {}),
+    ...Object.keys(tvCache[prevYear] || {}),
     ...Object.keys(yahooByDate),
   ])].filter(d => d >= fromDs && d <= toDs).sort();
 
   const tradingDays = stkAllDates(allDates);
   if (!tradingDays.length) return null;
 
-  // SFC flat by date (current year only)
+  // SFC flat by date — merge prevYear + curYear (curYear overwrites on overlap)
   const sfcFlat = {};
-  const ycdata = stkSfcCache[curYear];
-  if (ycdata) {
-    for (const [ds, stocks] of Object.entries(ycdata.by_date || {})) {
-      sfcFlat[ds] = stocks;
+  for (const yr of [prevYear, curYear]) {
+    const ycdata = stkSfcCache[yr];
+    if (ycdata) {
+      for (const [ds, stocks] of Object.entries(ycdata.by_date || {})) {
+        sfcFlat[ds] = stocks;
+      }
     }
   }
 
   // SDW by_date
   const sdwByDate = (stkSdwCache[code5] || {}).by_date || {};
 
-  const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[];
-
-  // Pre-build vol array for turnover_24d: tvCache for current year, yahoo for older
+  // Pre-build vol map: yahoo base, tvCache prevYear overrides, tvCache curYear overrides
+  // Priority: curYear HKEX > prevYear HKEX > yahoo (most accurate wins)
   const allVolByDate = {};
   for (const [ds, rec] of Object.entries(yahooByDate)) {
     if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
   }
-  // tvCache overrides yahoo for current year (more accurate HKEX vol)
+  for (const [ds, stocks] of Object.entries(tvCache[prevYear] || {})) {
+    const rec = stocks[code5];
+    if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
+  }
   for (const [ds, stocks] of Object.entries(tvCache[curYear] || {})) {
     const rec = stocks[code5];
     if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
   }
+  // Build index map for O(1) lookup (avoids O(n) indexOf inside loop)
   const sortedVolDates = Object.keys(allVolByDate).sort();
+  const volDateIdx = new Map(sortedVolDates.map((d, i) => [d, i]));
+
+  // Hoist SDW date keys sort out of the per-day loop
+  const sdwDateKeys = Object.keys(sdwByDate).sort();
+
+  const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[];
 
   for (let i = 0; i < tradingDays.length; i++) {
     const ds   = tradingDays[i];
     const year = parseInt(ds.slice(0, 4));
-    // tvCache for current year; yahoo for all other years
-    const tvRec  = year === curYear ? (tvCache[curYear]?.[ds]?.[code5] || null) : null;
-    const yhRec  = yahooByDate[ds] || null;
+
+    // Price record: curYear → tvCache[curYear]; prevYear → tvCache[prevYear]; else → yahoo
+    let tvRec = null;
+    if (year === curYear)       tvRec = tvCache[curYear]?.[ds]?.[code5]  || null;
+    else if (year === prevYear) tvRec = tvCache[prevYear]?.[ds]?.[code5] || null;
+    const yhRec    = yahooByDate[ds] || null;
     const priceRec = tvRec || yhRec;
 
     labels.push(ds);
     closeArr.push(priceRec?.close > 0 ? priceRec.close : null);
-    vwapArr .push(tvRec?.vwap  > 0 ? tvRec.vwap  : null);  // vwap only from HKEX
+    vwapArr .push(tvRec?.vwap > 0 ? tvRec.vwap : null);  // vwap only in curYear HKEX data
     volArr  .push(priceRec?.vol > 0 ? priceRec.vol : null);
 
-    // Compute turnover_24d: vol of last 24 days / total_sh (from SDW)
-    // Approximate: use rolling 24-day vol sum / latest SDW total_sh
-    const dsIdx = sortedVolDates.indexOf(ds);
-    const win24 = sortedVolDates.slice(Math.max(0, dsIdx - 23), dsIdx + 1);
-    const vol24 = win24.reduce((s, d) => s + (allVolByDate[d] || 0), 0);
-    // Get total_sh from SDW — use nearest available date
-    const sdwDateKeys = Object.keys(sdwByDate).sort();
+    // Compute 換手率: rolling 24-day vol sum / SDW total_sh
+    const dsIdx = volDateIdx.has(ds) ? volDateIdx.get(ds) : -1;
+    const vol24 = dsIdx >= 0
+      ? sortedVolDates.slice(Math.max(0, dsIdx - 23), dsIdx + 1)
+          .reduce((s, d) => s + (allVolByDate[d] || 0), 0)
+      : 0;
+    // Nearest SDW total_sh on or before ds
     const nearestSdw = sdwDateKeys.filter(d => d <= ds).slice(-1)[0];
     const totalSh = nearestSdw ? (sdwByDate[nearestSdw]?.total_sh || 0) : 0;
     turnArr.push(totalSh > 0 && vol24 > 0 ? +(vol24 / totalSh * 100).toFixed(2) : null);
 
-    // top10_pct — only show on exact SDW Friday dates (weekly data)
-    const sdwEntry = sdwByDate[ds];  // exact date match only
+    // Top10持倉 — exact SDW Friday dates only (weekly data)
+    const sdwEntry = sdwByDate[ds];
     if (sdwEntry && sdwEntry.total_sh > 0 && sdwEntryHasHolders(sdwEntry)) {
-      const holders = sdwEntry.p || [];
-      const top10sh = holders.slice(0,10).reduce((s,h)=>s+(h.sh||0),0);
+      const holders  = sdwEntry.p || [];
+      const top10sh  = holders.slice(0, 10).reduce((s, h) => s + (h.sh || 0), 0);
       top10Arr.push(+(top10sh / sdwEntry.total_sh * 100).toFixed(2));
     } else {
       top10Arr.push(null);
     }
 
-    // sfc_pct — only show on exact SFC report dates (weekly data)
-    // Priority: sfcRec.pct (pre-computed, stored in sfc_YYYY.json by sfc_library.py)
-    //         → sfcRec.sh / sdw total_sh (per-stock CCASS 總數, mirrors main.py line 664)
-    //         → null
-    // NEVER divide by sfcTotal.sh (__total__.sh = sum of ALL stocks' short shares market-wide —
-    // that gives this stock's share of total market short volume, not its own ratio).
-    const sfcDay = sfcFlat[ds];  // exact date match only
-    const sfcRec = sfcDay?.[code5] || sfcDay?.[code5.replace(/^0+/,'')];
+    // SFC賣空 — exact SFC report dates only (weekly data)
+    // Priority: sfcRec.pct (pre-computed) → sfcRec.sh / SDW total_sh → null
+    // NEVER divide by sfcTotal.sh (__total__.sh = market-wide sum, not per-stock ratio)
+    const sfcDay = sfcFlat[ds];
+    const sfcRec = sfcDay?.[code5] || sfcDay?.[code5.replace(/^0+/, '')];
     if (sfcRec?.pct != null && sfcRec.pct > 0) {
       sfcArr.push(+sfcRec.pct.toFixed(2));
     } else if (sfcRec?.sh > 0 && totalSh > 0) {
-      // Fallback: compute from raw shares using SDW total_sh (nearest available date)
       sfcArr.push(+(sfcRec.sh / totalSh * 100).toFixed(2));
     } else {
       sfcArr.push(null);
@@ -6323,7 +6338,9 @@ function initStockPanel() {
     if (stkCode) stkRenderCharts();
   });
   document.getElementById('stock-apply')?.addEventListener('click', () => {
-    if (stkCode) stkRenderCharts();
+    if (!stkCode) return;
+    stkApplyRange();
+    stkRenderCharts();
   });
 
   // Default to 2800
