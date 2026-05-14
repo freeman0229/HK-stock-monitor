@@ -67,16 +67,21 @@ def save_stock(code5: str, lib: dict):
 R2_BASE = "https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev"
 
 def list_r2_yahoo_codes() -> set:
-    """List all yahoo_{code5}.json files already on R2. Returns set of code5 strings."""
-    import urllib.request
-    # R2 supports S3-compatible list via ?list-type=2&prefix=yahoo_
-    url = f"{R2_BASE}?list-type=2&prefix=yahoo_0&max-keys=3000"
+    """List all yahoo_{code5}.json files already on R2 using AWS CLI."""
+    import subprocess, os, re
+    endpoint = os.environ.get("R2_ENDPOINT_URL", "")
+    if not endpoint:
+        log.warning("R2_ENDPOINT_URL not set — cannot list R2 files, will fetch all")
+        return set()
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
-            body = resp.read().decode("utf-8")
-        # Extract code5 from <Key>yahoo_00700.json</Key>
-        import re
-        codes = re.findall(r"<Key>yahoo_(\d{5})\.json</Key>", body)
+        cmd = ["aws", "s3", "ls", "s3://hk-stock-monitor/",
+               "--endpoint-url", endpoint, "--no-sign-request"]
+        # Don't use --no-sign-request if credentials are available
+        if os.environ.get("AWS_ACCESS_KEY_ID"):
+            cmd = ["aws", "s3", "ls", "s3://hk-stock-monitor/",
+                   "--endpoint-url", endpoint]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        codes = re.findall(r"yahoo_(\d{5})\.json", r.stdout)
         log.info("R2 existing yahoo files: %d", len(codes))
         return set(codes)
     except Exception as e:
