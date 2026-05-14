@@ -105,6 +105,20 @@ jobs:
       - run: pip install -r requirements.txt
         # Note: playwright not needed here — sc_top10 + ccass run in early-fetch job at 19:00
 
+      - name: Download turnover files from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          aws s3 cp s3://hk-stock-monitor/turnover_2026.json turnover_2026.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "Warning: turnover_2026.json not found in R2"
+          aws s3 cp s3://hk-stock-monitor/turnover_2025.json turnover_2025.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "Warning: turnover_2025.json not found in R2"
+
       - name: Fetch today's turnover data
         run: python build_turnover.py
         # Parses HKEX quotation file (d{YYMMDD}c.htm top section) → writes turnover_{Y}.json
@@ -132,6 +146,18 @@ jobs:
       - name: Split turnover into monthly files
         run: python split_turnover.py --year $(date +'%Y')
 
+      - name: Upload turnover_2026.json to R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          [ -f turnover_2026.json ] && aws s3 cp turnover_2026.json \
+            s3://hk-stock-monitor/turnover_2026.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "Warning: turnover_2026.json upload failed"
+
       - name: Commit
         run: |
           git config --global user.name "Bot"
@@ -139,7 +165,7 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in short_20*.json turnover_20*_*.json; do
+          for f in short_20*.json turnover_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
           # sc_top10_20*.json and ccass_20*.json committed by early-fetch at 19:00

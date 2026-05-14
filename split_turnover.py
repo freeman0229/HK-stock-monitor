@@ -39,6 +39,13 @@ def split_year(year: int):
 
     for mm, month_data in sorted(by_month.items()):
         out_path = f"turnover_{year}_{mm}.json"
+        # Merge into existing monthly file if present
+        if os.path.exists(out_path):
+            with open(out_path, encoding="utf-8") as f:
+                existing = json.load(f)
+            existing_data = existing.get("by_date", {})
+            existing_data.update(month_data)
+            month_data = dict(sorted(existing_data.items()))
         out = {
             "meta": {
                 "year":         year,
