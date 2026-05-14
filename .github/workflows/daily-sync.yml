@@ -129,6 +129,9 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python main.py
 
+      - name: Split turnover into monthly files
+        run: python split_turnover.py --year $(date +'%Y')
+
       - name: Commit
         run: |
           git config --global user.name "Bot"
@@ -136,7 +139,7 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in short_20*.json turnover_20*.json; do
+          for f in short_20*.json turnover_20*_*.json; do
             [ -f "$f" ] && git add "$f"
           done
           # sc_top10_20*.json and ccass_20*.json committed by early-fetch at 19:00
@@ -424,6 +427,9 @@ jobs:
       - name: Rebuild turnover library (all stocks, all columns)
         run: python build_turnover.py --rebuild
 
+      - name: Split turnover into monthly files
+        run: python split_turnover.py --year $(date +'%Y')
+
       - name: Rebuild short selling library (all stocks, all columns)
         run: python build_short.py --rebuild
 
@@ -431,7 +437,7 @@ jobs:
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
-          for f in turnover_20*.json short_20*.json; do
+          for f in turnover_20*_*.json short_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || \

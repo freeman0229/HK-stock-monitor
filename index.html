@@ -2470,13 +2470,18 @@ function computeSfcCards() {
 }
 async function loadTvYear(year) {
   if (tvCache[year]) return tvCache[year];
-  try {
-    const r = await fetch(`turnover_${year}.json`, { cache: 'no-cache' });
-    if (!r.ok) return null;
-    const lib = await r.json();
-    tvCache[year] = lib.by_date || {};
-    return tvCache[year];
-  } catch(e) { return null; }
+  tvCache[year] = {};
+  // Load monthly files turnover_{YYYY}_{MM}.json in parallel
+  const months = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+  await Promise.all(months.map(async mm => {
+    try {
+      const r = await fetch(`turnover_${year}_${mm}.json`, { cache: 'no-cache' });
+      if (!r.ok) return;
+      const lib = await r.json();
+      Object.assign(tvCache[year], lib.by_date || {});
+    } catch(e) {}
+  }));
+  return tvCache[year];
 }
 
 // ── Yahoo Finance historical cache ────────────────────────────────────────────
@@ -5922,31 +5927,34 @@ async function stkEnsureSdw(code5) {
 
 // ── Data assembly ─────────────────────────────────────────────────────────────
 async function stkBuildSeries(code5, fromDs, toDs) {
-  // Use turnover_YYYY.json as date backbone and price/volume source.
-  // Max range is 1Y — only current and previous year files needed.
+  // Data sources:
+  //   Current year: turnover_{YYYY}.json (HKEX — has close, vol, vwap, tv)
+  //   Older years:  yahoo_{code5}.json from R2 (has close, vol, open, high, low; no vwap)
   const curYear = new Date().getFullYear();
-  const years = [...new Set([fromDs.slice(0,4), toDs.slice(0,4)].map(Number)
-    .flatMap(y => [y-1, y]).filter(y => y >= 2000 && y <= curYear))];
-  for (const y of years) {
-    await loadTvYear(y);
-    await stkEnsureSfc(y);
-  }
+
+  // Load current year turnover + SFC
+  await loadTvYear(curYear);
+  await stkEnsureSfc(curYear);
+
+  // Load per-stock yahoo for all years (covers pre-curYear dates)
+  const yahooByDate = await loadYahooStock(code5);
+
   await stkEnsureSdw(code5);
 
-  // Build date list from turnover files only
-  const allDates = [...new Set(
-    years.flatMap(y => Object.keys(tvCache[y] || {}))
-  )].filter(d => d >= fromDs && d <= toDs).sort();
+  // Build date list from turnover (current year) + yahoo (older years)
+  const allDates = [...new Set([
+    ...Object.keys(tvCache[curYear] || {}),
+    ...Object.keys(yahooByDate),
+  ])].filter(d => d >= fromDs && d <= toDs).sort();
 
   const tradingDays = stkAllDates(allDates);
   if (!tradingDays.length) return null;
 
-  // SFC flat by date
+  // SFC flat by date (current year only)
   const sfcFlat = {};
-  for (const y of years) {
-    const ydata = stkSfcCache[y];
-    if (!ydata) continue;
-    for (const [ds, stocks] of Object.entries(ydata.by_date || {})) {
+  const ycdata = stkSfcCache[curYear];
+  if (ycdata) {
+    for (const [ds, stocks] of Object.entries(ycdata.by_date || {})) {
       sfcFlat[ds] = stocks;
     }
   }
@@ -5956,25 +5964,30 @@ async function stkBuildSeries(code5, fromDs, toDs) {
 
   const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[];
 
-  // Pre-build vol array for turnover_24d computation
+  // Pre-build vol array for turnover_24d: tvCache for current year, yahoo for older
   const allVolByDate = {};
-  for (const y of years) {
-    for (const [ds, stocks] of Object.entries(tvCache[y] || {})) {
-      const rec = stocks[code5];
-      if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
-    }
+  for (const [ds, rec] of Object.entries(yahooByDate)) {
+    if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
+  }
+  // tvCache overrides yahoo for current year (more accurate HKEX vol)
+  for (const [ds, stocks] of Object.entries(tvCache[curYear] || {})) {
+    const rec = stocks[code5];
+    if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
   }
   const sortedVolDates = Object.keys(allVolByDate).sort();
 
   for (let i = 0; i < tradingDays.length; i++) {
     const ds   = tradingDays[i];
     const year = parseInt(ds.slice(0, 4));
-    const tvRec = tvCache[year]?.[ds]?.[code5];
+    // tvCache for current year; yahoo for all other years
+    const tvRec  = year === curYear ? (tvCache[curYear]?.[ds]?.[code5] || null) : null;
+    const yhRec  = yahooByDate[ds] || null;
+    const priceRec = tvRec || yhRec;
 
     labels.push(ds);
-    closeArr.push(tvRec?.close > 0 ? tvRec.close : null);
-    vwapArr .push(tvRec?.vwap  > 0 ? tvRec.vwap  : null);
-    volArr  .push(tvRec?.vol   > 0 ? tvRec.vol   : null);
+    closeArr.push(priceRec?.close > 0 ? priceRec.close : null);
+    vwapArr .push(tvRec?.vwap  > 0 ? tvRec.vwap  : null);  // vwap only from HKEX
+    volArr  .push(priceRec?.vol > 0 ? priceRec.vol : null);
 
     // Compute turnover_24d: vol of last 24 days / total_sh (from SDW)
     // Approximate: use rolling 24-day vol sum / latest SDW total_sh
