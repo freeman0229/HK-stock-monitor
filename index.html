@@ -833,7 +833,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 /* ── HSI panel ─────────────────── */
 #panel-hsi { padding: 0 0 40px; }
 .hsi-chart-wrap { position: relative; width: 100%; height: 380px; margin-bottom: 0; }
-.hsi-vol-wrap   { position: relative; width: 100%; height: 180px; }
+.hsi-vol-wrap   { position: relative; width: 100%; height: 200px; }
 .hsi-loading    { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
 
 </style>
@@ -5722,7 +5722,7 @@ function renderHsiPanel() {
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
             maxRotation: 0, font: { size: 10 }, padding: 4, autoSkip: false
-          }, afterFit: s => { s.height = Math.max(s.height, 28); }, grid: { display: false }, border: { display: false } },
+          }, afterFit: s => { s.height = Math.max(s.height, 42); }, grid: { display: false }, border: { display: false } },
         y: {
           afterFit: s => { s.width = 52; },
           min: -maxOscHsi * 1.3,
