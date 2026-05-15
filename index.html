@@ -4693,9 +4693,14 @@ async function drawCai() {
   }
   if (closeArr.length < 5) return;
 
-  // Compute global asymmetric σ over all available data
+  // Compute asymmetric σ over last 6 years (~1560 trading days) — captures one full
+  // bull/bear cycle without being distorted by ancient price regimes.
+  // σ_up   = std(high[i] - close[i-1]) for days where high > prev close
+  // σ_down = std(close[i-1] - low[i])  for days where low  < prev close
+  const SIGMA_WINDOW = 1560;
+  const sigmaStart = Math.max(1, closeArr.length - SIGMA_WINDOW);
   const upMoves = [], dnMoves = [];
-  for (let i = 1; i < closeArr.length; i++) {
+  for (let i = sigmaStart; i < closeArr.length; i++) {
     const pc = closeArr[i-1];
     const up = highArr[i] - pc;
     const dn = pc - lowArr[i];

@@ -1007,15 +1007,18 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         # only meaningful for ~100 SC stocks. classify_insight now uses top10_pct_delta
         # (CCASS SDW top-10 institutional concentration change) which covers all stocks.
 
-        # ── Kan-style channel σ (global, asymmetric) ─────────────────────────
-        # σ_up   = std(high[i] - close[i-1])  — upward move from prev close to this day's high
-        # σ_down = std(close[i-1] - low[i])   — downward move from prev close to this day's low
-        # Computed over ALL available history (global σ, not rolling).
+        # ── Kan-style channel σ (6-year window, asymmetric) ─────────────────
+        # σ_up   = std(high[i] - close[i-1])  for days where high > prev close
+        # σ_down = std(close[i-1] - low[i])   for days where low  < prev close
+        # Use last 6 years (~1560 trading days) — captures one full bull/bear cycle
+        # without being distorted by ancient price regimes.
+        _SIGMA_WINDOW = 1560
         _all_dates_sorted = sorted(_tv_all.keys())
+        _sigma_dates = _all_dates_sorted[max(0, len(_all_dates_sorted) - _SIGMA_WINDOW):]
         _up_moves, _dn_moves = [], []
-        for _di in range(1, len(_all_dates_sorted)):
-            _ds_prev = _all_dates_sorted[_di - 1]
-            _ds_cur  = _all_dates_sorted[_di]
+        for _di in range(1, len(_sigma_dates)):
+            _ds_prev = _sigma_dates[_di - 1]
+            _ds_cur  = _sigma_dates[_di]
             _rec_prev = _tv_all[_ds_prev].get(code, {})
             _rec_cur  = _tv_all[_ds_cur].get(code, {})
             if not isinstance(_rec_prev, dict) or not isinstance(_rec_cur, dict): continue
