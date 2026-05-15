@@ -4,9 +4,8 @@ on:
   schedule:
     - cron: '0 11 * * 1-5'   # 11:00 UTC / 19:00 HKT (Mon–Fri) — early fetch
     - cron: '0 12 * * 1-5'   # 12:00 UTC / 20:00 HKT (Mon–Fri)
-    - cron: '0 13 * * 5'   # 13:00 UTC / 21:00 HKT (Friday)  — SDW weekly run 1
-    - cron: '0 15 * * 5'   # 15:00 UTC / 23:00 HKT (Friday)  — SDW weekly run 2
-    - cron: '0 17 * * 5'   # 17:00 UTC / 01:00 HKT (Saturday) — SDW weekly run 3
+    - cron: '0 13 * * 5'   # 13:00 UTC / 21:00 HKT (Friday)   — SDW weekly run 1
+    - cron: '0 17 * * 5'   # 17:00 UTC / 01:00 HKT (Saturday) — SDW weekly run 2
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
     - cron: '0 3 * * 6'       # 03:00 UTC / 11:00 HKT (Saturday)  — HSI weekly update
   workflow_dispatch:
@@ -132,6 +131,7 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
         run: |
           aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
@@ -308,20 +308,20 @@ jobs:
             --exclude "*" --include "sdw_*.json" \
             --no-progress
 
-  # ── SDW weekly (Friday only: 21:00, 23:00, 01:00+1 HKT — three retry runs) ──
+  # ── SDW weekly (Friday only: 21:00 HKT + 01:00 HKT Saturday — two retry runs) ──
   # Runs --update: fetches only the latest Friday not yet in the DB.
-  # Three runs cover HKEX SDW publishing delays; idempotent so reruns are safe.
+  # Two runs cover HKEX SDW publishing delays; idempotent so reruns are safe.
   sdw-weekly:
     name: SDW weekly update → ccass_sdw.db
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
     concurrency:
       group: sdw-db-lock
       cancel-in-progress: false
     permissions:
       contents: write
     if: |
-      (github.event_name == 'schedule' && (github.event.schedule == '0 13 * * 5' || github.event.schedule == '0 15 * * 5' || github.event.schedule == '0 17 * * 5')) ||
+      (github.event_name == 'schedule' && (github.event.schedule == '0 13 * * 5' || github.event.schedule == '0 17 * * 5')) ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-weekly')
 
     steps:
@@ -465,7 +465,7 @@ jobs:
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
-          for f in turnover_20*_*.json short_20*.json; do
+          for f in turnover_20*_??.json short_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
           git diff --staged --quiet || \
@@ -684,7 +684,7 @@ jobs:
   sdw-backfill-3w:
     name: SDW backfill 3w ${{ inputs.backfill_date }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
     concurrency:
       group: sdw-db-lock
       cancel-in-progress: false
@@ -711,6 +711,7 @@ jobs:
       - name: Backfill SDW for date ${{ inputs.backfill_date }} (3 workers)
         env:
           SDW_WORKERS: "3"
+          SDW_WORKER_TIMEOUT: "5400"
         run: python ccass_sdw_library.py --date "${{ inputs.backfill_date }}"
       - name: Verify DB before upload
         run: |
@@ -939,7 +940,6 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
-      - run: playwright install chromium
 
       - name: Backfill rank_history.json (commit every 5 trading days)
         run: |
