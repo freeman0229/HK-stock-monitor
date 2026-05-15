@@ -3752,8 +3752,8 @@ function sdwComputeSummary() {
   const nameMap = {};
   allStocks.forEach(s => { nameMap[s.code] = s.name_chi; });
 
-  // Only consider stocks in today's trading universe — avoids ETFs/tiny stocks dominating
-  const tradingCodes = new Set(allStocks.filter(s => s.turnover > 0).map(s => s.code));
+  // Only consider equity stocks in today's trading universe — avoids ETFs/bonds/derivatives dominating
+  const tradingCodes = new Set(allStocks.filter(s => s.turnover > 0 && !NON_EQUITY_TYPES.has(s.stock_type)).map(s => s.code));
 
   // Union of ALL codes across all dates for WoW computation
   const allSdwCodes = [...new Set(sdwDates.flatMap(d => Object.keys(sdwData[d] || {})))];

@@ -419,6 +419,12 @@ _ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND",
 # Derivative products — leveraged/inverse/futures; structurally extreme short ratios
 _DERIV_NAME_KW = ("LEVERAGED", "INVERSE", "FUTURES ETF", "L&I")
 
+# Derivative instruments — covered warrants/CBBCs misclassified by name keyword
+_DERIV_CODES = {
+    "03519",   # A恆生國指備兌 — covered warrant, name doesn't match _DERIV_NAME_KW
+    "03589",   # A恆生科技備兌 — covered warrant, name doesn't match _DERIV_NAME_KW
+}
+
 # Bond instruments — bond ETFs + retail/govt bonds (04xxx series)
 _BOND_CODES = {
     "02829",  # iShares China Govt Bond ETF 安碩中國國債
@@ -431,7 +437,7 @@ def classify_stock(code: str, name: str) -> str:
     n = name.upper()
     # Non-equity checks FIRST — take priority over stock_ref
     if code in _BOND_CODES or any(k in n for k in _BOND_NAME_KW): return "bond"
-    if any(k in n for k in _DERIV_NAME_KW):                        return "derivative"
+    if code in _DERIV_CODES or any(k in n for k in _DERIV_NAME_KW): return "derivative"
     if code in _ETF_CODES or any(k in n for k in _ETF_NAME_KW):   return "etf"
     # Also treat any 04xxx code as bond (HK retail/govt bonds)
     if code.startswith("04"):                                       return "bond"
