@@ -1373,11 +1373,11 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     </div>
 
     <div class="cai-legend">
-      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>3σ 預測上軌</div>
-      <div class="leg-item"><div class="leg-dot" style="background:rgba(192,37,45,0.4);height:2px;border-top:2px dashed rgba(192,37,45,0.5)"></div>2.5σ 預測上軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#c0252d;height:2px"></div>2.6σ 預測上軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(192,37,45,0.4);height:2px;border-top:2px dashed rgba(192,37,45,0.5)"></div>2σ 預測上軌</div>
       <div class="leg-item"><div class="leg-dot" style="background:#378ADD;height:2px"></div>收市價</div>
-      <div class="leg-item"><div class="leg-dot" style="background:rgba(26,122,60,0.4);height:2px;border-top:2px dashed rgba(26,122,60,0.5)"></div>2.5σ 預測下軌</div>
-      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>3σ 預測下軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:rgba(26,122,60,0.4);height:2px;border-top:2px dashed rgba(26,122,60,0.5)"></div>2σ 預測下軌</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#1a7a3c;height:2px"></div>2.6σ 預測下軌</div>
       <div class="leg-item"><div class="leg-dot" style="background:rgba(128,128,128,0.3);height:8px;border-radius:1px"></div>高/低範圍</div>
       <div class="leg-item"><div class="leg-dot" style="background:rgba(192,37,45,0.6);height:8px;border-radius:1px"></div>高 − 5日均</div>
       <div class="leg-item"><div class="leg-dot" style="background:rgba(42,157,143,0.6);height:8px;border-radius:1px"></div>低 − 5日均</div>
@@ -4619,7 +4619,7 @@ function caiDestroyCharts() {
 // σ_down = std(close[i-1] - low[i])   — global over all available history
 // vol_ratio_5 = today_vol / avg_vol_last_5_days
 // upper_N = close + σ_up   × vol_ratio_5 × N
-// lower_N = close - σ_down × vol_ratio_5 × N   where N = 2.5 or 3.0
+// lower_N = close - σ_down × vol_ratio_5 × N   where N = 2.0 or 2.6
 
 let caiCurCode = '02800';  // default stock
 
@@ -4714,10 +4714,10 @@ async function drawCai() {
     const avgVol5 = vols5.length > 0 ? _mean(vols5) : 0;
     const vr5 = (volArr[i] > 0 && avgVol5 > 0) ? volArr[i] / avgVol5 : 1.0;
     const c = closeArr[i];
-    upper3.push(+(c + sigmaUp   * vr5 * 3.0).toFixed(3));
-    lower3.push(+(c - sigmaDown * vr5 * 3.0).toFixed(3));
-    upper25.push(+(c + sigmaUp  * vr5 * 2.5).toFixed(3));
-    lower25.push(+(c - sigmaDown* vr5 * 2.5).toFixed(3));
+    upper3.push(+(c + sigmaUp   * vr5 * 2.6).toFixed(3));
+    lower3.push(+(c - sigmaDown * vr5 * 2.6).toFixed(3));
+    upper25.push(+(c + sigmaUp  * vr5 * 2.0).toFixed(3));
+    lower25.push(+(c - sigmaDown* vr5 * 2.0).toFixed(3));
   }
 
   // Determine view window based on pill range or custom date inputs
@@ -4764,12 +4764,12 @@ async function drawCai() {
   const todayVols5 = volArr.slice(Math.max(0, closeArr.length - 5), closeArr.length).filter(v => v > 0);
   const todayVr5   = (volArr[closeArr.length-1] > 0 && todayVols5.length > 0)
                      ? volArr[closeArr.length-1] / (todayVols5.reduce((a,b)=>a+b,0) / todayVols5.length) : 1.0;
-  const tmrHigh3   = +(todayClose + sigmaUp   * todayVr5 * 3.0).toFixed(3);
-  const tmrLow3    = +(todayClose - sigmaDown * todayVr5 * 3.0).toFixed(3);
+  const tmrHigh3   = +(todayClose + sigmaUp   * todayVr5 * 2.6).toFixed(3);
+  const tmrLow3    = +(todayClose - sigmaDown * todayVr5 * 2.6).toFixed(3);
 
   // Update title
   const titleEl = document.getElementById('cai-title');
-  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 個股波幅通道  明日預測: ${tmrLow3} – ${tmrHigh3}  (3σ)`;
+  if (titleEl) titleEl.textContent = `${stock.name_chi||stock.code} (${stock.code}) — 個股波幅通道  明日預測: ${tmrLow3} – ${tmrHigh3}  (2.6σ)`;
 
   // Crosshair state
   let caiActiveIdx = null;
@@ -4820,10 +4820,10 @@ async function drawCai() {
       row('高',      hi?.toFixed(3),  '#aaa') +
       row('收市',    c?.toFixed(3),   '#378ADD') +
       row('低',      lo?.toFixed(3),  '#aaa') +
-      row('預測上3σ', u3?.toFixed(3),  '#c0252d') +
-      row('預測上2.5σ',u25?.toFixed(3),'rgba(192,37,45,0.7)') +
-      row('預測下2.5σ',l25?.toFixed(3),'rgba(26,122,60,0.7)') +
-      row('預測下3σ', l3?.toFixed(3),  '#1a7a3c') +
+      row('預測上2.6σ', u3?.toFixed(3),  '#c0252d') +
+      row('預測上2σ',u25?.toFixed(3),'rgba(192,37,45,0.7)') +
+      row('預測下2σ',l25?.toFixed(3),'rgba(26,122,60,0.7)') +
+      row('預測下2.6σ', l3?.toFixed(3),  '#1a7a3c') +
       row('高−5MA',  hlH != null ? (hlH >= 0 ? '+' : '') + hlH.toFixed(3) : '—', '#c0252d') +
       row('低−5MA',  hlL != null ? (hlL >= 0 ? '+' : '') + hlL.toFixed(3) : '—', '#2a9d8f');
     tip.style.display = 'block';
@@ -4869,11 +4869,11 @@ async function drawCai() {
       { type:'line', label:'當日高位', data:chartHigh,  borderColor:'transparent', borderWidth:0, pointRadius:0, fill:'+1', backgroundColor:'rgba(128,128,128,0.12)', tension:0.3, spanGaps:true, order:5 },
       { type:'line', label:'當日低位', data:chartLow,   borderColor:'transparent', borderWidth:0, pointRadius:0, fill:false, tension:0.3, spanGaps:true, order:5 },
       // Predicted bands (shifted +1 day)
-      { type:'line', label:'3σ上軌',   data:u3ViewS,   borderColor:'#c0252d',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false, order:2 },
-      { type:'line', label:'2.5σ上軌', data:u25ViewS,  borderColor:'rgba(192,37,45,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3], order:2 },
+      { type:'line', label:'2.6σ上軌',   data:u3ViewS,   borderColor:'#c0252d',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false, order:2 },
+      { type:'line', label:'2σ上軌', data:u25ViewS,  borderColor:'rgba(192,37,45,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3], order:2 },
       { type:'line', label:'收市價',   data:chartClose, borderColor:'#378ADD',            borderWidth:2,   pointRadius:0, fill:false,  tension:0.3, spanGaps:true,  order:1 },
-      { type:'line', label:'2.5σ下軌', data:l25ViewS,  borderColor:'rgba(26,122,60,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3], order:2 },
-      { type:'line', label:'3σ下軌',   data:l3ViewS,   borderColor:'#1a7a3c',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false, order:2 },
+      { type:'line', label:'2σ下軌', data:l25ViewS,  borderColor:'rgba(26,122,60,0.5)',borderWidth:1,   pointRadius:0, fill:false,  tension:0.3, spanGaps:false, borderDash:[4,3], order:2 },
+      { type:'line', label:'2.6σ下軌',   data:l3ViewS,   borderColor:'#1a7a3c',            borderWidth:1.5, pointRadius:0, fill:false,  tension:0.3, spanGaps:false, order:2 },
     ]},
     options: { responsive:true, maintainAspectRatio:false, animation:false,
       plugins: { legend:{display:false}, tooltip:{enabled:false} },
@@ -5962,6 +5962,8 @@ async function stkBuildSeries(code5, fromDs, toDs) {
   const yahooByDate = await loadYahooStock(code5);
 
   await stkEnsureSdw(code5);
+  await stkEnsureRankHistory();
+  const rankFlat = stkBuildRankFlat();
 
   // Build date list: tvCache both years + yahoo (older years), filtered to range
   const allDates = [...new Set([
@@ -6008,7 +6010,7 @@ async function stkBuildSeries(code5, fromDs, toDs) {
   // Hoist SDW date keys sort out of the per-day loop
   const sdwDateKeys = Object.keys(sdwByDate).sort();
 
-  const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[];
+  const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[], signalArr=[];
 
   for (let i = 0; i < tradingDays.length; i++) {
     const ds   = tradingDays[i];
@@ -6059,15 +6061,51 @@ async function stkBuildSeries(code5, fromDs, toDs) {
     } else {
       sfcArr.push(null);
     }
+
+    // Signal annotation — from rank_history on this date
+    // Priority on conflict: 🏦 大戶增持 > others
+    const rankDay = rankFlat[ds] || {};
+    const rankRec = rankDay[code5] || rankDay[code5.replace(/^0+/, '')];
+    const sig = rankRec?.insight || null;
+    if (sig === '🏦 大戶增持' || sig === '🚨 不尋常沽空' || sig === '📉 空頭平倉') {
+      signalArr.push(sig === '🏦 大戶增持' ? '🏦' : sig === '🚨 不尋常沽空' ? '🚨' : '📉');
+    } else {
+      signalArr.push(null);
+    }
   }
 
-  return {labels, close:closeArr, vwap:vwapArr, vol:volArr, turn:turnArr, top10:top10Arr, sfc:sfcArr};
+  return {labels, close:closeArr, vwap:vwapArr, vol:volArr, turn:turnArr, top10:top10Arr, sfc:sfcArr, signal:signalArr};
 }
 
 // ── Chart rendering ───────────────────────────────────────────────────────────
 function stkDestroyCharts() {
   stkCharts.forEach(c => { try { c.destroy(); } catch(e){} });
   stkCharts = [];
+}
+
+// Signal annotation plugin — draws emoji above closing price on signal dates
+function makeSignalPlugin(series) {
+  return {
+    id: 'signalPlugin',
+    afterDatasetsDraw(chart) {
+      const {ctx, scales:{x, yP}} = chart;
+      if (!x || !yP) return;
+      const sig = series.signal || [];
+      ctx.save();
+      ctx.font = '13px serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      for (let i = 0; i < sig.length; i++) {
+        if (!sig[i]) continue;
+        const close = series.close[i];
+        if (close == null) continue;
+        const xPx = x.getPixelForValue(i);
+        const yPx = yP.getPixelForValue(close);
+        ctx.fillText(sig[i], xPx, yPx - 4);
+      }
+      ctx.restore();
+    }
+  };
 }
 
 function stkDrawCharts(series) {
@@ -6209,7 +6247,7 @@ function stkDrawCharts(series) {
   // Panel 2 — Price + VWAP + Volume
   const maxVol = Math.max(...series.vol.filter(v => v != null && v > 0), 1);
   const c2 = new Chart(document.getElementById('stkC2'), {
-    type:'bar', plugins:[makeCross()],
+    type:'bar', plugins:[makeCross(), makeSignalPlugin(series)],
     data:{labels:series.labels,datasets:[
       {type:'bar',   label:'成交量', data:series.vol,  backgroundColor:'rgba(128,128,128,0.15)',borderWidth:0,yAxisID:'yV',order:3,spanGaps:false},
       {type:'line',  label:'收市價', data:series.close, borderColor:'#378ADD',borderWidth:2,pointRadius:0,tension:0.3,fill:false,yAxisID:'yP',order:1,spanGaps:false},
