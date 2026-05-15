@@ -833,7 +833,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 /* ── HSI panel ─────────────────── */
 #panel-hsi { padding: 0 0 40px; }
 .hsi-chart-wrap { position: relative; width: 100%; height: 380px; margin-bottom: 0; }
-.hsi-vol-wrap   { position: relative; width: 100%; height: 150px; }
+.hsi-vol-wrap   { position: relative; width: 100%; height: 180px; }
 .hsi-loading    { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
 
 </style>
@@ -2492,7 +2492,7 @@ const YAHOO_R2_BASE = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
 async function loadYahooStock(code5) {
   if (yahooStockCache[code5]) return yahooStockCache[code5];
   try {
-    const r = await fetch(`${YAHOO_R2_BASE}/yahoo_${code5}.json`, { cache: 'force-cache' });
+    const r = await fetch(`${YAHOO_R2_BASE}/yahoo_${code5}.json`, { cache: 'no-cache' });
     if (!r.ok) { yahooStockCache[code5] = {}; return {}; }
     const lib = await r.json();
     yahooStockCache[code5] = lib.by_date || {};
@@ -4542,12 +4542,22 @@ function caiBuildDropdown(q) {
   dd.style.display = 'block';
 }
 
-function renderCaiStockSelect() {
+let caiInited = false;  // guard: listeners registered only once
+
+function initCaiPanel() {
+  // Called once on first data load. Registers all event listeners and sets default stock.
+  // Must NOT be called again on data refresh — that causes stacked duplicate listeners.
+  if (caiInited) return;
+  caiInited = true;
+
   const inp = document.getElementById('cai-search');
+
+  // Set default stock (02800) — only on first init, never overwritten by data refresh
   const preferred = allStocks.find(s => s.code === '02800' || s.code === '2800' || String(parseInt(s.code)) === '2800');
   const target = preferred || allStocks[0];
   if (target) { inp.value = target.code + ' ' + target.name_chi; caiCurCode = target.code; }
 
+  // Search input listeners
   inp.addEventListener('input',  () => caiBuildDropdown(inp.value));
   inp.addEventListener('focus',  () => caiBuildDropdown(inp.value));
   inp.addEventListener('blur',   () => setTimeout(() => { document.getElementById('cai-dropdown').style.display = 'none'; }, 150));
@@ -4558,7 +4568,7 @@ function renderCaiStockSelect() {
     }
   });
 
-  // Pill range buttons
+  // Pill range buttons — registered once only
   document.querySelectorAll('.cai-range-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.cai-range-btn').forEach(b => b.classList.remove('active'));
@@ -4572,8 +4582,16 @@ function renderCaiStockSelect() {
     });
   });
 
+  // Draw immediately if cai tab is already active
   const caiActive = document.querySelector('.tab-btn[data-tab="cai"]')?.classList.contains('active');
-  if (caiActive) drawCai();
+  if (caiActive) drawCai().catch(e => console.warn('drawCai error:', e));
+}
+
+function renderCaiStockSelect() {
+  // Called on every renderAll() — safe to call repeatedly.
+  // Only initialises listeners once (via initCaiPanel guard).
+  // Does NOT reset caiCurCode or re-register listeners.
+  initCaiPanel();
 }
 
 function caiApplyDateRange() {
