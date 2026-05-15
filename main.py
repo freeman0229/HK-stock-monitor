@@ -374,10 +374,13 @@ RANK_HISTORY_FILE = "rank_history.json"
 def save_rank_history(date: datetime, results: list):
     store = load_store(RANK_HISTORY_FILE)
     ds_key = date.strftime("%Y%m%d")
-    # Only store rank — all other fields are never read back from rank_history.
-    store[ds_key] = {r["code"]: r["rank"] for r in results}
-    # Keep only the 2 most recent days — get_prev_ranks() only ever reads yesterday.
-    for old_key in sorted(store.keys())[:-2]:
+    # Store rank + insight — insight is read back by browser for signal annotations
+    store[ds_key] = {
+        r["code"]: {"rank": r["rank"], "insight": r.get("insight")}
+        for r in results
+    }
+    # Keep only the 365 most recent days — browser needs up to 1 year of signal history
+    for old_key in sorted(store.keys())[:-365]:
         del store[old_key]
     save_store(RANK_HISTORY_FILE, store)
 
