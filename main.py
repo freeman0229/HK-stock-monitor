@@ -772,21 +772,23 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                         continue
                     sfc_sh  = pos["sh"]
                     sfc_hkd = pos.get("hkd", 0.0)
-                    # Use bulk-loaded total_sh map (avoids per-stock DB call, works without SDW)
                     total_sh = _sdw_total_sh_map.get(code, 0)
                     sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
 
+                    # Skip history lookup in backfill mode — delta fields not needed for rank_history
+                    if suppress_telegram:
+                        sfc_map[code] = {"sfc_pct": sfc_pct, "sfc_week_delta": 0.0,
+                                         "sfc_sh": sfc_sh, "sfc_hkd": sfc_hkd,
+                                         "sfc_sh_delta": 0, "sfc_hkd_delta": 0}
+                        continue
+
                     sfc_hist = sfc_get_history(code, 5, _latest_sfc_ds)
-                    # Recompute prev_pct from raw sh + same total_sh denominator for
-                    # consistency — sfc_hist[0].pct may have been saved by a prior run
-                    # with a different total_sh, making the delta unreliable.
                     _prev_sh       = (sfc_hist[0].get("sh") or 0) if sfc_hist else 0
                     sfc_prev_pct   = round(_prev_sh / total_sh * 100, 4) if total_sh > 0 and _prev_sh > 0 else 0.0
                     sfc_week_delta = round(sfc_pct - sfc_prev_pct, 4) if sfc_prev_pct > 0 else 0.0
                     sfc_prev_hkd   = (sfc_hist[0].get("hkd") or 0.0) if sfc_hist else 0.0
                     sfc_hkd_delta  = int(round(sfc_hkd - sfc_prev_hkd, 0)) if sfc_prev_hkd > 0 else 0
                     sfc_sh_delta   = int(sfc_sh - _prev_sh) if _prev_sh > 0 else 0
-
                     sfc_map[code] = {
                         "sfc_sh":         sfc_sh,
                         "sfc_sh_delta":   sfc_sh_delta,
