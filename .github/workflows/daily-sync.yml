@@ -924,7 +924,7 @@ jobs:
 
   # ── Rank history backfill (manual) ───────────────────────────────────────────
   rank-history-backfill:
-    name: Rank history backfill (${{ inputs.backfill_date || '2025-05-16' }} to today)
+    name: Rank history backfill (${{ inputs.backfill_date || '2026-02-02' }} to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
     concurrency:
@@ -958,7 +958,7 @@ jobs:
           git config --global user.email "bot@github.com"
 
           START_DATE="${{ inputs.backfill_date }}"
-          START_DATE="${START_DATE:-2025-05-16}"
+          START_DATE="${START_DATE:-2026-02-02}"
           echo "Backfilling from $START_DATE to today"
 
           # Generate list of trading days
