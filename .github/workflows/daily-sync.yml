@@ -947,8 +947,6 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION   : auto
         run: |
-          aws s3 cp s3://hk-stock-monitor/turnover_2025.json turnover_2025.json \
-            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || echo "Warning: turnover_2025.json not found"
           aws s3 cp s3://hk-stock-monitor/turnover_2026.json turnover_2026.json \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || echo "Warning: turnover_2026.json not found"
 
@@ -985,17 +983,18 @@ jobs:
             python main.py --date "$DAY" || echo "WARNING: $DAY failed, continuing"
             COUNT=$((COUNT + 1))
 
-            # Commit every 5 trading days
+            # Commit every 5 trading days — pull rebase FIRST, then stage, then commit
             if [ $((COUNT % 5)) -eq 0 ]; then
+              git pull --rebase
               [ -f rank_history.json ] && git add rank_history.json
-              [ -f name_map.json ]     && git add name_map.json
               git diff --staged --quiet || \
                 (git commit -m "Rank history backfill progress: up to $DAY" && git push)
               echo "--- Committed progress up to $DAY ---"
             fi
           done < /tmp/trading_days.txt
 
-          # Final commit for any remaining days
+          # Final commit — pull rebase first, then stage both files
+          git pull --rebase
           [ -f rank_history.json ] && git add rank_history.json
           [ -f name_map.json ]     && git add name_map.json
           git diff --staged --quiet || \

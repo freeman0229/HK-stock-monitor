@@ -800,7 +800,9 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                          " (pct=0, SDW unavailable)" if not _SDW_AVAILABLE else "")
                 # Persist pct into sfc_YYYY.json so frontend reads it directly
                 # (avoids recomputing at render time and keeps data.json lean)
-                if _SDW_AVAILABLE and sfc_map:
+                if _SDW_AVAILABLE and sfc_map and not suppress_telegram:
+                    # Skip in backfill/date mode (suppress_telegram=True) —
+                    # sfc_YYYY.json is not needed for rank_history backfill
                     sfc_save_pct_bulk(
                         _latest_sfc_ds,
                         {code: v["sfc_pct"] for code, v in sfc_map.items()}
