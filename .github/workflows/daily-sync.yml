@@ -924,7 +924,7 @@ jobs:
 
   # ── Rank history backfill (manual) ───────────────────────────────────────────
   rank-history-backfill:
-    name: Rank history backfill (${{ inputs.backfill_date || '2026-02-02' }} to today)
+    name: Rank history backfill (${{ inputs.backfill_date || '2025-05-16' }} to today)
     runs-on: ubuntu-latest
     timeout-minutes: 320
     concurrency:
@@ -941,13 +941,24 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
+      - name: Download turnover files from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+        run: |
+          aws s3 cp s3://hk-stock-monitor/turnover_2025.json turnover_2025.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || echo "Warning: turnover_2025.json not found"
+          aws s3 cp s3://hk-stock-monitor/turnover_2026.json turnover_2026.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || echo "Warning: turnover_2026.json not found"
+
       - name: Backfill rank_history.json (commit every 5 trading days)
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
 
           START_DATE="${{ inputs.backfill_date }}"
-          START_DATE="${START_DATE:-2026-02-02}"
+          START_DATE="${START_DATE:-2025-05-16}"
           echo "Backfilling from $START_DATE to today"
 
           # Generate list of trading days
