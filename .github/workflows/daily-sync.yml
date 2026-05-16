@@ -983,9 +983,12 @@ jobs:
             python main.py --date "$DAY" || echo "WARNING: $DAY failed, continuing"
             COUNT=$((COUNT + 1))
 
-            # Commit every 5 trading days — pull rebase FIRST, then stage, then commit
+            # Commit every 5 trading days — stage first, then pull rebase, then commit
             if [ $((COUNT % 5)) -eq 0 ]; then
+              [ -f rank_history.json ] && git add rank_history.json
+              git stash || true
               git pull --rebase
+              git stash pop || true
               [ -f rank_history.json ] && git add rank_history.json
               git diff --staged --quiet || \
                 (git commit -m "Rank history backfill progress: up to $DAY" && git push)
@@ -993,8 +996,10 @@ jobs:
             fi
           done < /tmp/trading_days.txt
 
-          # Final commit — pull rebase first, then stage both files
+          # Final commit — stash, pull rebase, pop, then stage and commit
+          git stash || true
           git pull --rebase
+          git stash pop || true
           [ -f rank_history.json ] && git add rank_history.json
           [ -f name_map.json ]     && git add name_map.json
           git diff --staged --quiet || \
