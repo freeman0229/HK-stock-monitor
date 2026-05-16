@@ -60,8 +60,8 @@ from turnover_library import load_year as tv_load_year, load_recent as tv_load_r
                             get_low_history  as tv_get_low_history
 from sc_top10_library import get_top10, get_top10_history, get_sb_summary
 try:
-    from sfc_library import get_short_position as sfc_get_position, \
-    all_report_fridays as sfc_fridays, get_position_history as sfc_get_history, \
+    from sfc_library import all_report_fridays as sfc_fridays, \
+    get_position_history as sfc_get_history, \
     all_stored_dates as sfc_stored_dates, save_pct_bulk as sfc_save_pct_bulk
     _SFC_AVAILABLE = True
 except ImportError:
@@ -766,12 +766,25 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             _sfc_fridays  = sorted(d for d in _sfc_stored if d and isinstance(d, str) and d <= _today_str)
             if _sfc_fridays:
                 _latest_sfc_ds = _sfc_fridays[-1]
+                # Pre-load SFC data for this date once — avoids reading sfc_YYYY.json
+                # per stock (2650 × file read = 15 min bottleneck in backfill mode)
+                _sfc_year = int(_latest_sfc_ds[:4])
+                _sfc_path = f"sfc_{_sfc_year}.json"
+                _sfc_day_data = {}
+                if os.path.exists(_sfc_path):
+                    with open(_sfc_path, encoding="utf-8") as _f:
+                        _sfc_day_data = json.load(_f).get("by_date", {}).get(_latest_sfc_ds, {})
+
                 for code in stock_codes:
-                    pos = sfc_get_position(code, _latest_sfc_ds)
-                    if not pos or not pos.get("sh") or pos["sh"] <= 0:
+                    # Use pre-loaded dict instead of sfc_get_position() file read
+                    _code5 = normalize_code(code)
+                    raw = _sfc_day_data.get(_code5) or _sfc_day_data.get(code) or {}
+                    if not raw or not isinstance(raw, dict):
                         continue
-                    sfc_sh  = pos["sh"]
-                    sfc_hkd = pos.get("hkd", 0.0)
+                    sfc_sh  = raw.get("sh", 0)
+                    if not sfc_sh or sfc_sh <= 0:
+                        continue
+                    sfc_hkd = raw.get("hkd", 0.0)
                     total_sh = _sdw_total_sh_map.get(code, 0)
                     sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
 
@@ -975,6 +988,43 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             if len(result) >= n: break
         return result
 
+    # ── Pre-compute σ for all stocks (hoisted out of per-stock loop) ──────────
+    # σ_up   = std(high[i] - close[i-1])  for days where high > prev close
+    # σ_down = std(close[i-1] - low[i])   for days where low  < prev close
+    # 6-year window (~1560 trading days) — one full bull/bear cycle
+    def _std(arr):
+        if len(arr) < 2: return 0.0
+        m = sum(arr) / len(arr)
+        return (sum((x - m) ** 2 for x in arr) / len(arr)) ** 0.5
+
+    _SIGMA_WINDOW    = 1560
+    _sigma_all_dates = sorted(_tv_all.keys())
+    _sigma_dates     = _sigma_all_dates[max(0, len(_sigma_all_dates) - _SIGMA_WINDOW):]
+    _sigma_cache: dict = {}
+    _sigma_up_moves:  dict = {}
+    _sigma_dn_moves:  dict = {}
+    for _di in range(1, len(_sigma_dates)):
+        _ds_prev = _sigma_dates[_di - 1]
+        _ds_cur  = _sigma_dates[_di]
+        _day_prev = _tv_all[_ds_prev]
+        _day_cur  = _tv_all[_ds_cur]
+        for _c in set(_day_prev.keys()) | set(_day_cur.keys()):
+            _rp = _day_prev.get(_c, {})
+            _rc = _day_cur.get(_c, {})
+            if not isinstance(_rp, dict) or not isinstance(_rc, dict): continue
+            _pc = _rp.get("close", 0.0)
+            _hi = _rc.get("high",  0.0)
+            _lo = _rc.get("low",   0.0)
+            if _pc > 0 and _hi > _pc:
+                _sigma_up_moves.setdefault(_c, []).append(_hi - _pc)
+            if _pc > 0 and _lo > 0 and _pc > _lo:
+                _sigma_dn_moves.setdefault(_c, []).append(_pc - _lo)
+    for _c in set(_sigma_up_moves.keys()) | set(_sigma_dn_moves.keys()):
+        _sigma_cache[_c] = (
+            round(_std(_sigma_up_moves.get(_c, [])), 4),
+            round(_std(_sigma_dn_moves.get(_c, [])), 4),
+        )
+
     # ── 10. Build results ─────────────────────────────────────────────────────
     results = []
 
@@ -1011,32 +1061,8 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         # only meaningful for ~100 SC stocks. classify_insight now uses top10_pct_delta
         # (CCASS SDW top-10 institutional concentration change) which covers all stocks.
 
-        # ── Kan-style channel σ (6-year window, asymmetric) ─────────────────
-        # σ_up   = std(high[i] - close[i-1])  for days where high > prev close
-        # σ_down = std(close[i-1] - low[i])   for days where low  < prev close
-        # Use last 6 years (~1560 trading days) — captures one full bull/bear cycle
-        # without being distorted by ancient price regimes.
-        _SIGMA_WINDOW = 1560
-        _all_dates_sorted = sorted(_tv_all.keys())
-        _sigma_dates = _all_dates_sorted[max(0, len(_all_dates_sorted) - _SIGMA_WINDOW):]
-        _up_moves, _dn_moves = [], []
-        for _di in range(1, len(_sigma_dates)):
-            _ds_prev = _sigma_dates[_di - 1]
-            _ds_cur  = _sigma_dates[_di]
-            _rec_prev = _tv_all[_ds_prev].get(code, {})
-            _rec_cur  = _tv_all[_ds_cur].get(code, {})
-            if not isinstance(_rec_prev, dict) or not isinstance(_rec_cur, dict): continue
-            _pc = _rec_prev.get("close", 0.0)
-            _hi = _rec_cur.get("high",  0.0)
-            _lo = _rec_cur.get("low",   0.0)
-            if _pc > 0 and _hi > _pc: _up_moves.append(_hi - _pc)
-            if _pc > 0 and _lo > 0 and _pc > _lo: _dn_moves.append(_pc - _lo)
-        def _std(arr):
-            if len(arr) < 2: return 0.0
-            m = sum(arr) / len(arr)
-            return (sum((x - m) ** 2 for x in arr) / len(arr)) ** 0.5
-        sigma_up   = round(_std(_up_moves),   4)
-        sigma_down = round(_std(_dn_moves),   4)
+        # σ pre-computed per-stock outside loop — see _sigma_cache below
+        sigma_up, sigma_down = _sigma_cache.get(code, (0.0, 0.0))
 
         # vol_ratio_5: today vol / 5-day avg vol (for channel band width)
         _vol5 = _vol_hist(code, 5, today_ds)
@@ -1217,6 +1243,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                     "max_conc": None, "max_holder": None, "max_inc": None, "max_dec": None}
     if _SDW_AVAILABLE and _sdw_holders_map:
         _uni_names = _universe_names
+        _stock_type_map = {r["code"]: r["stock_type"] for r in results}
         _sc_max_pct = 0.0;  _sc_max_pct_code = None; _sc_max_pct_holder = None
         _sc_max_conc = 0.0; _sc_max_conc_code = None
         _sc_max_inc = None; _sc_max_inc_val = -999.0
@@ -1228,7 +1255,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             _sc_name = _uni_names.get(_sc_code, {}).get("zh") or _sc_code
             _sc_en   = _uni_names.get(_sc_code, {}).get("en") or ""
             # Skip non-equity instruments — ETFs/bonds/derivatives distort all four metrics
-            if classify_stock(_sc_code, _sc_en) in ("etf", "bond", "derivative"): continue
+            if _stock_type_map.get(_sc_code, classify_stock(_sc_code, _sc_en)) in ("etf", "bond", "derivative"): continue
             _sc_top_pct = _sc_holders[0].get("pct", 0.0) if _sc_holders else 0.0
             if _sc_top_pct > _sc_max_pct:
                 _sc_max_pct = _sc_top_pct; _sc_max_pct_code = _sc_code
