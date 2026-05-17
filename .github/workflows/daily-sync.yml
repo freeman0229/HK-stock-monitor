@@ -137,6 +137,17 @@ jobs:
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
           echo "Warning: ccass_sdw.db not found in R2 — SDW holders will be empty"
 
+      - name: Update Yahoo OHLCV library
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: python build_yahoo.py --update
+        # Incremental: adds only missing days per stock, never overwrites existing dates.
+        # Each file is uploaded to R2 immediately after save.
+        # Stocks already up to date are skipped without a network call.
+
       - name: Run daily analysis
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
