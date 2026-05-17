@@ -4641,54 +4641,21 @@ async function drawCai() {
   if (!stock) return;
   const code5 = norm5(stock.code);
 
-  // Load current and previous year from turnover library (HKEX primary)
-  const year     = new Date().getFullYear();
-  const prevYear = year - 1;
-  if (!tvCache[year])     await loadTvYear(year);
-  if (!tvCache[prevYear]) await loadTvYear(prevYear);
-
-  // Load per-stock Yahoo data (all years in one small file, lazy-cached)
+  // Load per-stock Yahoo data from R2 (all years in one file, lazy-cached)
+  // Fields: close = dividend-adjusted close, open/high/low = raw prices, vol = raw volume
   const yahooByDate = await loadYahooStock(code5);
 
-  // Merge: HKEX turnover takes priority; Yahoo fills gaps and older years
-  const getMergedRec = (d, c5) => {
-    const yr = parseInt(d.slice(0, 4));
-    if (yr >= year) {
-      // Current year: HKEX primary, Yahoo patches missing high/low
-      const tv = (tvCache[year] || {})[d]?.[c5];
-      const yh = yahooByDate[d];
-      if (!tv && !yh) return null;
-      if (!tv) return yh;
-      if (tv.high === 0 && yh?.high > 0)
-        return { ...tv, open: yh.open, high: yh.high, low: yh.low, prev_close: yh.close };
-      return tv;
-    } else if (yr === prevYear) {
-      // Previous year: HKEX preferred, Yahoo as fallback
-      return (tvCache[prevYear] || {})[d]?.[c5] || yahooByDate[d] || null;
-    } else {
-      // All older years: Yahoo only
-      return yahooByDate[d] || null;
-    }
-  };
-
-  // Collect all available dates across every loaded source
-  const allDateSet = new Set([
-    ...Object.keys(tvCache[year]     || {}),
-    ...Object.keys(tvCache[prevYear] || {}),
-    ...Object.keys(yahooByDate),
-  ]);
-  const allDates = [...allDateSet].sort();
-
-  // Build arrays
+  // Build arrays directly from Yahoo — no HKEX merge needed
+  const allDates = Object.keys(yahooByDate).sort();
   const dates = [], closeArr = [], highArr = [], lowArr = [], volArr = [];
   for (const d of allDates) {
-    const rec = getMergedRec(d, code5);
+    const rec = yahooByDate[d];
     if (rec && rec.close > 0) {
       dates.push(d);
-      closeArr.push(rec.close);
-      highArr.push(rec.high  > 0 ? rec.high  : rec.close);
-      lowArr.push( rec.low   > 0 ? rec.low   : rec.close);
-      volArr.push(rec.vol    || 0);
+      closeArr.push(rec.close);                              // adj close (split/div adjusted)
+      highArr.push(rec.high  > 0 ? rec.high  : rec.close); // raw high
+      lowArr.push( rec.low   > 0 ? rec.low   : rec.close); // raw low
+      volArr.push(rec.vol    || 0);                         // raw volume
     }
   }
   if (closeArr.length < 5) return;
