@@ -745,26 +745,6 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
 
     _ccass_ds = t2_date.strftime("%Y-%m-%d")
 
-    # CCASS delta — backfill uses pre-loaded _cc_all; normal mode uses library
-    if suppress_telegram:
-        _cc_prev_ds  = next((d for d in sorted(_cc_all.keys(), reverse=True) if d < _ccass_ds), None)
-        _cc_prev_day = _cc_all.get(_cc_prev_ds, {}) if _cc_prev_ds else {}
-        ccass_delta_map = {}; ccass_consec_map = {}; ccass_streak_pct_map = {}
-        pct_listed_map = {c: ccass_pct_map.get(c, 0.0) for c in stock_codes}
-        pct_delta_map  = {}
-        for _c in stock_codes:
-            _pct_now = ccass_pct_map.get(_c, 0.0)
-            _pr = _cc_prev_day.get(_c, {})
-            _pct_prev = _pr.get("pct", 0.0) if isinstance(_pr, dict) else 0.0
-            pct_delta_map[_c] = round(_pct_now - _pct_prev, 4) if _pct_prev > 0 else 0.0
-    else:
-        df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, _ccass_ds, today_pct_map=ccass_pct_map)
-        ccass_delta_map      = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
-        ccass_consec_map     = dict(zip(df_cs["stock_code"], df_cs["ccass_consec"]))
-        ccass_streak_pct_map = dict(zip(df_cs["stock_code"], df_cs["ccass_streak_pct"]))
-        pct_listed_map       = dict(zip(df_cs["stock_code"], df_cs["pct_listed"]))
-        pct_delta_map        = dict(zip(df_cs["stock_code"], df_cs["pct_delta"]))
-
     _sa_df        = get_short_avg_ratio(stock_codes, 10, _tv_recent, today_ds)
     short_avg_map = dict(zip(_sa_df["stock_code"], _sa_df["short_avg"]))
 
@@ -950,6 +930,29 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     _cc_all   = _flat_by_date_recent(_cc_load_year, _years, 30)
     log.info("Pre-loaded: %d tv days | %d short days | %d ccass days",
              len(_tv_all), len(_sh_all), len(_cc_all))
+
+    # ── CCASS delta & history ─────────────────────────────────────────────────
+    # In backfill mode, use pre-loaded _cc_all for pct_delta (needed by classify_insight).
+    # Skips expensive per-stock ccass_library file reads (~14 min bottleneck).
+    if suppress_telegram:
+        _cc_prev_ds  = next((d for d in sorted(_cc_all.keys(), reverse=True) if d < _ccass_ds), None)
+        _cc_prev_day = _cc_all.get(_cc_prev_ds, {}) if _cc_prev_ds else {}
+        ccass_delta_map = {}; ccass_consec_map = {}; ccass_streak_pct_map = {}
+        pct_listed_map = {_c: ccass_pct_map.get(_c, 0.0) for _c in stock_codes}
+        pct_delta_map  = {}
+        for _c in stock_codes:
+            _pct_now = ccass_pct_map.get(_c, 0.0)
+            _pr = _cc_prev_day.get(_c, {})
+            _pct_prev = _pr.get("pct", 0.0) if isinstance(_pr, dict) else 0.0
+            pct_delta_map[_c] = round(_pct_now - _pct_prev, 4) if _pct_prev > 0 else 0.0
+    else:
+        df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, _ccass_ds, today_pct_map=ccass_pct_map)
+        ccass_delta_map      = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
+        ccass_consec_map     = dict(zip(df_cs["stock_code"], df_cs["ccass_consec"]))
+        ccass_streak_pct_map = dict(zip(df_cs["stock_code"], df_cs["ccass_streak_pct"]))
+        pct_listed_map       = dict(zip(df_cs["stock_code"], df_cs["pct_listed"]))
+        pct_delta_map        = dict(zip(df_cs["stock_code"], df_cs["pct_delta"]))
+
 
     def _vol_hist(code5, n, before):
         result = []
