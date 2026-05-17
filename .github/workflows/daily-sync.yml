@@ -982,13 +982,7 @@ jobs:
             echo "=== Processing $DAY ==="
             # Skip if already in rank_history.json — allows resuming interrupted runs
             DAY_KEY=$(echo "$DAY" | tr -d '-')
-            if python3 -c "
-import json, os, sys
-if not os.path.exists('rank_history.json'):
-    sys.exit(1)
-d = json.load(open('rank_history.json'))
-sys.exit(0 if '$DAY_KEY' in d else 1)
-" 2>/dev/null; then
+            if [ -f rank_history.json ] && python3 -c "import json,sys; d=json.load(open('rank_history.json')); sys.exit(0 if '${DAY_KEY}' in d else 1)" 2>/dev/null; then
               echo "  (already backfilled, skipping)"
               COUNT=$((COUNT + 1))
               continue
