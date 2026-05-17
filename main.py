@@ -374,12 +374,12 @@ RANK_HISTORY_FILE = "rank_history.json"
 def save_rank_history(date: datetime, results: list):
     store = load_store(RANK_HISTORY_FILE)
     ds_key = date.strftime("%Y%m%d")
-    # Store rank + insight — insight is read back by browser for signal annotations
+    # Store rank + insight — read back by browser for signal annotations
     store[ds_key] = {
         r["code"]: {"rank": r["rank"], "insight": r.get("insight")}
         for r in results
     }
-    # Keep only the 365 most recent days — browser needs up to 1 year of signal history
+    # Keep 365 most recent days — browser needs up to 1 year
     for old_key in sorted(store.keys())[:-365]:
         del store[old_key]
     save_store(RANK_HISTORY_FILE, store)
@@ -422,10 +422,9 @@ _ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND",
 # Derivative products — leveraged/inverse/futures; structurally extreme short ratios
 _DERIV_NAME_KW = ("LEVERAGED", "INVERSE", "FUTURES ETF", "L&I")
 
-# Derivative instruments — covered warrants/CBBCs misclassified by name keyword
 _DERIV_CODES = {
-    "03519",   # A恆生國指備兌 — covered warrant, name doesn't match _DERIV_NAME_KW
-    "03589",   # A恆生科技備兌 — covered warrant, name doesn't match _DERIV_NAME_KW
+    "03519",   # A恆生國指備兌
+    "03589",   # A恆生科技備兌
 }
 
 # Bond instruments — bond ETFs + retail/govt bonds (04xxx series)
@@ -744,15 +743,27 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         except Exception as _e:
             log.warning("SDW bulk prev holder load failed: %s", _e)
 
-    # Use T-2 date as cutoff so pct_prev aligns with pct_today (both from CCASS T-2 settlement)
     _ccass_ds = t2_date.strftime("%Y-%m-%d")
-    df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, _ccass_ds,
-                                    today_pct_map=ccass_pct_map)
-    ccass_delta_map      = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
-    ccass_consec_map     = dict(zip(df_cs["stock_code"], df_cs["ccass_consec"]))
-    ccass_streak_pct_map = dict(zip(df_cs["stock_code"], df_cs["ccass_streak_pct"]))
-    pct_listed_map       = dict(zip(df_cs["stock_code"], df_cs["pct_listed"]))
-    pct_delta_map        = dict(zip(df_cs["stock_code"], df_cs["pct_delta"]))
+
+    # CCASS delta — backfill uses pre-loaded _cc_all; normal mode uses library
+    if suppress_telegram:
+        _cc_prev_ds  = next((d for d in sorted(_cc_all.keys(), reverse=True) if d < _ccass_ds), None)
+        _cc_prev_day = _cc_all.get(_cc_prev_ds, {}) if _cc_prev_ds else {}
+        ccass_delta_map = {}; ccass_consec_map = {}; ccass_streak_pct_map = {}
+        pct_listed_map = {c: ccass_pct_map.get(c, 0.0) for c in stock_codes}
+        pct_delta_map  = {}
+        for _c in stock_codes:
+            _pct_now = ccass_pct_map.get(_c, 0.0)
+            _pr = _cc_prev_day.get(_c, {})
+            _pct_prev = _pr.get("pct", 0.0) if isinstance(_pr, dict) else 0.0
+            pct_delta_map[_c] = round(_pct_now - _pct_prev, 4) if _pct_prev > 0 else 0.0
+    else:
+        df_cs = get_ccass_delta_and_avg(stock_codes, ccass_sh_map, _ccass_ds, today_pct_map=ccass_pct_map)
+        ccass_delta_map      = dict(zip(df_cs["stock_code"], df_cs["ccass_delta"]))
+        ccass_consec_map     = dict(zip(df_cs["stock_code"], df_cs["ccass_consec"]))
+        ccass_streak_pct_map = dict(zip(df_cs["stock_code"], df_cs["ccass_streak_pct"]))
+        pct_listed_map       = dict(zip(df_cs["stock_code"], df_cs["pct_listed"]))
+        pct_delta_map        = dict(zip(df_cs["stock_code"], df_cs["pct_delta"]))
 
     _sa_df        = get_short_avg_ratio(stock_codes, 10, _tv_recent, today_ds)
     short_avg_map = dict(zip(_sa_df["stock_code"], _sa_df["short_avg"]))
@@ -766,35 +777,28 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             _sfc_fridays  = sorted(d for d in _sfc_stored if d and isinstance(d, str) and d <= _today_str)
             if _sfc_fridays:
                 _latest_sfc_ds = _sfc_fridays[-1]
-                # Pre-load SFC data for this date once — avoids reading sfc_YYYY.json
-                # per stock (2650 × file read = 15 min bottleneck in backfill mode)
                 _sfc_year = int(_latest_sfc_ds[:4])
                 _sfc_path = f"sfc_{_sfc_year}.json"
                 _sfc_day_data = {}
                 if os.path.exists(_sfc_path):
                     with open(_sfc_path, encoding="utf-8") as _f:
                         _sfc_day_data = json.load(_f).get("by_date", {}).get(_latest_sfc_ds, {})
-
                 for code in stock_codes:
-                    # Use pre-loaded dict instead of sfc_get_position() file read
                     _code5 = normalize_code(code)
                     raw = _sfc_day_data.get(_code5) or _sfc_day_data.get(code) or {}
-                    if not raw or not isinstance(raw, dict):
-                        continue
-                    sfc_sh  = raw.get("sh", 0)
-                    if not sfc_sh or sfc_sh <= 0:
-                        continue
+                    if not raw or not isinstance(raw, dict): continue
+                    sfc_sh = raw.get("sh", 0)
+                    if not sfc_sh or sfc_sh <= 0: continue
                     sfc_hkd = raw.get("hkd", 0.0)
+                    # Use bulk-loaded total_sh map (avoids per-stock DB call, works without SDW)
                     total_sh = _sdw_total_sh_map.get(code, 0)
                     sfc_pct  = round(sfc_sh / total_sh * 100, 4) if total_sh > 0 else 0.0
 
-                    # Skip history lookup in backfill mode — delta fields not needed for rank_history
                     if suppress_telegram:
                         sfc_map[code] = {"sfc_pct": sfc_pct, "sfc_week_delta": 0.0,
                                          "sfc_sh": sfc_sh, "sfc_hkd": sfc_hkd,
                                          "sfc_sh_delta": 0, "sfc_hkd_delta": 0}
                         continue
-
                     sfc_hist = sfc_get_history(code, 5, _latest_sfc_ds)
                     _prev_sh       = (sfc_hist[0].get("sh") or 0) if sfc_hist else 0
                     sfc_prev_pct   = round(_prev_sh / total_sh * 100, 4) if total_sh > 0 and _prev_sh > 0 else 0.0
@@ -802,6 +806,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                     sfc_prev_hkd   = (sfc_hist[0].get("hkd") or 0.0) if sfc_hist else 0.0
                     sfc_hkd_delta  = int(round(sfc_hkd - sfc_prev_hkd, 0)) if sfc_prev_hkd > 0 else 0
                     sfc_sh_delta   = int(sfc_sh - _prev_sh) if _prev_sh > 0 else 0
+
                     sfc_map[code] = {
                         "sfc_sh":         sfc_sh,
                         "sfc_sh_delta":   sfc_sh_delta,
@@ -816,8 +821,6 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                 # Persist pct into sfc_YYYY.json so frontend reads it directly
                 # (avoids recomputing at render time and keeps data.json lean)
                 if _SDW_AVAILABLE and sfc_map and not suppress_telegram:
-                    # Skip in backfill/date mode (suppress_telegram=True) —
-                    # sfc_YYYY.json is not needed for rank_history backfill
                     sfc_save_pct_bulk(
                         _latest_sfc_ds,
                         {code: v["sfc_pct"] for code, v in sfc_map.items()}
@@ -988,42 +991,26 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             if len(result) >= n: break
         return result
 
-    # ── Pre-compute σ for all stocks (hoisted out of per-stock loop) ──────────
-    # σ_up   = std(high[i] - close[i-1])  for days where high > prev close
-    # σ_down = std(close[i-1] - low[i])   for days where low  < prev close
-    # 6-year window (~1560 trading days) — one full bull/bear cycle
+    # ── Pre-compute σ for all stocks ──────────────────────────────────────────
     def _std(arr):
         if len(arr) < 2: return 0.0
         m = sum(arr) / len(arr)
         return (sum((x - m) ** 2 for x in arr) / len(arr)) ** 0.5
-
-    _SIGMA_WINDOW    = 1560
-    _sigma_all_dates = sorted(_tv_all.keys())
-    _sigma_dates     = _sigma_all_dates[max(0, len(_sigma_all_dates) - _SIGMA_WINDOW):]
     _sigma_cache: dict = {}
-    _sigma_up_moves:  dict = {}
-    _sigma_dn_moves:  dict = {}
-    for _di in range(1, len(_sigma_dates)):
-        _ds_prev = _sigma_dates[_di - 1]
-        _ds_cur  = _sigma_dates[_di]
-        _day_prev = _tv_all[_ds_prev]
-        _day_cur  = _tv_all[_ds_cur]
-        for _c in set(_day_prev.keys()) | set(_day_cur.keys()):
-            _rp = _day_prev.get(_c, {})
-            _rc = _day_cur.get(_c, {})
+    _sigma_up_moves: dict = {}
+    _sigma_dn_moves: dict = {}
+    for _di in range(1, len(sorted(_tv_all.keys()))):
+        _sdts = sorted(_tv_all.keys())
+        _dp = _tv_all[_sdts[_di-1]]; _dc = _tv_all[_sdts[_di]]
+        for _c in set(_dp.keys()) | set(_dc.keys()):
+            _rp = _dp.get(_c, {}); _rc = _dc.get(_c, {})
             if not isinstance(_rp, dict) or not isinstance(_rc, dict): continue
-            _pc = _rp.get("close", 0.0)
-            _hi = _rc.get("high",  0.0)
-            _lo = _rc.get("low",   0.0)
-            if _pc > 0 and _hi > _pc:
-                _sigma_up_moves.setdefault(_c, []).append(_hi - _pc)
-            if _pc > 0 and _lo > 0 and _pc > _lo:
-                _sigma_dn_moves.setdefault(_c, []).append(_pc - _lo)
-    for _c in set(_sigma_up_moves.keys()) | set(_sigma_dn_moves.keys()):
-        _sigma_cache[_c] = (
-            round(_std(_sigma_up_moves.get(_c, [])), 4),
-            round(_std(_sigma_dn_moves.get(_c, [])), 4),
-        )
+            _pc = _rp.get("close", 0.0); _hi = _rc.get("high", 0.0); _lo = _rc.get("low", 0.0)
+            if _pc > 0 and _hi > _pc: _sigma_up_moves.setdefault(_c, []).append(_hi - _pc)
+            if _pc > 0 and _lo > 0 and _pc > _lo: _sigma_dn_moves.setdefault(_c, []).append(_pc - _lo)
+    for _c in set(_sigma_up_moves) | set(_sigma_dn_moves):
+        _sigma_cache[_c] = (round(_std(_sigma_up_moves.get(_c,[])),4), round(_std(_sigma_dn_moves.get(_c,[])),4))
+    del _sigma_up_moves, _sigma_dn_moves
 
     # ── 10. Build results ─────────────────────────────────────────────────────
     results = []
@@ -1061,7 +1048,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         # only meaningful for ~100 SC stocks. classify_insight now uses top10_pct_delta
         # (CCASS SDW top-10 institutional concentration change) which covers all stocks.
 
-        # σ pre-computed per-stock outside loop — see _sigma_cache below
+        # σ pre-computed for all stocks outside loop — see _sigma_cache
         sigma_up, sigma_down = _sigma_cache.get(code, (0.0, 0.0))
 
         # vol_ratio_5: today vol / 5-day avg vol (for channel band width)
