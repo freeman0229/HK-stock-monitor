@@ -145,22 +145,6 @@ def upload_to_r2(code5: str) -> bool:
         return False
 
 
-def load_from_r2(code5: str) -> dict:
-    """Download existing tv_{code5}.json from R2 if available."""
-    if not R2_ENDPOINT:
-        return {}
-    path = tv_path(code5)
-    try:
-        cmd = ["aws", "s3", "cp", f"{R2_BUCKET}/{path}", path,
-               "--endpoint-url", R2_ENDPOINT, "--no-progress"]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if r.returncode == 0 and os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
 
 # ── Per-stock build ───────────────────────────────────────────────────────────
 

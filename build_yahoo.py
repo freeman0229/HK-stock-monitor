@@ -41,7 +41,7 @@ import subprocess
 import time
 from datetime import date, timedelta
 
-from ccass_universe import get_universe_codes, normalize_code
+from ccass_universe import get_universe_codes
 from yahoo_library import (
     BATCH_SIZE,
     SLEEP_BATCH,

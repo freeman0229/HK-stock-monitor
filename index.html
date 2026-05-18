@@ -2366,7 +2366,6 @@ let _sfcCodesCache  = null;   // cached sorted array of ccass_universe SFC codes
 //   close = 收市價  (CLOSING RATE)   — closing price
 //   high  = 最高    (HIGH)           — intraday high price
 //   low   = 最低    (LOW)            — intraday low price
-let tvCache       = {};
 
 // ── Load sfc_YYYY.json ────────────────────────────────────────────────────────
 async function loadSfcData() {
@@ -2468,22 +2467,6 @@ function computeSfcCards() {
   // Re-render the 累積沽空排行 table now that sfcData is loaded
   if (allStocks.length) renderShort();
 }
-async function loadTvYear(year) {
-  if (tvCache[year]) return tvCache[year];
-  tvCache[year] = {};
-  // Load monthly files turnover_{YYYY}_{MM}.json in parallel
-  const months = ['01','02','03','04','05','06','07','08','09','10','11','12'];
-  await Promise.all(months.map(async mm => {
-    try {
-      const r = await fetch(`turnover_${year}_${mm}.json`, { cache: 'no-cache' });
-      if (!r.ok) return;
-      const lib = await r.json();
-      Object.assign(tvCache[year], lib.by_date || {});
-    } catch(e) {}
-  }));
-  return tvCache[year];
-}
-
 // ── Yahoo Finance historical cache ────────────────────────────────────────────
 // Per-stock Yahoo cache: yahooStockCache[code5] = {date_str: {open,high,low,close,vol}}
 let yahooStockCache = {};
@@ -5872,10 +5855,6 @@ let stkSdwCache   = {};     // { code5: sdw_{code}.json data }
 // ── Helpers ───────────────────────────────────────────────────────────────────
 // Plot every available trading day — weekly Friday-only sampling was discarding
 // 80% of data and producing a near-empty chart for the early months of the library.
-function stkAllDates(allDates) {
-  return allDates; // no filtering — use every date rank_history has
-}
-
 function stkBuildRankFlat() {
   if (stkRankCache) return stkRankCache;
   const store = window._rankHistoryData || {};
