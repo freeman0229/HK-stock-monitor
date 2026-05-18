@@ -2500,6 +2500,21 @@ async function loadYahooStock(code5) {
   } catch(e) { yahooStockCache[code5] = {}; return {}; }
 }
 
+// Per-stock TV+Short cache: tvStockCache[code5] = {date_str: {close,high,low,vol,tv?,vwap?,sv?,st?}}
+let tvStockCache = {};
+const TV_STOCK_BASE = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
+
+async function loadTvStock(code5) {
+  if (tvStockCache[code5]) return tvStockCache[code5];
+  try {
+    const r = await fetch(`${TV_STOCK_BASE}/tv_${code5}.json`, { cache: 'no-cache' });
+    if (!r.ok) { tvStockCache[code5] = {}; return {}; }
+    const lib = await r.json();
+    tvStockCache[code5] = lib.by_date || {};
+    return tvStockCache[code5];
+  } catch(e) { tvStockCache[code5] = {}; return {}; }
+}
+
 // Build {ds: {close, vol}} for one stock across all relevant years
 // ── Filter dates by range ─────────────────────────────────────────────────────
 let sfcCustomFrom = '';   // YYYY-MM-DD, empty = use pill range
@@ -4641,21 +4656,54 @@ async function drawCai() {
   if (!stock) return;
   const code5 = norm5(stock.code);
 
-  // Load per-stock Yahoo data from R2 (all years in one file, lazy-cached)
-  // Fields: close = dividend-adjusted close, open/high/low = raw prices, vol = raw volume
+  // Load current and previous year from turnover library (HKEX primary)
+  const year     = new Date().getFullYear();
+  const prevYear = year - 1;
+  if (!tvCache[year])     await loadTvYear(year);
+  if (!tvCache[prevYear]) await loadTvYear(prevYear);
+
+  // Load per-stock Yahoo data (all years in one small file, lazy-cached)
   const yahooByDate = await loadYahooStock(code5);
 
-  // Build arrays directly from Yahoo — no HKEX merge needed
-  const allDates = Object.keys(yahooByDate).sort();
+  // Merge: HKEX turnover takes priority; Yahoo fills gaps and older years
+  const getMergedRec = (d, c5) => {
+    const yr = parseInt(d.slice(0, 4));
+    if (yr >= year) {
+      // Current year: HKEX primary, Yahoo patches missing high/low
+      const tv = (tvCache[year] || {})[d]?.[c5];
+      const yh = yahooByDate[d];
+      if (!tv && !yh) return null;
+      if (!tv) return yh;
+      if (tv.high === 0 && yh?.high > 0)
+        return { ...tv, open: yh.open, high: yh.high, low: yh.low, prev_close: yh.close };
+      return tv;
+    } else if (yr === prevYear) {
+      // Previous year: HKEX preferred, Yahoo as fallback
+      return (tvCache[prevYear] || {})[d]?.[c5] || yahooByDate[d] || null;
+    } else {
+      // All older years: Yahoo only
+      return yahooByDate[d] || null;
+    }
+  };
+
+  // Collect all available dates across every loaded source
+  const allDateSet = new Set([
+    ...Object.keys(tvCache[year]     || {}),
+    ...Object.keys(tvCache[prevYear] || {}),
+    ...Object.keys(yahooByDate),
+  ]);
+  const allDates = [...allDateSet].sort();
+
+  // Build arrays
   const dates = [], closeArr = [], highArr = [], lowArr = [], volArr = [];
   for (const d of allDates) {
-    const rec = yahooByDate[d];
+    const rec = getMergedRec(d, code5);
     if (rec && rec.close > 0) {
       dates.push(d);
-      closeArr.push(rec.close);                              // adj close (split/div adjusted)
-      highArr.push(rec.high  > 0 ? rec.high  : rec.close); // raw high
-      lowArr.push( rec.low   > 0 ? rec.low   : rec.close); // raw low
-      volArr.push(rec.vol    || 0);                         // raw volume
+      closeArr.push(rec.close);
+      highArr.push(rec.high  > 0 ? rec.high  : rec.close);
+      lowArr.push( rec.low   > 0 ? rec.low   : rec.close);
+      volArr.push(rec.vol    || 0);
     }
   }
   if (closeArr.length < 5) return;
@@ -5917,39 +5965,29 @@ async function stkEnsureSdw(code5) {
 
 // ── Data assembly ─────────────────────────────────────────────────────────────
 async function stkBuildSeries(code5, fromDs, toDs) {
-  // Data sources:
-  //   Current year (2026): tvCache[curYear]  — HKEX turnover (has close, vol, vwap, tv)
-  //   Previous year (2025): tvCache[prevYear] — HKEX turnover (has close, vol; no vwap/tv)
-  //   Older years (≤2024):  yahoo_{code5}.json from R2 (has close, vol, open, high, low)
-  const curYear  = new Date().getFullYear();
-  const prevYear = curYear - 1;
+  // Single source: tv_{code5}.json from R2
+  // Fields by date range:
+  //   2025 dates         : close, high, low, vol
+  //   2026-02-02 onwards : close, high, low, vol, tv, vwap, sv, st
+  const tvByDate = await loadTvStock(code5);
 
-  // Load current + previous year turnover and SFC
-  await loadTvYear(curYear);
-  await loadTvYear(prevYear);
-  await stkEnsureSfc(curYear);
-  await stkEnsureSfc(prevYear);
-
-  // Load per-stock yahoo for all years (fills gaps and ≤2024 dates)
-  const yahooByDate = await loadYahooStock(code5);
-
+  const toYear = parseInt(toDs.slice(0, 4));
+  await stkEnsureSfc(toYear);
+  await stkEnsureSfc(toYear - 1);
   await stkEnsureSdw(code5);
   await stkEnsureRankHistory();
   const rankFlat = stkBuildRankFlat();
 
-  // Build date list: tvCache both years + yahoo (older years), filtered to range
-  const allDates = [...new Set([
-    ...Object.keys(tvCache[curYear]  || {}),
-    ...Object.keys(tvCache[prevYear] || {}),
-    ...Object.keys(yahooByDate),
-  ])].filter(d => d >= fromDs && d <= toDs).sort();
+  // Build date list filtered to requested range
+  const tradingDays = Object.keys(tvByDate)
+    .filter(d => d >= fromDs && d <= toDs)
+    .sort();
 
-  const tradingDays = stkAllDates(allDates);
   if (!tradingDays.length) return null;
 
-  // SFC flat by date — merge prevYear + curYear (curYear overwrites on overlap)
+  // SFC flat: merge both years (newer year overwrites on overlap)
   const sfcFlat = {};
-  for (const yr of [prevYear, curYear]) {
+  for (const yr of [toYear - 1, toYear]) {
     const ycdata = stkSfcCache[yr];
     if (ycdata) {
       for (const [ds, stocks] of Object.entries(ycdata.by_date || {})) {
@@ -5959,69 +5997,46 @@ async function stkBuildSeries(code5, fromDs, toDs) {
   }
 
   // SDW by_date
-  const sdwByDate = (stkSdwCache[code5] || {}).by_date || {};
-
-  // Pre-build vol map: yahoo base, tvCache prevYear overrides, tvCache curYear overrides
-  // Priority: curYear HKEX > prevYear HKEX > yahoo (most accurate wins)
-  const allVolByDate = {};
-  for (const [ds, rec] of Object.entries(yahooByDate)) {
-    if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
-  }
-  for (const [ds, stocks] of Object.entries(tvCache[prevYear] || {})) {
-    const rec = stocks[code5];
-    if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
-  }
-  for (const [ds, stocks] of Object.entries(tvCache[curYear] || {})) {
-    const rec = stocks[code5];
-    if (rec?.vol > 0) allVolByDate[ds] = rec.vol;
-  }
-  // Build index map for O(1) lookup (avoids O(n) indexOf inside loop)
-  const sortedVolDates = Object.keys(allVolByDate).sort();
-  const volDateIdx = new Map(sortedVolDates.map((d, i) => [d, i]));
-
-  // Hoist SDW date keys sort out of the per-day loop
+  const sdwByDate   = (stkSdwCache[code5] || {}).by_date || {};
   const sdwDateKeys = Object.keys(sdwByDate).sort();
 
-  const labels=[], closeArr=[], vwapArr=[], volArr=[], turnArr=[], top10Arr=[], sfcArr=[], signalArr=[];
+  // Build vol index for O(1) rolling 24-day lookup
+  const sortedVolDates = tradingDays.filter(d => (tvByDate[d]?.vol || 0) > 0);
+  const volDateIdx     = new Map(sortedVolDates.map((d, i) => [d, i]));
+
+  const labels=[], closeArr=[], vwapArr=[], volArr=[],
+        turnArr=[], top10Arr=[], sfcArr=[], signalArr=[];
 
   for (let i = 0; i < tradingDays.length; i++) {
-    const ds   = tradingDays[i];
-    const year = parseInt(ds.slice(0, 4));
-
-    // Price record: curYear → tvCache[curYear]; prevYear → tvCache[prevYear]; else → yahoo
-    let tvRec = null;
-    if (year === curYear)       tvRec = tvCache[curYear]?.[ds]?.[code5]  || null;
-    else if (year === prevYear) tvRec = tvCache[prevYear]?.[ds]?.[code5] || null;
-    const yhRec    = yahooByDate[ds] || null;
-    const priceRec = tvRec || yhRec;
+    const ds  = tradingDays[i];
+    const rec = tvByDate[ds] || {};
 
     labels.push(ds);
-    closeArr.push(priceRec?.close > 0 ? priceRec.close : null);
-    vwapArr .push(tvRec?.vwap > 0 ? tvRec.vwap : null);  // vwap only in curYear HKEX data
-    volArr  .push(priceRec?.vol > 0 ? priceRec.vol : null);
+    closeArr.push(rec.close > 0 ? rec.close : null);
+    vwapArr .push(rec.vwap  > 0 ? rec.vwap  : null);
+    volArr  .push(rec.vol   > 0 ? rec.vol   : null);
 
-    // Compute 換手率: rolling 24-day vol sum / SDW total_sh
+    // 換手率: rolling 24-day vol sum / SDW total_sh
     const dsIdx = volDateIdx.has(ds) ? volDateIdx.get(ds) : -1;
     const vol24 = dsIdx >= 0
       ? sortedVolDates.slice(Math.max(0, dsIdx - 23), dsIdx + 1)
-          .reduce((s, d) => s + (allVolByDate[d] || 0), 0)
+          .reduce((s, d) => s + (tvByDate[d]?.vol || 0), 0)
       : 0;
-    // Nearest SDW total_sh on or before ds
     const nearestSdw = sdwDateKeys.filter(d => d <= ds).slice(-1)[0];
-    const totalSh = nearestSdw ? (sdwByDate[nearestSdw]?.total_sh || 0) : 0;
+    const totalSh    = nearestSdw ? (sdwByDate[nearestSdw]?.total_sh || 0) : 0;
     turnArr.push(totalSh > 0 && vol24 > 0 ? +(vol24 / totalSh * 100).toFixed(2) : null);
 
-    // Top10持倉 — exact SDW Friday dates only (weekly data)
+    // Top10持倉 — exact SDW Friday dates only
     const sdwEntry = sdwByDate[ds];
     if (sdwEntry && sdwEntry.total_sh > 0 && sdwEntryHasHolders(sdwEntry)) {
-      const holders  = sdwEntry.p || [];
-      const top10sh  = holders.slice(0, 10).reduce((s, h) => s + (h.sh || 0), 0);
+      const holders = sdwEntry.p || [];
+      const top10sh = holders.slice(0, 10).reduce((s, h) => s + (h.sh || 0), 0);
       top10Arr.push(+(top10sh / sdwEntry.total_sh * 100).toFixed(2));
     } else {
       top10Arr.push(null);
     }
 
-    // SFC賣空 — exact SFC report dates only (weekly data)
+    // SFC賣空 — exact SFC report dates only
     // Priority: sfcRec.pct (pre-computed) → sfcRec.sh / SDW total_sh → null
     // NEVER divide by sfcTotal.sh (__total__.sh = market-wide sum, not per-stock ratio)
     const sfcDay = sfcFlat[ds];
@@ -6034,7 +6049,7 @@ async function stkBuildSeries(code5, fromDs, toDs) {
       sfcArr.push(null);
     }
 
-    // Signal annotation — from rank_history on this date
+    // Signal annotation — from rank_history
     // Priority on conflict: 🏦 大戶增持 > others
     const rankDay = rankFlat[ds] || {};
     const rankRec = rankDay[code5] || rankDay[code5.replace(/^0+/, '')];

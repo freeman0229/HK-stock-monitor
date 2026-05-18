@@ -34,6 +34,7 @@ on:
           - sdw-migrate-json # one-time: import old ccass_sdw_*.json files into SQLite DB
           - hsi-build        # manual: rebuild full HSI weekly history from scratch
           - rank-history-backfill  # manual: rebuild rank_history.json from 2026-02-02
+          - tv-stock-build   # manual: full rebuild of all tv_{code5}.json on R2
       backfill_date:
         description: 'Date to backfill (YYYY-MM-DD) — e.g. 2025-04-11. Required for sdw-backfill.'
         required: false
@@ -154,8 +155,16 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python main.py
 
-      - name: Split turnover into monthly files
-        run: python split_turnover.py --year $(date +'%Y')
+      - name: Build per-stock TV+Short files → upload to R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: python build_tv_stock.py
+        # Reads all local turnover_{YYYY}.json + short_{YYYY}.json
+        # Merges per stock per day → tv_{code5}.json → uploads to R2
+        # Incremental: never overwrites existing dates
 
       - name: Upload turnover_2026.json to R2
         env:
@@ -176,11 +185,10 @@ jobs:
           for f in data.json rank_history.json name_map.json; do
             [ -f "$f" ] && git add "$f"
           done
-          for f in short_20*.json turnover_20*_??.json sfc_20*.json; do
+          for f in short_20*.json sfc_20*.json; do
             [ -f "$f" ] && git add "$f"
           done
-          # turnover_20*_??.json matches monthly files only (e.g. turnover_2026_05.json)
-          # NOT turnover_2026.json / turnover_2025.json (full-year R2 working files)
+          # Note: turnover_20*_??.json monthly files removed — frontend now uses tv_{code5}.json from R2
           # sc_top10_20*.json and ccass_20*.json committed by early-fetch at 19:00
           git diff --staged --quiet || \
             (git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')" && git push)
@@ -1023,3 +1031,44 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "Rank history backfill complete: $(date +'%Y-%m-%d %H:%M')" && git push)
           echo "Backfill done: $COUNT trading days processed"
+
+  # ── TV+Short per-stock full rebuild (manual) ─────────────────────────────────
+  # Rebuilds all tv_{code5}.json from local turnover + short files → uploads to R2.
+  # Use after structural changes to tv_{code5}.json schema or to fix corrupt files.
+  tv-stock-build:
+    name: TV+Short per-stock full rebuild
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: tv-stock-build
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'tv-stock-build'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+
+      - name: Download turnover files from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          aws s3 cp s3://hk-stock-monitor/turnover_2025.json turnover_2025.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+          aws s3 cp s3://hk-stock-monitor/turnover_2026.json turnover_2026.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+
+      - name: Full rebuild all tv_{code5}.json → R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: python build_tv_stock.py --rebuild
