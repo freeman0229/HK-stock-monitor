@@ -170,7 +170,11 @@ def build_stock(code5: str, tv_all: dict, sh_all: dict,
     Build/update tv_{code5}.json for one stock.
     Returns number of new days added.
     """
-    # Load existing file (from disk if present, else try R2)
+    # In incremental mode: load from disk only (no R2 download per-stock).
+    # The runner is ephemeral — tv_{code5}.json only exists locally if written
+    # earlier in the same run (e.g. --code single-stock reuse).
+    # For the daily run we write every stock fresh from tv_all + sh_all,
+    # uploading only stocks that have data in today's turnover file.
     path = tv_path(code5)
     if rebuild:
         existing = {}
@@ -181,7 +185,7 @@ def build_stock(code5: str, tv_all: dict, sh_all: dict,
         except Exception:
             existing = {}
     else:
-        existing = load_from_r2(code5).get("by_date", {})
+        existing = {}  # ephemeral runner — no prior local file, start fresh
 
     added = 0
     merged = dict(existing)  # copy — we'll add new dates only
@@ -254,10 +258,20 @@ def run(universe: list, rebuild: bool = False):
         log.error("No turnover data found — aborting")
         return
 
-    total   = len(universe)
+    if rebuild:
+        # Full rebuild: process every stock in universe
+        active = set(universe)
+    else:
+        # Incremental: only process stocks that appear in the most recent trading day.
+        # This avoids uploading all 2600 files on every daily run.
+        latest_ds  = max(tv_all.keys())
+        active     = set(tv_all[latest_ds].keys()) & set(universe)
+        log.info("Incremental: %d stocks active on %s", len(active), latest_ds)
+
+    total   = len(active)
     updated = skipped = 0
 
-    for i, code5 in enumerate(universe, 1):
+    for i, code5 in enumerate(sorted(active), 1):
         added = build_stock(code5, tv_all, sh_all, rebuild=rebuild)
         if added > 0:
             log.info("[%d/%d] %s — +%d days", i, total, code5, added)
