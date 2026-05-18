@@ -144,10 +144,11 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION   : auto
           R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
-        run: python build_yahoo.py --update
-        # Incremental: adds only missing days per stock, never overwrites existing dates.
-        # Each file is uploaded to R2 immediately after save.
-        # Stocks already up to date are skipped without a network call.
+        run: python build_yahoo.py --today
+        # --today: fetches last 7 days only for all stocks (fast, ~2-3 min).
+        # Downloads existing R2 file per stock, merges new days, uploads back.
+        # Never overwrites existing dates.
+        # For full backfill use the "Yahoo Finance Backfill" workflow_dispatch job.
 
       - name: Run daily analysis
         env:
