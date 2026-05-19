@@ -1069,7 +1069,7 @@ jobs:
 
             echo "=== Verifying completeness ==="
             MISSING=$(python3 - <<'PYEOF'
-          import subprocess, re, os
+          import subprocess, re, os, json
           from ccass_universe import get_universe_codes
           universe = set(get_universe_codes())
           endpoint = os.environ["R2_ENDPOINT_URL"]
@@ -1079,9 +1079,23 @@ jobs:
               capture_output=True, text=True, timeout=60)
           on_r2 = set(re.findall(r"tv_(\d{5})\.json", r.stdout))
           missing = universe - on_r2
-          print(f"Universe={len(universe)} OnR2={len(on_r2)} Missing={len(missing)}")
-          if missing:
-              print("MISSING:" + ",".join(sorted(missing)[:50]))
+          # Also flag stocks on R2 that have no 2025 data (partial backfill)
+          incomplete = set()
+          for code5 in on_r2 & universe:
+              path = f"tv_{code5}.json"
+              if os.path.exists(path):
+                  try:
+                      with open(path) as f:
+                          data = json.load(f)
+                      dates = list(data.get("by_date", {}).keys())
+                      if dates and min(dates) >= "2026-01-01":
+                          incomplete.add(code5)
+                  except Exception:
+                      pass
+          total_missing = missing | incomplete
+          print(f"Universe={len(universe)} OnR2={len(on_r2)} Missing={len(missing)} Incomplete={len(incomplete)}")
+          if total_missing:
+              print("MISSING:" + ",".join(sorted(total_missing)[:50]))
               exit(1)
           else:
               print("ALL_COMPLETE")

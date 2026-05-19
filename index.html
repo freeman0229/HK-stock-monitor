@@ -6328,7 +6328,8 @@ function initStockPanel() {
   });
   document.getElementById('stock-apply')?.addEventListener('click', () => {
     if (!stkCode) return;
-    stkApplyRange();
+    // Do NOT call stkApplyRange() here — that would overwrite manually entered dates
+    // with the dropdown value. Just re-render with whatever dates are in the inputs.
     stkRenderCharts();
   });
 

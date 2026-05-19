@@ -21,7 +21,8 @@ Field availability by source:
   short_2026.json     → sv, st                           (from 2026-02-02)
 
 Rules:
-  • Incremental: never overwrites existing dates in tv_{code5}.json
+  • All modes sync existing tv_*.json from R2 before processing (preserves history)
+  • Never overwrites existing dates — only appends new ones
   • Scans all local turnover_YYYY.json and short_YYYY.json automatically
   • Uploads to R2 immediately after each stock is saved
   • Skips stocks with no data
@@ -148,6 +149,26 @@ def upload_to_r2(code5: str) -> bool:
 
 # ── Per-stock build ───────────────────────────────────────────────────────────
 
+def _sync_r2_tv_files():
+    """Batch download all tv_*.json from R2 using aws s3 sync (fast, one call)."""
+    if not R2_ENDPOINT:
+        return
+    try:
+        cmd = ["aws", "s3", "sync", R2_BUCKET, ".",
+               "--endpoint-url", R2_ENDPOINT,
+               "--exclude", "*",
+               "--include", "tv_*.json",
+               "--no-progress"]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if r.returncode == 0:
+            count = len(re.findall(r"tv_\d{5}\.json", r.stdout))
+            log.info("Synced %d tv_*.json files from R2", count)
+        else:
+            log.warning("R2 sync warning: %s", r.stderr.strip()[:200])
+    except Exception as e:
+        log.warning("R2 sync failed: %s -- will start fresh", e)
+
+
 def _list_r2_tv_codes() -> set:
     """List all tv_{code5}.json files already on R2 via a single aws s3 ls call."""
     if not R2_ENDPOINT:
@@ -172,8 +193,8 @@ def build_stock(code5: str, tv_all: dict, sh_all: dict,
     """
     # Load existing data:
     # - rebuild: start fresh, overwrite everything
-    # - backfill: download from R2 first to skip already-uploaded dates
-    # - incremental (daily): start fresh (ephemeral runner, only today's dates added)
+    # - all other modes: file pre-synced from R2 by _sync_r2_tv_files() in run()
+    #   so os.path.exists(path) will be True for stocks already on R2
     path = tv_path(code5)
     if rebuild:
         existing = {}
@@ -183,13 +204,12 @@ def build_stock(code5: str, tv_all: dict, sh_all: dict,
                 existing = json.load(f).get("by_date", {})
         except Exception:
             existing = {}
-    elif backfill:
-        # In backfill mode, existing R2 files are pre-screened in run() via a
-        # single aws s3 ls call — stocks already on R2 are skipped before
-        # build_stock() is called. So existing={} here is correct.
-        existing = {}
     else:
-        existing = {}  # daily incremental — ephemeral runner, start fresh
+        # Both backfill and daily incremental: load from local disk.
+        # Files are pre-synced from R2 by _sync_r2_tv_files() in run()
+        # before build_stock() is called — so existing history is preserved.
+        # Note: os.path.exists(path) is already handled by the elif branch above.
+        existing = {}
 
     added = 0
     merged = dict(existing)  # copy — we'll add new dates only
@@ -265,19 +285,22 @@ def run(universe: list, rebuild: bool = False, backfill: bool = False):
     if rebuild:
         # Full rebuild: process every stock, overwrite all existing dates
         active = set(universe)
-    elif backfill:
-        # Backfill: use a single aws s3 ls to find stocks already on R2,
-        # skip them entirely — no per-stock download needed.
-        already_on_r2 = _list_r2_tv_codes()
-        active = set(universe) - already_on_r2
-        log.info("Backfill: %d stocks to process (%d already on R2, skipping)",
-                 len(active), len(already_on_r2))
     else:
-        # Daily incremental: only process stocks active on the most recent trading day.
-        # This avoids uploading all 2600 files on every daily run.
-        latest_ds  = max(tv_all.keys())
-        active     = set(tv_all[latest_ds].keys()) & set(universe)
-        log.info("Incremental: %d stocks active on %s", len(active), latest_ds)
+        # Both backfill and daily incremental: sync existing tv_*.json from R2
+        # in one batch call so we can merge new dates into existing history.
+        log.info("Syncing existing tv_*.json from R2 …")
+        _sync_r2_tv_files()
+
+        if backfill:
+            # Backfill: process all stocks in universe
+            active = set(universe)
+            log.info("Backfill: %d stocks to process", len(active))
+        else:
+            # Daily incremental: only process stocks active on the most recent
+            # trading day — avoids uploading unchanged stocks every day.
+            latest_ds = max(tv_all.keys())
+            active    = set(tv_all[latest_ds].keys()) & set(universe)
+            log.info("Incremental: %d stocks active on %s", len(active), latest_ds)
 
     total   = len(active)
     updated = skipped = 0
