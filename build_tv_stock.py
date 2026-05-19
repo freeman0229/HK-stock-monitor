@@ -28,6 +28,7 @@ Rules:
 
 Usage:
   python build_tv_stock.py              # incremental update (normal daily use)
+  python build_tv_stock.py --backfill   # backfill all stocks, never overwrites (initial R2 population)
   python build_tv_stock.py --rebuild    # full rebuild, overwrites everything
   python build_tv_stock.py --code 00700 # single stock
 """
@@ -145,20 +146,34 @@ def upload_to_r2(code5: str) -> bool:
         return False
 
 
-
 # ── Per-stock build ───────────────────────────────────────────────────────────
 
+def _list_r2_tv_codes() -> set:
+    """List all tv_{code5}.json files already on R2 via a single aws s3 ls call."""
+    if not R2_ENDPOINT:
+        return set()
+    try:
+        cmd = ["aws", "s3", "ls", f"{R2_BUCKET}/",
+               "--endpoint-url", R2_ENDPOINT]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        codes = re.findall(r"tv_(\d{5})\.json", r.stdout)
+        log.info("R2 existing tv files: %d", len(codes))
+        return set(codes)
+    except Exception as e:
+        log.warning("Could not list R2 tv files: %s -- will process all", e)
+        return set()
+
+
 def build_stock(code5: str, tv_all: dict, sh_all: dict,
-                rebuild: bool = False) -> int:
+                rebuild: bool = False, backfill: bool = False) -> int:
     """
     Build/update tv_{code5}.json for one stock.
     Returns number of new days added.
     """
-    # In incremental mode: load from disk only (no R2 download per-stock).
-    # The runner is ephemeral — tv_{code5}.json only exists locally if written
-    # earlier in the same run (e.g. --code single-stock reuse).
-    # For the daily run we write every stock fresh from tv_all + sh_all,
-    # uploading only stocks that have data in today's turnover file.
+    # Load existing data:
+    # - rebuild: start fresh, overwrite everything
+    # - backfill: download from R2 first to skip already-uploaded dates
+    # - incremental (daily): start fresh (ephemeral runner, only today's dates added)
     path = tv_path(code5)
     if rebuild:
         existing = {}
@@ -168,8 +183,13 @@ def build_stock(code5: str, tv_all: dict, sh_all: dict,
                 existing = json.load(f).get("by_date", {})
         except Exception:
             existing = {}
+    elif backfill:
+        # In backfill mode, existing R2 files are pre-screened in run() via a
+        # single aws s3 ls call — stocks already on R2 are skipped before
+        # build_stock() is called. So existing={} here is correct.
+        existing = {}
     else:
-        existing = {}  # ephemeral runner — no prior local file, start fresh
+        existing = {}  # daily incremental — ephemeral runner, start fresh
 
     added = 0
     merged = dict(existing)  # copy — we'll add new dates only
@@ -233,7 +253,7 @@ def build_stock(code5: str, tv_all: dict, sh_all: dict,
 
 # ── Main runner ───────────────────────────────────────────────────────────────
 
-def run(universe: list, rebuild: bool = False):
+def run(universe: list, rebuild: bool = False, backfill: bool = False):
     log.info("Loading source files …")
     tv_all = load_all_turnover()
     sh_all = load_all_short()
@@ -243,10 +263,17 @@ def run(universe: list, rebuild: bool = False):
         return
 
     if rebuild:
-        # Full rebuild: process every stock in universe
+        # Full rebuild: process every stock, overwrite all existing dates
         active = set(universe)
+    elif backfill:
+        # Backfill: use a single aws s3 ls to find stocks already on R2,
+        # skip them entirely — no per-stock download needed.
+        already_on_r2 = _list_r2_tv_codes()
+        active = set(universe) - already_on_r2
+        log.info("Backfill: %d stocks to process (%d already on R2, skipping)",
+                 len(active), len(already_on_r2))
     else:
-        # Incremental: only process stocks that appear in the most recent trading day.
+        # Daily incremental: only process stocks active on the most recent trading day.
         # This avoids uploading all 2600 files on every daily run.
         latest_ds  = max(tv_all.keys())
         active     = set(tv_all[latest_ds].keys()) & set(universe)
@@ -256,7 +283,7 @@ def run(universe: list, rebuild: bool = False):
     updated = skipped = 0
 
     for i, code5 in enumerate(sorted(active), 1):
-        added = build_stock(code5, tv_all, sh_all, rebuild=rebuild)
+        added = build_stock(code5, tv_all, sh_all, rebuild=rebuild, backfill=backfill)
         if added > 0:
             log.info("[%d/%d] %s — +%d days", i, total, code5, added)
             updated += 1
@@ -283,6 +310,8 @@ def main():
     )
     ap.add_argument("--rebuild", action="store_true",
                     help="Full rebuild — overwrites all existing dates")
+    ap.add_argument("--backfill", action="store_true",
+                    help="Backfill all stocks without overwriting — for initial R2 population")
     ap.add_argument("--code", type=str, default=None,
                     help="Process a single stock (e.g. --code 00700)")
     args = ap.parse_args()
@@ -291,12 +320,12 @@ def main():
         code5   = normalize_code(args.code)
         tv_all  = load_all_turnover()
         sh_all  = load_all_short()
-        added   = build_stock(code5, tv_all, sh_all, rebuild=args.rebuild)
+        added   = build_stock(code5, tv_all, sh_all, rebuild=args.rebuild, backfill=args.backfill)
         log.info("%s — %d days added", code5, added)
     else:
         universe = sorted(get_universe_codes())
         log.info("Universe: %d stocks | rebuild=%s", len(universe), args.rebuild)
-        run(universe, rebuild=args.rebuild)
+        run(universe, rebuild=args.rebuild, backfill=args.backfill)
 
 
 if __name__ == "__main__":

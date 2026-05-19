@@ -1028,7 +1028,7 @@ jobs:
   tv-stock-build:
     name: TV+Short per-stock full rebuild
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     concurrency:
       group: tv-stock-build
       cancel-in-progress: false
@@ -1055,10 +1055,45 @@ jobs:
           aws s3 cp s3://hk-stock-monitor/turnover_2026.json turnover_2026.json \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
 
-      - name: Full rebuild all tv_{code5}.json → R2
+      - name: Build all tv_{code5}.json → R2 (backfill with verify+retry)
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION   : auto
           R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
-        run: python build_tv_stock.py --rebuild
+        run: |
+          MAX_RETRIES=5
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            echo "=== Attempt $attempt / $MAX_RETRIES ==="
+            python build_tv_stock.py --backfill
+
+            echo "=== Verifying completeness ==="
+            MISSING=$(python3 - <<'PYEOF'
+          import subprocess, re, os
+          from ccass_universe import get_universe_codes
+          universe = set(get_universe_codes())
+          endpoint = os.environ["R2_ENDPOINT_URL"]
+          r = subprocess.run(
+              ["aws", "s3", "ls", "s3://hk-stock-monitor/",
+               "--endpoint-url", endpoint],
+              capture_output=True, text=True, timeout=60)
+          on_r2 = set(re.findall(r"tv_(\d{5})\.json", r.stdout))
+          missing = universe - on_r2
+          print(f"Universe={len(universe)} OnR2={len(on_r2)} Missing={len(missing)}")
+          if missing:
+              print("MISSING:" + ",".join(sorted(missing)[:50]))
+              exit(1)
+          else:
+              print("ALL_COMPLETE")
+              exit(0)
+          PYEOF
+            )
+            echo "$MISSING"
+            if echo "$MISSING" | grep -q "ALL_COMPLETE"; then
+              echo "All stocks verified on R2"
+              exit 0
+            fi
+            echo "Some stocks missing — retrying..."
+          done
+          echo "WARNING: some stocks still missing after $MAX_RETRIES attempts"
+          exit 1
