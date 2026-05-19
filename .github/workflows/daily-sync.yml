@@ -144,17 +144,6 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python main.py
 
-      - name: Build per-stock TV+Short files → upload to R2
-        env:
-          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION   : auto
-          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
-        run: python build_tv_stock.py
-        # Reads all local turnover_{YYYY}.json + short_{YYYY}.json
-        # Merges per stock per day → tv_{code5}.json → uploads to R2
-        # Incremental: never overwrites existing dates
-
       - name: Upload turnover_2026.json to R2
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -181,6 +170,18 @@ jobs:
           # sc_top10_20*.json and ccass_20*.json committed by early-fetch at 19:00
           git diff --staged --quiet || \
             (git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')" && git push)
+
+      - name: Build per-stock TV+Short files → upload to R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: python build_tv_stock.py
+        # Runs AFTER commit — so timeout here never blocks data.json update
+        # Reads all local turnover_{YYYY}.json + short_{YYYY}.json
+        # Merges per stock per day → tv_{code5}.json → uploads to R2
+        # Incremental: never overwrites existing dates
 
   # ── CCASS full build (manual) ────────────────────────────────────────────────
   ccass-build:
