@@ -1126,17 +1126,31 @@ jobs:
 
             echo "=== Verifying completeness ==="
             MISSING=$(python3 - <<'PYEOF'
-          import subprocess, re, os, json
+          import subprocess, re, os, json, glob
           from ccass_universe import get_universe_codes
+          # Determine which universe stocks actually appear in local turnover data
+          stocks_with_data = set()
+          for fname in glob.glob("turnover_*.json"):
+              try:
+                  with open(fname) as f:
+                      tv = json.load(f)
+                  for ds, stocks in tv.get("by_date", {}).items():
+                      stocks_with_data.update(stocks.keys())
+              except Exception:
+                  pass
           universe = set(get_universe_codes())
+          # Only expect R2 files for stocks that appear in turnover data
+          expected = universe & stocks_with_data
           endpoint = os.environ["R2_ENDPOINT_URL"]
           r = subprocess.run(
               ["aws", "s3", "ls", "s3://hk-stock-monitor/",
                "--endpoint-url", endpoint],
               capture_output=True, text=True, timeout=60)
           on_r2 = set(re.findall(r"tv_(\d{5})\.json", r.stdout))
-          missing = universe - on_r2
-          # Also flag stocks on R2 that have no 2025 data (partial backfill)
+          # Missing = expected on R2 but absent
+          missing = expected - on_r2
+          # Incomplete = on R2 but local file still present and shows no pre-2026 data
+          # (local files are deleted after upload so this is best-effort)
           incomplete = set()
           for code5 in on_r2 & universe:
               path = f"tv_{code5}.json"
@@ -1145,12 +1159,13 @@ jobs:
                       with open(path) as f:
                           data = json.load(f)
                       dates = list(data.get("by_date", {}).keys())
-                      if dates and min(dates) >= "2026-01-01":
+                      if dates and min(dates) >= "2026-01-01" and code5 in stocks_with_data:
                           incomplete.add(code5)
                   except Exception:
                       pass
           total_missing = missing | incomplete
-          print(f"Universe={len(universe)} OnR2={len(on_r2)} Missing={len(missing)} Incomplete={len(incomplete)}")
+          no_data = universe - stocks_with_data
+          print(f"Universe={len(universe)} WithData={len(expected)} OnR2={len(on_r2)} Missing={len(missing)} Incomplete={len(incomplete)} NoTurnoverData={len(no_data)}")
           if total_missing:
               print("MISSING:" + ",".join(sorted(total_missing)[:50]))
               exit(1)
