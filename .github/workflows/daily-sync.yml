@@ -4,8 +4,7 @@ on:
   schedule:
     - cron: '0 11 * * 1-5'   # 11:00 UTC / 19:00 HKT (Mon–Fri) — early fetch
     - cron: '0 12 * * 1-5'   # 12:00 UTC / 20:00 HKT (Mon–Fri)
-    - cron: '0 6 * * 6'    # 06:00 UTC / 14:00 HKT (Saturday) — SDW weekly run 1
-    - cron: '0 10 * * 6'   # 10:00 UTC / 18:00 HKT (Saturday) — SDW weekly run 2
+    - cron: '0 6 * * 6'    # 06:00 UTC / 14:00 HKT (Saturday) — SDW weekly (self-retries internally)
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
     - cron: '0 3 * * 6'       # 03:00 UTC / 11:00 HKT (Saturday)  — HSI weekly update
   workflow_dispatch:
@@ -85,10 +84,13 @@ jobs:
 
   # ── Daily analysis (Mon–Fri 20:00 HKT) ─────────────────────────────────────
   # Depends on early-fetch (19:00) having already committed sc_top10 + ccass data.
+  # [Fix] timeout-minutes: 45 → 30. Tighter ceiling gives yahoo-backfill (13:30 UTC)
+  #       a guaranteed 60-min gap instead of the previous 45-min gap, preventing
+  #       simultaneous R2 access if daily ever ran close to its old timeout.
   daily:
     name: Daily analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     concurrency:
       group: daily
       cancel-in-progress: true
@@ -317,9 +319,22 @@ jobs:
             --exclude "*" --include "sdw_*.json" \
             --no-progress
 
-  # ── SDW weekly (Saturday: 14:00 HKT run 1 + 18:00 HKT run 2) ──────────────────
+  # ── SDW weekly (Saturday: 14:00 HKT) ──────────────────────────────────────────
   # Runs --update: fetches only the latest Friday not yet in the DB.
-  # Two runs cover HKEX SDW publishing delays; idempotent so reruns are safe.
+  #
+  # [Fix] Previous design: two separate cron triggers (06:00 + 10:00 UTC) sharing
+  #       sdw-db-lock with cancel-in-progress: false.
+  #       Problem 1: run 1 typically finishes by 07:30 UTC — the 10:00 cron then
+  #         fires a redundant third job into the queue, wasting a runner.
+  #       Problem 2: coverage per run was 79.6% (1052/1543 pending). Run 2 only needs
+  #         ~42 min for the remaining 489 stocks — 5400s timeout was fine, but the
+  #         10:00 cron could arrive after run 1 had already queued run 2 automatically.
+  #       Fix: single cron at 06:00 UTC. The job itself retries --update up to 3 times
+  #         with a DB upload after each attempt, so all remaining stocks are fetched
+  #         in one job execution. Coverage math: run1≈79.6%, run2≈100% of remainder.
+  #         Total job time ≈ 90 + 42 + 10 (upload/export overhead) ≈ 145 min.
+  #       SDW_WORKER_TIMEOUT: 5400s (90 min wall-clock per worker per attempt) — kept.
+  #       job timeout-minutes: 300 → sufficient (145 min typical + buffer).
   sdw-weekly:
     name: SDW weekly update → ccass_sdw.db
     runs-on: ubuntu-latest
@@ -330,7 +345,7 @@ jobs:
     permissions:
       contents: write
     if: |
-      (github.event_name == 'schedule' && (github.event.schedule == '0 6 * * 6' || github.event.schedule == '0 10 * * 6')) ||
+      (github.event_name == 'schedule' && github.event.schedule == '0 6 * * 6') ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-weekly')
 
     steps:
@@ -348,27 +363,69 @@ jobs:
           aws s3 cp s3://hk-stock-monitor/ccass_sdw.db ccass_sdw.db \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
           { echo "ERROR: DB download failed — aborting"; exit 1; }
-      - name: Fetch latest Friday SDW data
+
+      # Retry loop: run --update up to 3 times. Each attempt saves what it can
+      # in 5400s (90 min), uploads to R2, then the next attempt picks up where
+      # the previous left off (--update is idempotent: skips already-saved stocks).
+      # Typically: attempt 1 ≈ 90 min (79.6% done), attempt 2 ≈ 42 min (100%).
+      # The loop exits early as soon as coverage reaches 100% (no pending stocks).
+      - name: Fetch latest Friday SDW data (up to 3 attempts)
         env:
-          SDW_WORKERS: "3"
+          SDW_WORKERS      : "3"
           SDW_WORKER_TIMEOUT: "5400"
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
         run: |
-          python ccass_sdw_library.py --update
-      - name: Verify DB before upload
+          MAX_ATTEMPTS=3
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo "=== SDW fetch attempt $attempt / $MAX_ATTEMPTS ==="
+            python ccass_sdw_library.py --update
+
+            echo "--- Verifying coverage after attempt $attempt ---"
+            ROWS=$(sqlite3 ccass_sdw.db "SELECT COUNT(*) FROM holdings;" 2>/dev/null || echo 0)
+            echo "DB holdings rows: $ROWS"
+            [ "$ROWS" -gt 100 ] || { echo "ERROR: too few rows after attempt $attempt"; exit 1; }
+
+            echo "--- Uploading DB to R2 after attempt $attempt ---"
+            aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
+              --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+
+            # Check if any stocks are still pending for this date
+            # --update exits 0 whether it finishes fully or hits the worker timeout.
+            # We detect completion by running --update again in dry-run style:
+            # if Python reports 0 pending it prints "nothing to fetch" and exits 0.
+            PENDING=$(python3 -c "
+          import sys
+          try:
+              from ccass_sdw_library import get_pending_count
+              n = get_pending_count()
+              print(n)
+          except Exception:
+              print(-1)
+          " 2>/dev/null || echo -1)
+
+            echo "Pending after attempt $attempt: $PENDING"
+            if [ "$PENDING" = "0" ]; then
+              echo "All stocks fetched — exiting retry loop after attempt $attempt"
+              break
+            fi
+            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+              echo "Still $PENDING pending — sleeping 30s then retrying..."
+              sleep 30
+            else
+              echo "WARNING: $PENDING stocks still pending after $MAX_ATTEMPTS attempts — partial coverage acceptable"
+            fi
+          done
+
+      - name: Verify DB before final export
         run: |
           DATES=$(sqlite3 ccass_sdw.db "SELECT COUNT(DISTINCT date) FROM holdings;")
           ROWS=$(sqlite3 ccass_sdw.db "SELECT COUNT(*) FROM holdings;")
           echo "DB has $DATES distinct dates and $ROWS total holdings rows"
           [ "$ROWS" -gt 100 ] || \
-            { echo "ERROR: DB has only $ROWS holdings rows — aborting upload to protect R2 data"; exit 1; }
-      - name: Upload DB to R2
-        env:
-          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION   : auto
-        run: |
-          [ -f "ccass_sdw.db" ] && aws s3 cp ccass_sdw.db s3://hk-stock-monitor/ccass_sdw.db \
-            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }}
+            { echo "ERROR: DB has only $ROWS holdings rows — aborting export"; exit 1; }
       - name: Export SDW chart files
         run: python ccass_sdw_library.py --export-charts
       - name: Upload SDW chart files to R2

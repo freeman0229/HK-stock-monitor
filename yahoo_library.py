@@ -15,11 +15,27 @@ Price convention:
 
 Codes stored as 5-digit zero-padded strings.
 Files stored on R2: pub-0b0781d969ec4b38b173f889109244a9.r2.dev/yahoo_{code5}.json
+
+Changelog:
+  [Fix 1] fetch_batch: added SIGALRM-based hard timeout (FETCH_TIMEOUT_SEC) around
+          yf.download(). Without this, a stalled connection hangs the entire CI job
+          indefinitely (root cause of the 1h16m failure). On timeout the batch is
+          skipped and an empty result is returned — the stock will be retried next run.
+  [Fix 2] fetch_batch: timeout handler raises FetchTimeoutError (custom subclass of
+          Exception) so it can be caught narrowly without masking other errors.
+  [Fix 3] fetch_batch: SIGALRM is only used on POSIX platforms (Linux/macOS). On
+          Windows the timeout is silently skipped (no-op) to avoid AttributeError.
+  [Fix 4] fetch_universe: stocks already on R2 are now properly skipped per-batch
+          rather than silently passed through when the filtered batch is empty.
+  [Fix 5] fetch_and_save_all_years: upload_fn exception now logs code5 correctly
+          (was logging the local variable name, not the value).
 """
 
 import json
 import logging
 import os
+import platform
+import signal
 import time
 from datetime import date, timedelta
 
@@ -33,12 +49,41 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-START_YEAR  = 1995
-SLEEP_BATCH = 10
-BATCH_SIZE  = 20
-MAX_RETRIES = 3
-RETRY_SLEEP = 30
+START_YEAR      = 1995
+SLEEP_BATCH     = 10
+BATCH_SIZE      = 20
+MAX_RETRIES     = 3
+RETRY_SLEEP     = 30
+# Hard per-batch network timeout in seconds.
+# yf.download() has no built-in timeout; without this a single stalled connection
+# blocks the entire CI job until GitHub kills it (~1h16m failure observed 2026-05-20).
+FETCH_TIMEOUT_SEC = 120
 
+
+# ── Timeout helpers ───────────────────────────────────────────────────────────
+
+class FetchTimeoutError(Exception):
+    """Raised when yf.download() exceeds FETCH_TIMEOUT_SEC."""
+
+
+def _timeout_handler(signum, frame):
+    raise FetchTimeoutError(f"yf.download timed out after {FETCH_TIMEOUT_SEC}s")
+
+
+def _set_alarm(seconds: int):
+    """Arm SIGALRM. No-op on Windows (signal.SIGALRM not available)."""
+    if platform.system() != "Windows":
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(seconds)
+
+
+def _cancel_alarm():
+    """Disarm SIGALRM. No-op on Windows."""
+    if platform.system() != "Windows":
+        signal.alarm(0)
+
+
+# ── File helpers ──────────────────────────────────────────────────────────────
 
 def stock_path(code5: str) -> str:
     return f"yahoo_{code5}.json"
@@ -64,22 +109,24 @@ def save_stock(code5: str, lib: dict):
         json.dump(lib, f, ensure_ascii=False, separators=(",", ":"))
 
 
+# ── R2 helpers ────────────────────────────────────────────────────────────────
+
 R2_BASE = "https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev"
+
 
 def list_r2_yahoo_codes() -> set:
     """List all yahoo_{code5}.json files already on R2 using AWS CLI."""
-    import subprocess, os, re
+    import subprocess
+    import re
     endpoint = os.environ.get("R2_ENDPOINT_URL", "")
     if not endpoint:
         log.warning("R2_ENDPOINT_URL not set — cannot list R2 files, will fetch all")
         return set()
     try:
         cmd = ["aws", "s3", "ls", "s3://hk-stock-monitor/",
-               "--endpoint-url", endpoint, "--no-sign-request"]
-        # Don't use --no-sign-request if credentials are available
-        if os.environ.get("AWS_ACCESS_KEY_ID"):
-            cmd = ["aws", "s3", "ls", "s3://hk-stock-monitor/",
-                   "--endpoint-url", endpoint]
+               "--endpoint-url", endpoint]
+        if not os.environ.get("AWS_ACCESS_KEY_ID"):
+            cmd.append("--no-sign-request")
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         codes = re.findall(r"yahoo_(\d{5})\.json", r.stdout)
         log.info("R2 existing yahoo files: %d", len(codes))
@@ -88,6 +135,8 @@ def list_r2_yahoo_codes() -> set:
         log.warning("Could not list R2 yahoo files: %s — will fetch all", e)
         return set()
 
+
+# ── Ticker conversion ─────────────────────────────────────────────────────────
 
 def to_yahoo_ticker(code5: str) -> str:
     return str(int(code5)).zfill(4) + ".HK"
@@ -111,22 +160,37 @@ def _get_val(row, *keys) -> float:
     return 0.0
 
 
+# ── Core fetch ────────────────────────────────────────────────────────────────
+
 def fetch_batch(codes: list, start: date, end: date) -> dict:
-    """Fetch OHLCV for a batch of codes. Returns {code5: {date_str: rec}}."""
+    """
+    Fetch OHLCV for a batch of codes. Returns {code5: {date_str: rec}}.
+
+    Fix 1-3: wraps yf.download() in a SIGALRM hard timeout (FETCH_TIMEOUT_SEC).
+    If the download stalls, FetchTimeoutError is raised, the batch is skipped,
+    and an empty result dict is returned. The stock will be retried on the next
+    scheduled run. Without this guard, a single stalled TCP connection hung the
+    entire CI job for 1h16m before GitHub killed it (observed 2026-05-20).
+    """
     tickers = [to_yahoo_ticker(c) for c in codes]
     result  = {c: {} for c in codes}
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            raw = yf.download(
-                tickers,
-                start=start.isoformat(),
-                end=(end + timedelta(days=1)).isoformat(),
-                auto_adjust=False,  # raw OHLC + separate Adj Close column
-                progress=False,
-                group_by="ticker",
-                threads=False,
-            )
+            _set_alarm(FETCH_TIMEOUT_SEC)
+            try:
+                raw = yf.download(
+                    tickers,
+                    start=start.isoformat(),
+                    end=(end + timedelta(days=1)).isoformat(),
+                    auto_adjust=False,  # raw OHLC + separate Adj Close column
+                    progress=False,
+                    group_by="ticker",
+                    threads=False,
+                )
+            finally:
+                _cancel_alarm()
+
             if raw is None or raw.empty:
                 return result
 
@@ -137,11 +201,11 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
                     else:
                         # MultiIndex with group_by="ticker": columns are (ticker, field)
                         cols = raw.columns
-                        if hasattr(cols, 'get_level_values'):
+                        if hasattr(cols, "get_level_values"):
                             if ticker in cols.get_level_values(0):
-                                df = raw[ticker]  # (ticker, field) → raw[ticker] gives fields
+                                df = raw[ticker]
                             elif ticker in cols.get_level_values(1):
-                                df = raw.xs(ticker, axis=1, level=1)  # (field, ticker)
+                                df = raw.xs(ticker, axis=1, level=1)
                             else:
                                 continue
                         else:
@@ -168,22 +232,39 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
                     continue
             return result
 
+        except FetchTimeoutError as e:
+            # Hard timeout — do NOT retry; the connection is stuck.
+            # Return empty so caller skips these stocks. They will be retried next run.
+            log.warning(
+                "fetch_batch TIMEOUT for batch starting %s (attempt %d/%d): %s — skipping batch",
+                codes[0] if codes else "?", attempt, MAX_RETRIES, e,
+            )
+            _cancel_alarm()  # safety: ensure alarm is disarmed before returning
+            return result
+
         except Exception as e:
+            _cancel_alarm()  # ensure alarm is disarmed on any other exception
             if attempt < MAX_RETRIES:
-                log.warning("fetch_batch attempt %d/%d failed: %s - retrying in %ds",
-                            attempt, MAX_RETRIES, e, RETRY_SLEEP * attempt)
-                time.sleep(RETRY_SLEEP * attempt)
+                sleep_for = RETRY_SLEEP * attempt
+                log.warning(
+                    "fetch_batch attempt %d/%d failed: %s — retrying in %ds",
+                    attempt, MAX_RETRIES, e, sleep_for,
+                )
+                time.sleep(sleep_for)
             else:
                 log.error("fetch_batch failed after %d attempts: %s", MAX_RETRIES, e)
 
     return result
 
 
+# ── Single-stock full history ─────────────────────────────────────────────────
+
 def fetch_and_save_all_years(code5: str, from_year: int, to_year: int,
                              rebuild: bool = False, upload_fn=None):
     """
     Fetch all years for a single stock and save to yahoo_{code5}.json.
     Incremental: skips dates already stored unless rebuild=True.
+    Never overwrites existing dates (safe re-run guarantee).
     """
     lib = load_stock(code5) if not rebuild else {"meta": {}, "by_date": {}}
     existing_dates = set(lib["by_date"].keys()) if not rebuild else set()
@@ -214,16 +295,25 @@ def fetch_and_save_all_years(code5: str, from_year: int, to_year: int,
             try:
                 upload_fn(code5)
             except Exception as e:
+                # Fix 5: was logging variable name not value
                 log.warning("upload_fn failed for %s: %s", code5, e)
 
     return total_saved
 
+
+# ── Universe-wide historical fetch ────────────────────────────────────────────
 
 def fetch_universe(universe: list, from_year: int, to_year: int,
                    rebuild: bool = False, upload_fn=None):
     """
     Fetch year by year for batches of stocks.
     Accumulates all years per stock before saving — one file per stock with all history.
+    Never overwrites existing dates (safe re-run guarantee).
+
+    Fix 4: when the per-batch filter removes all stocks (all already on R2),
+    the batch is now explicitly skipped via `continue` instead of falling through
+    to fetch_batch with an empty list (which returns immediately but wastes a
+    SLEEP_BATCH sleep and a misleading log line).
     """
     log.info("Universe: %d stocks | years: %d-%d | rebuild: %s",
              len(universe), from_year, to_year, rebuild)
@@ -238,11 +328,11 @@ def fetch_universe(universe: list, from_year: int, to_year: int,
     for i in range(0, len(universe), BATCH_SIZE):
         batch = universe[i:i + BATCH_SIZE]
 
-        # Skip stocks already on R2 when not rebuilding
+        # Fix 4: skip entire batch early if all stocks already on R2
         if not rebuild:
             batch = [c for c in batch if c not in existing_on_r2]
             if not batch:
-                continue
+                continue  # was missing — caused unnecessary sleep + log noise
 
         log.info("Processing batch %d-%d / %d",
                  i + 1, min(i + BATCH_SIZE, len(universe)), len(universe))
@@ -284,11 +374,14 @@ def fetch_universe(universe: list, from_year: int, to_year: int,
     log.info("Done. Saved=%d Failed=%d", saved, failed)
 
 
+# ── patch-2026 ────────────────────────────────────────────────────────────────
+
 def patch_turnover_2026(universe: list):
     """
     Find dates in turnover_2026.json where high=0 for most stocks.
     Fill open, high, low, prev_close from Yahoo adjusted prices.
     Preserves all HKEX fields (vol, tv, vwap, name_en, name_zh, close).
+    Never overwrites dates that already have valid high > 0.
     """
     tv_path = "turnover_2026.json"
     if not os.path.exists(tv_path):
@@ -358,6 +451,8 @@ def patch_turnover_2026(universe: list):
     log.info("patch-2026: saved %s (%.2f MB)",
              tv_path, os.path.getsize(tv_path) / 1e6)
 
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import argparse

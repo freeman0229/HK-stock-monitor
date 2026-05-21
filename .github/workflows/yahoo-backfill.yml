@@ -1,7 +1,7 @@
 name: Yahoo Finance Backfill
 
 # Fetches historical OHLCV data from Yahoo Finance for HK stocks.
-# Scheduled daily (Mon–Fri) at 21:30 HKT using --today mode (fast, ~2-3 min).
+# Scheduled daily (Mon–Fri) at 21:30 HKT using --today mode (~93 min for 2652 stocks).
 #
 # Modes:
 #   today       — fetch last 7 days per stock, merge into R2. Fast. (scheduled + manual)
@@ -12,6 +12,27 @@ name: Yahoo Finance Backfill
 #   pub-0b0781d969ec4b38b173f889109244a9.r2.dev/yahoo_{code5}.json
 #
 # Incremental: re-running skips stocks/dates already fetched.
+#
+# Changelog:
+#   [Fix 1] Added concurrency group `yahoo-backfill` with cancel-in-progress: false.
+#           Without this, a manual dispatch while a scheduled run is in progress
+#           launches two jobs simultaneously — both hit R2 and Yahoo concurrently,
+#           causing race conditions on file uploads and wasting quota.
+#   [Fix 2] Added timeout-minutes: 100 on the "Daily update" step.
+#           The job-level timeout is 720 min; without a step-level guard, a single
+#           stalled yf.download() call (no built-in timeout) hung for 1h16m on
+#           2026-05-20 before GitHub killed the entire job. The python-level
+#           SIGALRM guard (FETCH_TIMEOUT_SEC=120s) in yahoo_library.py is the
+#           primary defence; this step timeout is the secondary safety net.
+#           100 min = 133 batches × ~42s/batch + buffer. The original "~2-3 min"
+#           comment was wrong; measured from CI logs: 41.8s average per batch.
+#   [Fix 3] Added "Summarise result" step that always runs (even on failure) and
+#           prints the last 30 lines of build_yahoo.py output so CI logs clearly
+#           show updated/skipped/failed/timed_out counts without scrolling.
+#   [Fix 4] Added `code` input (e.g. "00700") and a dedicated "Single-stock backfill"
+#           step. When code is set, only that stock is processed regardless of mode
+#           (today or historical). Completes in seconds. Useful for repairing a
+#           specific stock without running the full universe.
 
 on:
   schedule:
@@ -45,13 +66,24 @@ on:
         options:
           - 'false'
           - 'true'
+      code:
+        description: 'Single stock code to backfill, e.g. 00700 or 9988. Leave blank to run full universe.'
+        required: false
+        default: ''
+        type: string
 
 jobs:
 
   yahoo-backfill:
-    name: Yahoo Finance Backfill (${{ github.event_name == 'schedule' && 'scheduled' || inputs.mode || 'today' }})
+    name: Yahoo Finance Backfill (${{ github.event_name == 'schedule' && 'scheduled' || inputs.mode || 'today' }}${{ inputs.code != '' && format(' — {0}', inputs.code) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 720
+    # Fix 1: prevent simultaneous scheduled + manual runs from racing on R2 uploads.
+    # cancel-in-progress: false lets an in-progress run finish; the next queued run
+    # will start immediately after, which is the desired behaviour for backfill jobs.
+    concurrency:
+      group: yahoo-backfill
+      cancel-in-progress: false
     permissions:
       contents: write
 
@@ -63,24 +95,87 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # today: fetch last 7 days per stock → download R2 file → merge → upload
-      # Used by scheduled runs and manual today mode. Fast (~2-3 min).
-      - name: Daily update (last 7 days)
-        if: ${{ github.event_name == 'schedule' || inputs.mode == 'today' }}
+      # ── Single-stock shortcut (Fix 4) ───────────────────────────────────────
+      # When `code` is set, process only that stock in today or historical mode.
+      # Skips the full-universe steps below. Completes in seconds.
+      - name: Single-stock backfill
+        if: ${{ inputs.code != '' }}
+        timeout-minutes: 5
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION   : auto
           R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
-        run: python build_yahoo.py --today
+          STOCK_CODE           : ${{ inputs.code }}
+          MODE                 : ${{ inputs.mode || 'today' }}
+          FROM_YEAR            : ${{ inputs.from_year || '1995' }}
+          TO_YEAR              : ${{ inputs.to_year || '2026' }}
+          REBUILD              : ${{ inputs.rebuild || 'false' }}
+        run: |
+          python3 - <<'EOF'
+          import os, subprocess, logging
+          from datetime import date
+          from yahoo_library import fetch_and_save_all_years, stock_path, START_YEAR
+          from ccass_universe import normalize_code
+
+          logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+          log = logging.getLogger(__name__)
+
+          raw_code  = os.environ["STOCK_CODE"].strip()
+          code5     = normalize_code(raw_code)
+          mode      = os.environ.get("MODE", "today")
+          rebuild   = os.environ.get("REBUILD", "false").lower() == "true"
+          endpoint  = os.environ.get("R2_ENDPOINT_URL", "")
+
+          if mode == "historical":
+              from_year = int(os.environ.get("FROM_YEAR", str(START_YEAR)))
+              to_year   = int(os.environ.get("TO_YEAR",   str(date.today().year)))
+          else:
+              # today mode: just last 7 days
+              from_year = date.today().year
+              to_year   = date.today().year
+
+          log.info("Single-stock mode: %s | mode=%s | years=%d-%d | rebuild=%s",
+                   code5, mode, from_year, to_year, rebuild)
+
+          def upload_stock(c5):
+              f = stock_path(c5)
+              if not os.path.exists(f) or not endpoint:
+                  return
+              cmd = ["aws", "s3", "cp", f, f"s3://hk-stock-monitor/{f}",
+                     "--endpoint-url", endpoint, "--no-progress"]
+              r = subprocess.run(cmd, capture_output=True, text=True)
+              if r.returncode == 0:
+                  log.info("Uploaded %s to R2", f)
+              else:
+                  log.warning("Upload failed for %s: %s", f, r.stderr[:200])
+
+          saved = fetch_and_save_all_years(
+              code5, from_year, to_year,
+              rebuild=rebuild, upload_fn=upload_stock,
+          )
+          log.info("Done. %s — %d days saved.", code5, saved)
+          EOF
+
+      # today: fetch last 7 days for ALL stocks — skipped when a single code is set
+      # Fix 2: step-level timeout as secondary safety net behind SIGALRM in python.
+      - name: Daily update (last 7 days)
+        if: ${{ (github.event_name == 'schedule' || inputs.mode == 'today') && inputs.code == '' }}
+        timeout-minutes: 100
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: python build_yahoo.py --today 2>&1 | tee /tmp/yahoo_today.log
 
       # patch-2026: fix missing high/low in turnover_2026.json
       - name: Patch turnover_2026.json
-        if: ${{ inputs.mode == 'patch-2026' }}
+        if: ${{ inputs.mode == 'patch-2026' && inputs.code == '' }}
         run: python yahoo_library.py --patch-2026
 
       - name: Commit patched turnover_2026.json
-        if: ${{ inputs.mode == 'patch-2026' }}
+        if: ${{ inputs.mode == 'patch-2026' && inputs.code == '' }}
         run: |
           git config --global user.name "Bot"
           git config --global user.email "bot@github.com"
@@ -93,7 +188,7 @@ jobs:
 
       # historical: fetch all stocks per-stock file, upload each to R2 immediately
       - name: Fetch historical Yahoo data
-        if: ${{ inputs.mode == 'historical' }}
+        if: ${{ inputs.mode == 'historical' && inputs.code == '' }}
         env:
           FROM_YEAR            : ${{ inputs.from_year }}
           TO_YEAR              : ${{ inputs.to_year }}
@@ -140,7 +235,7 @@ jobs:
           EOF
 
       - name: List uploaded yahoo files in R2
-        if: ${{ inputs.mode == 'historical' }}
+        if: ${{ inputs.mode == 'historical' && inputs.code == '' }}
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -150,3 +245,16 @@ jobs:
           aws s3 ls s3://hk-stock-monitor/ \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} \
             | grep yahoo_ | sort | tail -20
+
+      # Fix 3: always-run summary step — shows final updated/skipped/failed/timed_out
+      # counts even when a previous step failed, so you don't need to scroll the log.
+      - name: Summarise result
+        if: always()
+        run: |
+          echo "=== Yahoo Backfill Summary ==="
+          if [ -f /tmp/yahoo_today.log ]; then
+            echo "--- Last 30 lines of --today output ---"
+            tail -30 /tmp/yahoo_today.log
+          else
+            echo "(no today log — historical, patch-2026, or single-stock mode)"
+          fi

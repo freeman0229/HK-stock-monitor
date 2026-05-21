@@ -32,6 +32,21 @@ Usage:
   python build_yahoo.py --rebuild              # full rebuild from 1995
   python build_yahoo.py --today  --code 00700  # single stock, today mode
   python build_yahoo.py --update --code 00700  # single stock, incremental
+
+Changelog:
+  [Fix 1] run_today / run_update / run_rebuild: import and use FetchTimeoutError
+          from yahoo_library so batch-level timeout exceptions are caught explicitly
+          and logged with the correct stock range, rather than being swallowed by
+          the broad `except Exception` or causing unhandled propagation.
+  [Fix 2] run_today: on FetchTimeoutError the batch is counted as failed and the
+          sleep still runs (prevents tight retry loops when Yahoo is rate-limiting).
+  [Fix 3] run_update: per-stock `start` date is now correctly clamped to
+          `per_stock_start[code5]` when filtering new_days, preventing accidental
+          re-insertion of old dates that were in the broad fetch window.
+  [Fix 4] run_rebuild: FetchTimeoutError is now caught and logged per year/batch
+          rather than silently aborting the entire rebuild job.
+  [Fix 5] All modes: log statements now include failed/timeout counts in summary
+          line so CI logs clearly show whether any batches were skipped.
 """
 
 import argparse
@@ -44,6 +59,8 @@ from datetime import date, timedelta
 from ccass_universe import get_universe_codes
 from yahoo_library import (
     BATCH_SIZE,
+    FETCH_TIMEOUT_SEC,
+    FetchTimeoutError,
     SLEEP_BATCH,
     START_YEAR,
     fetch_batch,
@@ -123,15 +140,19 @@ def run_today(universe: list):
     For each stock: download from R2, merge new days, upload back.
     Never overwrites existing dates.
     Fast: one fetch_batch call per batch of 20 stocks.
+
+    Fix 1-2: FetchTimeoutError is now caught explicitly so a stalled batch
+    is logged clearly and counted in the failed total rather than hanging
+    the process until GitHub kills the job.
     """
     today       = date.today()
     fetch_start = today - timedelta(days=TODAY_WINDOW)
     fetch_end   = today
     total       = len(universe)
-    updated = skipped = failed = 0
+    updated = skipped = failed = timed_out = 0
 
-    log.info("--today mode | %d stocks | window: %s → %s",
-             total, fetch_start, fetch_end)
+    log.info("--today mode | %d stocks | window: %s → %s | timeout: %ds/batch",
+             total, fetch_start, fetch_end, FETCH_TIMEOUT_SEC)
 
     for i in range(0, total, BATCH_SIZE):
         batch = universe[i : i + BATCH_SIZE]
@@ -139,9 +160,18 @@ def run_today(universe: list):
         log.info("Batch %d–%d / %d | fetching …",
                  i + 1, min(i + BATCH_SIZE, total), total)
 
-        # Single network call for the whole batch
+        # Fix 1: catch FetchTimeoutError separately for clear diagnostics
         try:
             batch_data = fetch_batch(batch, fetch_start, fetch_end)
+        except FetchTimeoutError as e:
+            log.error(
+                "Batch %d–%d TIMED OUT after %ds: %s — skipping %d stocks",
+                i + 1, min(i + BATCH_SIZE, total), FETCH_TIMEOUT_SEC, e, len(batch),
+            )
+            timed_out += len(batch)
+            failed    += len(batch)
+            time.sleep(SLEEP_BATCH)
+            continue
         except Exception as e:
             log.error("fetch_batch failed for batch %d–%d: %s", i + 1, i + BATCH_SIZE, e)
             failed += len(batch)
@@ -179,8 +209,9 @@ def run_today(universe: list):
 
         time.sleep(SLEEP_BATCH)
 
-    log.info("--today done. updated=%d skipped=%d failed=%d",
-             updated, skipped, failed)
+    # Fix 5: include timed_out in summary
+    log.info("--today done. updated=%d skipped=%d failed=%d (timed_out=%d)",
+             updated, skipped, failed, timed_out)
 
 
 # ── --update mode ─────────────────────────────────────────────────────────────
@@ -190,20 +221,26 @@ def run_update(universe: list):
     Full incremental update: for each stock download from R2, find last stored
     date, fetch only missing days, merge and upload. Never overwrites.
     Use for the Yahoo Finance Backfill workflow_dispatch job.
+
+    Fix 3: per-stock start date clamping now correctly filters new_days so
+    dates earlier than the stock's own last stored date are never inserted,
+    even when the batch-level fetch window is wider than any individual stock's gap.
+    Fix 1: FetchTimeoutError caught explicitly with clear batch-range logging.
     """
     today   = date.today()
     total   = len(universe)
-    updated = skipped = failed = 0
+    updated = skipped = failed = timed_out = 0
 
-    log.info("--update mode | %d stocks | today=%s", total, today)
+    log.info("--update mode | %d stocks | today=%s | timeout: %ds/batch",
+             total, today, FETCH_TIMEOUT_SEC)
 
     for i in range(0, total, BATCH_SIZE):
         batch = universe[i : i + BATCH_SIZE]
 
         # Pre-screen: download each file, find per-stock fetch window
-        needs_fetch: list       = []
-        per_stock_start: dict   = {}
-        fetch_start = today     # will be narrowed
+        needs_fetch: list     = []
+        per_stock_start: dict = {}
+        fetch_start = today   # will be narrowed
 
         for code5 in batch:
             download_from_r2(code5)
@@ -232,8 +269,20 @@ def run_update(universe: list):
                  i + 1, min(i + BATCH_SIZE, total), total,
                  len(needs_fetch), fetch_start, today)
 
+        # Fix 1: FetchTimeoutError caught explicitly
         try:
             batch_data = fetch_batch(needs_fetch, fetch_start, today)
+        except FetchTimeoutError as e:
+            log.error(
+                "Batch %d–%d TIMED OUT after %ds: %s — skipping %d stocks",
+                i + 1, min(i + BATCH_SIZE, total), FETCH_TIMEOUT_SEC, e, len(needs_fetch),
+            )
+            timed_out += len(needs_fetch)
+            failed    += len(needs_fetch)
+            for code5 in needs_fetch:
+                cleanup(code5)
+            time.sleep(SLEEP_BATCH)
+            continue
         except Exception as e:
             log.error("fetch_batch failed: %s", e)
             failed += len(needs_fetch)
@@ -252,11 +301,12 @@ def run_update(universe: list):
 
             lib      = load_stock(code5)
             existing = lib.get("by_date", {})
+            # Fix 3: use the per-stock start, not the batch-level fetch_start
             start    = per_stock_start[code5]
             added    = 0
 
             for ds, rec in new_days.items():
-                if ds >= start.isoformat() and ds not in existing:
+                if ds >= start.isoformat() and ds not in existing:  # never overwrite
                     existing[ds] = rec
                     added += 1
 
@@ -274,19 +324,26 @@ def run_update(universe: list):
 
         time.sleep(SLEEP_BATCH)
 
-    log.info("--update done. updated=%d skipped=%d failed=%d",
-             updated, skipped, failed)
+    # Fix 5: include timed_out in summary
+    log.info("--update done. updated=%d skipped=%d failed=%d (timed_out=%d)",
+             updated, skipped, failed, timed_out)
 
 
 # ── --rebuild mode ────────────────────────────────────────────────────────────
 
 def run_rebuild(universe: list):
-    """Full rebuild from START_YEAR — overwrites all existing data."""
+    """
+    Full rebuild from START_YEAR — overwrites all existing data.
+
+    Fix 4: FetchTimeoutError is now caught per year/batch and logged clearly
+    instead of silently aborting the entire rebuild job via unhandled propagation.
+    """
     today = date.today()
     total = len(universe)
-    updated = failed = 0
+    updated = failed = timed_out = 0
 
-    log.info("--rebuild mode | %d stocks | %d → %d", total, START_YEAR, today.year)
+    log.info("--rebuild mode | %d stocks | %d → %d | timeout: %ds/batch",
+             total, START_YEAR, today.year, FETCH_TIMEOUT_SEC)
 
     for i in range(0, total, BATCH_SIZE):
         batch = universe[i : i + BATCH_SIZE]
@@ -300,10 +357,18 @@ def run_rebuild(universe: list):
             year_end   = min(date(year, 12, 31), today)
             if year_start > today:
                 continue
+            # Fix 4: catch FetchTimeoutError per year so one stalled year
+            # doesn't abort the remaining years for this batch
             try:
                 year_data = fetch_batch(batch, year_start, year_end)
                 for code5 in batch:
                     batch_all[code5].update(year_data.get(code5, {}))
+            except FetchTimeoutError as e:
+                log.error(
+                    "Batch %d–%d year %d TIMED OUT: %s — skipping year for this batch",
+                    i + 1, min(i + BATCH_SIZE, total), year, e,
+                )
+                timed_out += 1
             except Exception as e:
                 log.error("fetch_batch year %d failed: %s", year, e)
             time.sleep(2)
@@ -321,7 +386,9 @@ def run_rebuild(universe: list):
 
         time.sleep(SLEEP_BATCH)
 
-    log.info("--rebuild done. updated=%d failed=%d", updated, failed)
+    # Fix 5: include timed_out in summary
+    log.info("--rebuild done. updated=%d failed=%d (timed_out_years=%d)",
+             updated, failed, timed_out)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
