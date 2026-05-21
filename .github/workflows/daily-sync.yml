@@ -1228,12 +1228,13 @@ jobs:
 
       - name: Verify
         run: |
-          python3 -c "
+          python3 - <<'PYEOF'
           import json
           d = json.load(open('turnover_2025.json'))
           dates = sorted(d['by_date'].keys())
           codes_first = list(d['by_date'][dates[0]].keys()) if dates else []
           print(f'Dates: {len(dates)} ({dates[0] if dates else "none"} to {dates[-1] if dates else "none"})')
           print(f'Stocks on first date: {len(codes_first)}')
-          print(f'02800 present: {"02800" in d["by_date"].get(dates[0], {})}')
-          "
+          code = '02800'
+          print(f'{code} present: {code in d["by_date"].get(dates[0], {})}')
+          PYEOF
