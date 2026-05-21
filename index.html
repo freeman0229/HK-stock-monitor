@@ -165,6 +165,55 @@ FIX LOG
   ccass_universe stocks and measures actual institutional concentration change.
   Thresholds unchanged: 異常亢奮 >= 0.5pp, 大戶增持 0.2-0.5pp.
   Location: classify_insight() signature + conditions, call site, data.json output.
+
+[Fix 18 — 2026-05-21] 累積沽空 summary cards: bond instruments (e.g. 03141 華夏亞投債) appearing
+  in 日沽空比率 TOP / 累積沽空 TOP cards. Root cause: computeSfcCards() only excluded non-equity
+  types when the code was found in allStocks (ccass_universe). Bonds/warrants reported by SFC
+  but absent from ccass_universe skipped the stock_type check entirely; the English-only
+  EXCL_KW list couldn't match Chinese names like 華夏亞投債.
+  Two-part fix:
+  (a) If code is NOT in allStocks at all, exclude it — no ccass_universe membership means
+      we cannot verify it is an equity instrument.
+  (b) Added Chinese keywords '債','基金','指數' to EXCL_KW as secondary defence for any
+      misclassified instruments that do appear in allStocks.
+  Location: computeSfcCards() filter chain.
+
+[Fix 19 — 2026-05-21] 累積沽空排行 持倉集中度 showing "—" for stocks that have SDW data.
+  Root cause: renderShort() read s.concentration directly from data.json (allStocks).
+  data.json concentration is only written when main.py runs with SDW available at that
+  moment — if SDW was unavailable or the latest SDW date post-dates the main.py run,
+  concentration is 0. Meanwhile sdwData is already seeded in memory from per-stock
+  sdw_XXXXX.json files loaded by the 大戶持倉 panel, which have up-to-date holders.
+  Fix: in the augmented map in renderShort(), when s.concentration is 0, walk sdwDates
+  in reverse to find the latest available date for that stock, then compute concentration
+  as sum(top5 sh) / total_sh × 100 (falling back to sum of pct if total_sh unavailable)
+  — identical to the computation in main.py and sdwComputeSummary().
+  Location: renderShort() augmented map (merged with existing SFC augmentation).
+
+[Fix 20 — 2026-05-21] 個股波幅通道: upper band spiky for dividend-paying / index-rebalancing stocks (e.g. 02800).
+  Root cause: σ_up = std(high[i] - adj_close[i-1]). Yahoo close is dividend-adjusted but
+  high/low are raw. On ex-div or rebalancing days, raw high stays elevated while adj_close
+  drops, inflating high[i] - adj_close[i-1] and producing visible spikes in the upper band.
+  Index fund switches can also span Friday + following Monday (Wed–Mon worst-case window
+  = 4 trading days even with holidays in between, so 6-day cover is needed to be safe).
+  Fix: replaced raw per-day moves with a 6-day rolling average before feeding into std().
+  smoothUp[i] = mean of positive (high[j] - close[j-1]) over j in [i-5 .. i]
+  smoothDn[i] = mean of positive (close[j-1] - low[j])  over j in [i-5 .. i]
+  A single ex-div spike is diluted to ~1/6 and any 2-day Fri+Mon event is fully absorbed
+  within its 6-day window, never distorting σ for surrounding days.
+  Location: drawCai() sigma computation loop.
+
+[Fix 21 — 2026-05-21] 個股綜合分析 date range: two bugs.
+  (a) 1年 range only showed ~364 days: stkApplyRange() used weeks*7 calendar days
+      (52*7=364, one day short). Fixed with exact calendar arithmetic: setMonth() for
+      1M/3M/6M, setFullYear() for 1Y. Old numeric option values (4/13/26/52) still
+      handled as fallback.
+  (b) Dropdown change did not reset stock-to to today: if user had previously set a
+      custom to-date, changing the dropdown computed from-date relative to the stale
+      custom to-date instead of today. Fixed: dropdown change listener explicitly resets
+      stock-to to today before calling stkApplyRange(), and stkApplyRange() itself
+      always sets stock-to = today when called from the dropdown.
+  Location: stkApplyRange(), stock-range change listener in initStockPanel().
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -2418,10 +2467,14 @@ function computeSfcCards() {
     .filter(e => e.hkd > 0)
     .filter(e => {
       const s = allStocks.find(x => norm5(x.code) === e.code);
-      if (s && NON_EQUITY_TYPES.has(s.stock_type)) return false;
+      // If not in ccass_universe at all, exclude — we can't verify it's an equity
+      // (covers warrants, bonds, and other SFC-reported instruments outside our universe)
+      if (!s) return false;
+      if (NON_EQUITY_TYPES.has(s.stock_type)) return false;
       // Name-based fallback: catch non-equity instruments misclassified in data.json
       const n = (e.name || '').toUpperCase();
-      const EXCL_KW = ['ETF','TRACKER FUND','INDEX FUND','LEVERAGED','INVERSE','GX ','CSOP','PREMIA','BOND'];
+      const EXCL_KW = ['ETF','TRACKER FUND','INDEX FUND','LEVERAGED','INVERSE','GX ','CSOP','PREMIA','BOND',
+                       '債','基金','指數'];
       return !EXCL_KW.some(k => n.includes(k));
     });
 
@@ -3219,12 +3272,39 @@ function renderShort() {
   const sfcLatestDs = sfcLoaded && sfcDates.length ? sfcDates[sfcDates.length - 1] : null;
   const sfcLatest   = sfcLatestDs ? (sfcData[sfcLatestDs] || {}) : {};
 
+  // Compute concentration from live sdwData for stocks where data.json has 0
+  // Uses the latest available SDW date per-stock (same logic as sdwComputeSummary)
+  const sdwLatestDs = sdwLoaded && sdwDates.length ? sdwDates[sdwDates.length - 1] : null;
+
   const augmented = allStocks.map(s => {
-    if ((s.sfc_hkd || 0) > 0) return s;                         // data.json has it — use it
     const code5 = norm5(s.code);
-    const rec = sfcLatest[code5] || {};
-    if (!rec.hkd) return s;
-    return { ...s, sfc_hkd: rec.hkd || 0, sfc_sh: rec.sh || 0 };
+
+    // Augment SFC fields
+    let out = s;
+    if (!(s.sfc_hkd > 0)) {
+      const rec = sfcLatest[code5] || {};
+      if (rec.hkd) out = { ...out, sfc_hkd: rec.hkd || 0, sfc_sh: rec.sh || 0 };
+    }
+
+    // Augment concentration from live sdwData when data.json has 0
+    if (!(out.concentration > 0) && sdwLatestDs) {
+      const latestStockDs = sdwDates.slice().reverse()
+        .find(d => sdwEntryHasHolders((sdwData[d] || {})[code5]));
+      if (latestStockDs) {
+        const raw     = (sdwData[latestStockDs] || {})[code5];
+        const holders = raw ? (Array.isArray(raw) ? raw : (raw.p || [])) : [];
+        const totalSh = raw && !Array.isArray(raw) ? (raw.total_sh || 0) : 0;
+        if (holders.length > 0) {
+          const top5sh  = holders.slice(0, 5).reduce((a, h) => a + (h.sh || 0), 0);
+          const conc    = totalSh > 0
+            ? Math.round(top5sh / totalSh * 10000) / 100
+            : Math.round(holders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0) * 100) / 100;
+          if (conc > 0) out = { ...out, concentration: conc };
+        }
+      }
+    }
+
+    return out;
   });
 
   // Sort: respect active table sort; default to sfc_hkd desc (falls back to short_ratio)
@@ -4660,17 +4740,35 @@ async function drawCai() {
 
   // Compute asymmetric σ over last 6 years (~1560 trading days) — captures one full
   // bull/bear cycle without being distorted by ancient price regimes.
-  // σ_up   = std(high[i] - close[i-1]) for days where high > prev close
-  // σ_down = std(close[i-1] - low[i])  for days where low  < prev close
+  // σ_up   = std(smoothUp[i])  where smoothUp[i] = mean of raw up-moves over 6-day window
+  // σ_down = std(smoothDn[i])  where smoothDn[i] = mean of raw dn-moves over 6-day window
+  // raw up[i] = high[i] - close[i-1],  raw dn[i] = close[i-1] - low[i]
+  //
+  // 6-day smoothing rationale: index fund rebalancing / ex-dividend spikes can span
+  // Friday + the following Monday (Wed–Mon = 4 trading days worst-case including holidays).
+  // A 6-day rolling average guarantees any such 2-day event is fully absorbed within
+  // its window and never distorts the σ estimate for surrounding days.
   const SIGMA_WINDOW = 1560;
   const sigmaStart = Math.max(1, closeArr.length - SIGMA_WINDOW);
+  // Pre-compute raw per-day moves across full history (needed for 6-day lookback)
+  const rawUp = [], rawDn = [];
+  for (let i = 1; i < closeArr.length; i++) {
+    const pc = closeArr[i-1];
+    rawUp.push(highArr[i] - pc);
+    rawDn.push(pc - lowArr[i]);
+  }
+  // rawUp[j] corresponds to closeArr index j+1, so rawUp[i-1] = move at closeArr[i]
   const upMoves = [], dnMoves = [];
   for (let i = sigmaStart; i < closeArr.length; i++) {
-    const pc = closeArr[i-1];
-    const up = highArr[i] - pc;
-    const dn = pc - lowArr[i];
-    if (up > 0) upMoves.push(up);
-    if (dn > 0) dnMoves.push(dn);
+    // 6-day window ending at day i (rawUp index i-1 back to i-6, clamped at 0)
+    const wStart = Math.max(0, i - 6);
+    const wEnd   = i; // exclusive in slice, so rawUp[wStart..wEnd-1] = days wStart+1..i
+    const upSlice = rawUp.slice(wStart, wEnd);
+    const dnSlice = rawDn.slice(wStart, wEnd);
+    const upFiltered = upSlice.filter(v => v > 0);
+    const dnFiltered = dnSlice.filter(v => v > 0);
+    if (upFiltered.length > 0) upMoves.push(upFiltered.reduce((a,b)=>a+b,0) / upFiltered.length);
+    if (dnFiltered.length > 0) dnMoves.push(dnFiltered.reduce((a,b)=>a+b,0) / dnFiltered.length);
   }
   const _mean = arr => arr.reduce((a,b) => a+b, 0) / arr.length;
   const _std  = arr => { if (arr.length < 2) return 0; const m = _mean(arr); return Math.sqrt(arr.reduce((a,b) => a+(b-m)**2, 0) / arr.length); };
@@ -6239,14 +6337,23 @@ function stkGetRange() {
 }
 
 function stkApplyRange() {
-  const weeks = parseInt(document.getElementById('stock-range')?.value || '52');
+  const val   = document.getElementById('stock-range')?.value || '52w';
   const toEl  = document.getElementById('stock-to');
-  const today = new Date().toISOString().slice(0,10);
-  if (toEl && !toEl.value) toEl.value = today;
-  const toDs  = toEl?.value || today;
-  const from  = new Date(toDs);
-  from.setDate(from.getDate() - weeks * 7);
   const fromEl = document.getElementById('stock-from');
+  const today = new Date().toISOString().slice(0,10);
+  // Always reset to-date to today when using the dropdown
+  if (toEl) toEl.value = today;
+  const from  = new Date(today);
+  // Use exact calendar arithmetic: 1m/3m/6m via setMonth, 1y via setFullYear
+  if      (val === '1m'  || val === '4')  { from.setMonth(from.getMonth() - 1); }
+  else if (val === '3m'  || val === '13') { from.setMonth(from.getMonth() - 3); }
+  else if (val === '6m'  || val === '26') { from.setMonth(from.getMonth() - 6); }
+  else if (val === '52'  || val === '1y') { from.setFullYear(from.getFullYear() - 1); }
+  else {
+    // Fallback: treat as weeks for any other numeric value
+    const weeks = parseInt(val) || 52;
+    from.setDate(from.getDate() - weeks * 7);
+  }
   if (fromEl) fromEl.value = from.toISOString().slice(0,10);
 }
 
@@ -6323,6 +6430,9 @@ function initStockPanel() {
   }, 150));
 
   document.getElementById('stock-range')?.addEventListener('change', () => {
+    // Reset to-date to today so from-date is always relative to now, not a stale custom to-date
+    const toEl = document.getElementById('stock-to');
+    if (toEl) toEl.value = new Date().toISOString().slice(0,10);
     stkApplyRange();
     if (stkCode) stkRenderCharts();
   });

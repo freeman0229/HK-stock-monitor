@@ -149,6 +149,45 @@ def upload_to_r2(code5: str) -> bool:
 
 # ── Per-stock build ───────────────────────────────────────────────────────────
 
+def _sync_r2_turnover_files():
+    """
+    Download all turnover_YYYY.json source files from R2 if not already local.
+    Called once at startup so load_all_turnover() sees the full history regardless
+    of whether the runner is ephemeral (CI, cron container, etc.).
+    """
+    if not R2_ENDPOINT:
+        log.warning("R2_ENDPOINT_URL not set — cannot sync turnover files from R2")
+        return
+    try:
+        # List all turnover_YYYY.json objects in the bucket
+        cmd = ["aws", "s3", "ls", f"{R2_BUCKET}/",
+               "--endpoint-url", R2_ENDPOINT]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            log.warning("Could not list R2 bucket: %s", r.stderr.strip()[:200])
+            return
+        remote_files = re.findall(r"turnover_(\d{4})\.json", r.stdout)
+        if not remote_files:
+            log.warning("No turnover_YYYY.json files found in R2")
+            return
+        log.info("Found turnover files in R2: %s", sorted(remote_files))
+        for year in sorted(remote_files):
+            fname = f"turnover_{year}.json"
+            if os.path.exists(fname):
+                log.info("%s already local — skipping download", fname)
+                continue
+            log.info("Downloading %s from R2 …", fname)
+            cmd = ["aws", "s3", "cp", f"{R2_BUCKET}/{fname}", fname,
+                   "--endpoint-url", R2_ENDPOINT, "--no-progress"]
+            rc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if rc.returncode == 0:
+                log.info("Downloaded %s", fname)
+            else:
+                log.warning("Failed to download %s: %s", fname, rc.stderr.strip()[:200])
+    except Exception as e:
+        log.warning("_sync_r2_turnover_files failed: %s", e)
+
+
 def _sync_r2_tv_files():
     """Batch download all tv_*.json from R2 using aws s3 sync (fast, one call)."""
     if not R2_ENDPOINT:
@@ -274,6 +313,12 @@ def build_stock(code5: str, tv_all: dict, sh_all: dict,
 # ── Main runner ───────────────────────────────────────────────────────────────
 
 def run(universe: list, rebuild: bool = False, backfill: bool = False):
+    # Always download turnover source files from R2 first — they are stored in R2,
+    # not guaranteed to be local (ephemeral CI/cron environments start with none).
+    # This ensures all available years (2025, 2026, …) are merged into tv_*.json.
+    log.info("Syncing turnover source files from R2 …")
+    _sync_r2_turnover_files()
+
     log.info("Loading source files …")
     tv_all = load_all_turnover()
     sh_all = load_all_short()
@@ -341,6 +386,8 @@ def main():
 
     if args.code:
         code5   = normalize_code(args.code)
+        log.info("Syncing turnover source files from R2 …")
+        _sync_r2_turnover_files()
         tv_all  = load_all_turnover()
         sh_all  = load_all_short()
         added   = build_stock(code5, tv_all, sh_all, rebuild=args.rebuild, backfill=args.backfill)
