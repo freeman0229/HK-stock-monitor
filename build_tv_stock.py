@@ -27,6 +27,15 @@ Rules:
   • Uploads to R2 immediately after each stock is saved
   • Skips stocks with no data
 
+Changelog:
+  [Fix 1] Added _sync_r2_turnover_files(): downloads all turnover_YYYY.json source
+          files from R2 before processing. Previously the script assumed turnover
+          files were local, but they live in R2 (ephemeral CI runners start with
+          none). Without this fix, only turnover_2026.json (written by the daily
+          build_turnover.py job) was available, so tv_*.json files were missing
+          all 2025 data. Called at the start of run() and the --code single-stock
+          path so all modes benefit.
+
 Usage:
   python build_tv_stock.py              # incremental update (normal daily use)
   python build_tv_stock.py --backfill   # backfill all stocks, never overwrites (initial R2 population)

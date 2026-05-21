@@ -34,6 +34,7 @@ on:
           - hsi-build        # manual: rebuild full HSI weekly history from scratch
           - rank-history-backfill  # manual: rebuild rank_history.json from 2026-02-02
           - tv-stock-build   # manual: full rebuild of all tv_{code5}.json on R2
+          - turnover-from-yahoo  # manual: rebuild turnover_YYYY.json from yahoo_{code5}.json on R2
       backfill_date:
         description: 'Date to backfill (YYYY-MM-DD) — e.g. 2025-04-11. Required for sdw-backfill.'
         required: false
@@ -1122,7 +1123,7 @@ jobs:
           MAX_RETRIES=5
           for attempt in $(seq 1 $MAX_RETRIES); do
             echo "=== Attempt $attempt / $MAX_RETRIES ==="
-            python build_tv_stock.py --backfill
+            python build_tv_stock.py --rebuild
 
             echo "=== Verifying completeness ==="
             MISSING=$(python3 - <<'PYEOF'
@@ -1183,3 +1184,56 @@ jobs:
           done
           echo "WARNING: some stocks still missing after $MAX_RETRIES attempts"
           exit 1
+
+  # ── Turnover from Yahoo (manual) ─────────────────────────────────────────────
+  # Rebuilds turnover_YYYY.json from yahoo_{code5}.json files stored on R2.
+  # Use when turnover_YYYY.json is missing stocks (e.g. 02800) that exist in Yahoo.
+  # After this completes, run tv-stock-build to merge into tv_{code5}.json.
+  turnover-from-yahoo:
+    name: Rebuild turnover from Yahoo R2 files
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: turnover-from-yahoo
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.job == 'turnover-from-yahoo'
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+
+      - name: Rebuild turnover_2025.json from Yahoo R2 files
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: python build_turnover_from_yahoo.py --rebuild --year 2025
+
+      - name: Upload turnover_2025.json to R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          aws s3 cp turnover_2025.json s3://hk-stock-monitor/turnover_2025.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} --no-progress
+          echo "Uploaded turnover_2025.json to R2"
+
+      - name: Verify
+        run: |
+          python3 -c "
+          import json
+          d = json.load(open('turnover_2025.json'))
+          dates = sorted(d['by_date'].keys())
+          codes_first = list(d['by_date'][dates[0]].keys()) if dates else []
+          print(f'Dates: {len(dates)} ({dates[0] if dates else "none"} to {dates[-1] if dates else "none"})')
+          print(f'Stocks on first date: {len(codes_first)}')
+          print(f'02800 present: {"02800" in d["by_date"].get(dates[0], {})}')
+          "
