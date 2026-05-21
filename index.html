@@ -190,6 +190,16 @@ FIX LOG
   — identical to the computation in main.py and sdwComputeSummary().
   Location: renderShort() augmented map (merged with existing SFC augmentation).
 
+[Fix 22 — 2026-05-21] 累積沽空排行 持倉集中度 still showing "—" after Fix 19.
+  Root cause: Fix 19 augmented concentration from sdwData, but sdwData is only
+  populated for stocks the user has already viewed in 大戶持倉. For all other
+  stocks sdwData is empty at renderShort() time, so the lookup finds nothing.
+  Fix: compute concentration directly from s.sdw_holders + s.sdw_total_sh in
+  allStocks — these fields come from data.json and are always available at page
+  load without any extra network request. sdwData lookup is kept as fallback
+  (Priority 2) for cases where sdw_holders is absent from data.json.
+  Location: renderShort() augmented map, concentration block.
+
 [Fix 20 — 2026-05-21] 個股波幅通道: upper band spiky for dividend-paying / index-rebalancing stocks (e.g. 02800).
   Root cause: σ_up = std(high[i] - adj_close[i-1]). Yahoo close is dividend-adjusted but
   high/low are raw. On ex-div or rebalancing days, raw high stays elevated while adj_close
@@ -3286,22 +3296,38 @@ function renderShort() {
       if (rec.hkd) out = { ...out, sfc_hkd: rec.hkd || 0, sfc_sh: rec.sh || 0 };
     }
 
-    // Augment concentration from live sdwData when data.json has 0
-    if (!(out.concentration > 0) && sdwLatestDs) {
-      const latestStockDs = sdwDates.slice().reverse()
-        .find(d => sdwEntryHasHolders((sdwData[d] || {})[code5]));
-      if (latestStockDs) {
-        const raw     = (sdwData[latestStockDs] || {})[code5];
-        const holders = raw ? (Array.isArray(raw) ? raw : (raw.p || [])) : [];
-        const totalSh = raw && !Array.isArray(raw) ? (raw.total_sh || 0) : 0;
-        if (holders.length > 0) {
-          const top5sh  = holders.slice(0, 5).reduce((a, h) => a + (h.sh || 0), 0);
-          const conc    = totalSh > 0
-            ? Math.round(top5sh / totalSh * 10000) / 100
-            : Math.round(holders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0) * 100) / 100;
-          if (conc > 0) out = { ...out, concentration: conc };
+    // Augment concentration when data.json has 0.
+    // Priority 1: compute directly from allStocks[s].sdw_holders (always available
+    //             from data.json snapshot — no sdwData lookup needed).
+    // Priority 2: fall back to live sdwData (populated after 大戶持倉 panel loads).
+    if (!(out.concentration > 0)) {
+      let conc = 0;
+      // Priority 1: sdw_holders snapshot in allStocks (data.json)
+      const snapHolders = s.sdw_holders || [];
+      const snapTotal   = s.sdw_total_sh || 0;
+      if (snapHolders.length > 0) {
+        const top5sh = snapHolders.slice(0, 5).reduce((a, h) => a + (h.sh || 0), 0);
+        conc = snapTotal > 0
+          ? Math.round(top5sh / snapTotal * 10000) / 100
+          : Math.round(snapHolders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0) * 100) / 100;
+      }
+      // Priority 2: live sdwData (only if Priority 1 gave nothing)
+      if (!(conc > 0) && sdwLatestDs) {
+        const latestStockDs = sdwDates.slice().reverse()
+          .find(d => sdwEntryHasHolders((sdwData[d] || {})[code5]));
+        if (latestStockDs) {
+          const raw     = (sdwData[latestStockDs] || {})[code5];
+          const holders = raw ? (Array.isArray(raw) ? raw : (raw.p || [])) : [];
+          const totalSh = raw && !Array.isArray(raw) ? (raw.total_sh || 0) : 0;
+          if (holders.length > 0) {
+            const top5sh = holders.slice(0, 5).reduce((a, h) => a + (h.sh || 0), 0);
+            conc = totalSh > 0
+              ? Math.round(top5sh / totalSh * 10000) / 100
+              : Math.round(holders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0) * 100) / 100;
+          }
         }
       }
+      if (conc > 0) out = { ...out, concentration: conc };
     }
 
     return out;
