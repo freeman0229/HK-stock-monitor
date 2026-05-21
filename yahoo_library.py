@@ -9,9 +9,9 @@ File structure:
   by_date: date_str -> {open, high, low, close, vol}
 
 Price convention:
-  open, high, low  — raw unadjusted traded prices
-  close            — dividend/split adjusted closing price (Adj Close)
-  vol              — raw traded volume
+  open, high, low  -- raw unadjusted traded prices
+  close            -- dividend/split adjusted closing price (Adj Close)
+  vol              -- raw traded volume
 
 Codes stored as 5-digit zero-padded strings.
 Files stored on R2: pub-0b0781d969ec4b38b173f889109244a9.r2.dev/yahoo_{code5}.json
@@ -20,7 +20,7 @@ Changelog:
   [Fix 1] fetch_batch: added SIGALRM-based hard timeout (FETCH_TIMEOUT_SEC) around
           yf.download(). Without this, a stalled connection hangs the entire CI job
           indefinitely (root cause of the 1h16m failure). On timeout the batch is
-          skipped and an empty result is returned — the stock will be retried next run.
+          skipped and an empty result is returned -- the stock will be retried next run.
   [Fix 2] fetch_batch: timeout handler raises FetchTimeoutError (custom subclass of
           Exception) so it can be caught narrowly without masking other errors.
   [Fix 3] fetch_batch: SIGALRM is only used on POSIX platforms (Linux/macOS). On
@@ -30,10 +30,9 @@ Changelog:
   [Fix 5] fetch_and_save_all_years: upload_fn exception now logs code5 correctly
           (was logging the local variable name, not the value).
   [Fix 6] Suppress yfinance internal ERROR logs for YFTzMissingError (delisted /
-          no timezone stocks e.g. 2478.HK, 2461.HK). These are not real errors —
-          yf.download() returns empty data for them and they are correctly skipped.
-          Added _YFTzFilter on yfinance loggers so CI logs stay clean.
-"
+          no timezone stocks e.g. 2478.HK, 2461.HK). Not real errors - yf.download()
+          returns empty data and stocks are correctly skipped.
+"""
 
 import json
 import logging
@@ -53,18 +52,16 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Suppress yfinance's internal ERROR logs for delisted/timezone-missing stocks.
+# Fix 6: suppress yfinance internal ERROR logs for delisted/timezone-missing stocks.
 # yf.download() prints "N Failed downloads: YFTzMissingError('possibly delisted')"
-# at ERROR level via its own logger. These are not real errors — the stock is
-# simply delisted or not available on Yahoo Finance; empty data is returned and
-# the stock is correctly skipped. Without this filter they appear alarming in CI.
+# at ERROR level. These are not real errors - empty data is returned and stocks are
+# correctly skipped. Without this filter they appear alarming in CI logs.
 class _YFTzFilter(logging.Filter):
     def filter(self, record):
-        return "YFTzMissingError" not in (record.getMessage())
+        return "YFTzMissingError" not in record.getMessage()
 
 for _yf_logger_name in ("yfinance", "yfinance.base", "yfinance.download"):
-    _yf_log = logging.getLogger(_yf_logger_name)
-    _yf_log.addFilter(_YFTzFilter())
+    logging.getLogger(_yf_logger_name).addFilter(_YFTzFilter())
 
 START_YEAR      = 1995
 SLEEP_BATCH     = 10
@@ -137,7 +134,7 @@ def list_r2_yahoo_codes() -> set:
     import re
     endpoint = os.environ.get("R2_ENDPOINT_URL", "")
     if not endpoint:
-        log.warning("R2_ENDPOINT_URL not set — cannot list R2 files, will fetch all")
+        log.warning("R2_ENDPOINT_URL not set -- cannot list R2 files, will fetch all")
         return set()
     try:
         cmd = ["aws", "s3", "ls", "s3://hk-stock-monitor/",
@@ -149,7 +146,7 @@ def list_r2_yahoo_codes() -> set:
         log.info("R2 existing yahoo files: %d", len(codes))
         return set(codes)
     except Exception as e:
-        log.warning("Could not list R2 yahoo files: %s — will fetch all", e)
+        log.warning("Could not list R2 yahoo files: %s -- will fetch all", e)
         return set()
 
 
@@ -187,7 +184,7 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
     If the download stalls, FetchTimeoutError is raised, the batch is skipped,
     and an empty result dict is returned. The stock will be retried on the next
     scheduled run. Without this guard, a single stalled TCP connection hung the
-    entire CI job for 1h16m before GitHub killed it (observed 2026-05-20).
+    entire CI job for approx 76 min before GitHub killed it (observed 2026-May-20).
     """
     tickers = [to_yahoo_ticker(c) for c in codes]
     result  = {c: {} for c in codes}
@@ -250,10 +247,10 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
             return result
 
         except FetchTimeoutError as e:
-            # Hard timeout — do NOT retry; the connection is stuck.
+            # Hard timeout -- do NOT retry; the connection is stuck.
             # Return empty so caller skips these stocks. They will be retried next run.
             log.warning(
-                "fetch_batch TIMEOUT for batch starting %s (attempt %d/%d): %s — skipping batch",
+                "fetch_batch TIMEOUT for batch starting %s (attempt %d/%d): %s -- skipping batch",
                 codes[0] if codes else "?", attempt, MAX_RETRIES, e,
             )
             _cancel_alarm()  # safety: ensure alarm is disarmed before returning
@@ -264,7 +261,7 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
             if attempt < MAX_RETRIES:
                 sleep_for = RETRY_SLEEP * attempt
                 log.warning(
-                    "fetch_batch attempt %d/%d failed: %s — retrying in %ds",
+                    "fetch_batch attempt %d/%d failed: %s -- retrying in %ds",
                     attempt, MAX_RETRIES, e, sleep_for,
                 )
                 time.sleep(sleep_for)
@@ -324,7 +321,7 @@ def fetch_universe(universe: list, from_year: int, to_year: int,
                    rebuild: bool = False, upload_fn=None):
     """
     Fetch year by year for batches of stocks.
-    Accumulates all years per stock before saving — one file per stock with all history.
+    Accumulates all years per stock before saving -- one file per stock with all history.
     Never overwrites existing dates (safe re-run guarantee).
 
     Fix 4: when the per-batch filter removes all stocks (all already on R2),
@@ -337,7 +334,7 @@ def fetch_universe(universe: list, from_year: int, to_year: int,
 
     saved = failed = 0
 
-    # Get existing R2 files once upfront — much faster than per-stock checks
+    # Get existing R2 files once upfront -- much faster than per-stock checks
     existing_on_r2 = set() if rebuild else list_r2_yahoo_codes()
     if existing_on_r2:
         log.info("Skipping %d stocks already on R2", len(existing_on_r2))
@@ -349,7 +346,7 @@ def fetch_universe(universe: list, from_year: int, to_year: int,
         if not rebuild:
             batch = [c for c in batch if c not in existing_on_r2]
             if not batch:
-                continue  # was missing — caused unnecessary sleep + log noise
+                continue  # was missing -- caused unnecessary sleep + log noise
 
         log.info("Processing batch %d-%d / %d",
                  i + 1, min(i + BATCH_SIZE, len(universe)), len(universe))
