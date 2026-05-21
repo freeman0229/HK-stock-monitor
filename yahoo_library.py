@@ -29,7 +29,11 @@ Changelog:
           rather than silently passed through when the filtered batch is empty.
   [Fix 5] fetch_and_save_all_years: upload_fn exception now logs code5 correctly
           (was logging the local variable name, not the value).
-"""
+  [Fix 6] Suppress yfinance internal ERROR logs for YFTzMissingError (delisted /
+          no timezone stocks e.g. 2478.HK, 2461.HK). These are not real errors —
+          yf.download() returns empty data for them and they are correctly skipped.
+          Added _YFTzFilter on yfinance loggers so CI logs stay clean.
+"
 
 import json
 import logging
@@ -48,6 +52,19 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 log = logging.getLogger(__name__)
+
+# Suppress yfinance's internal ERROR logs for delisted/timezone-missing stocks.
+# yf.download() prints "N Failed downloads: YFTzMissingError('possibly delisted')"
+# at ERROR level via its own logger. These are not real errors — the stock is
+# simply delisted or not available on Yahoo Finance; empty data is returned and
+# the stock is correctly skipped. Without this filter they appear alarming in CI.
+class _YFTzFilter(logging.Filter):
+    def filter(self, record):
+        return "YFTzMissingError" not in (record.getMessage())
+
+for _yf_logger_name in ("yfinance", "yfinance.base", "yfinance.download"):
+    _yf_log = logging.getLogger(_yf_logger_name)
+    _yf_log.addFilter(_YFTzFilter())
 
 START_YEAR      = 1995
 SLEEP_BATCH     = 10

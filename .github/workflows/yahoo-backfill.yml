@@ -29,6 +29,10 @@ name: Yahoo Finance Backfill
 #   [Fix 3] Added "Summarise result" step that always runs (even on failure) and
 #           prints the last 30 lines of build_yahoo.py output so CI logs clearly
 #           show updated/skipped/failed/timed_out counts without scrolling.
+#   [Fix 5] timeout-minutes on "Daily update" step: 100 → 180. Measured from CI
+#           logs: ~41.8s/batch × 133 batches ≈ 93 min typical. 100 min was too
+#           tight under rate-limiting or slow Yahoo responses. 180 min = ~2× the
+#           measured worst-case, well within the 720 min job-level ceiling.
 #   [Fix 4] Added `code` input (e.g. "00700") and a dedicated "Single-stock backfill"
 #           step. When code is set, only that stock is processed regardless of mode
 #           (today or historical). Completes in seconds. Useful for repairing a
@@ -159,9 +163,13 @@ jobs:
 
       # today: fetch last 7 days for ALL stocks — skipped when a single code is set
       # Fix 2: step-level timeout as secondary safety net behind SIGALRM in python.
+      # [Fix 5] timeout-minutes: 100 → 180. Measured from CI logs: ~41.8s/batch ×
+      #         133 batches = ~93 min typical, but can run longer under rate-limiting
+      #         or slow Yahoo responses. 180 min = ~2× measured worst-case, well within
+      #         the 720 min job-level ceiling.
       - name: Daily update (last 7 days)
         if: ${{ (github.event_name == 'schedule' || inputs.mode == 'today') && inputs.code == '' }}
-        timeout-minutes: 100
+        timeout-minutes: 180
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
