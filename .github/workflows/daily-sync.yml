@@ -289,7 +289,7 @@ jobs:
       - name: Full SDW backfill → ccass_sdw.db
         env:
           SDW_WORKERS: "3"
-          SDW_WORKER_TIMEOUT: "5400"
+          SDW_WORKER_TIMEOUT: "21000"  # 350 min — matches 360 min job timeout with 10 min buffer
         run: |
           python ccass_sdw_library.py
       - name: Verify DB before upload
@@ -334,7 +334,7 @@ jobs:
   #         with a DB upload after each attempt, so all remaining stocks are fetched
   #         in one job execution. Coverage math: run1≈79.6%, run2≈100% of remainder.
   #         Total job time ≈ 90 + 42 + 10 (upload/export overhead) ≈ 145 min.
-  #       SDW_WORKER_TIMEOUT: 5400s (90 min wall-clock per worker per attempt) — kept.
+  #       SDW_WORKER_TIMEOUT: 21000s (350 min wall-clock per worker — matches 360 min job timeout).
   #       job timeout-minutes: 300 → sufficient (145 min typical + buffer).
   sdw-weekly:
     name: SDW weekly update → ccass_sdw.db
@@ -373,7 +373,7 @@ jobs:
       - name: Fetch latest Friday SDW data (up to 3 attempts)
         env:
           SDW_WORKERS      : "3"
-          SDW_WORKER_TIMEOUT: "5400"
+          SDW_WORKER_TIMEOUT: "21000"  # 350 min — matches 360 min job timeout with 10 min buffer
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION   : auto
