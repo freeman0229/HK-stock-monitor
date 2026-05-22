@@ -10,7 +10,9 @@ File structure:
 
 Price convention:
   open, high, low  -- raw unadjusted traded prices
-  close            -- dividend/split adjusted closing price (Adj Close)
+  close            -- raw (unadjusted) closing price. Adj Close avoided because
+                      yahoo high/low are raw prices; using adj close for the sigma
+                      computation creates a cross-series mismatch on ex-div dates.
   vol              -- raw traded volume
 
 Codes stored as 5-digit zero-padded strings.
@@ -32,6 +34,12 @@ Changelog:
   [Fix 6] Suppress yfinance internal ERROR logs for YFTzMissingError (delisted /
           no timezone stocks e.g. 2478.HK, 2461.HK). Not real errors - yf.download()
           returns empty data and stocks are correctly skipped.
+  [Fix 7] store raw Close instead of Adj Close as the "close" field. Yahoo high/low
+          are raw prices; using adj close creates a cross-series mismatch on ex-div
+          dates (e.g. 02800 pays semi-annual dividends -- adj close drops by dividend
+          amount while raw high/low stay at pre-div levels, inflating sigma_up and
+          producing visible spikes in the 個股波幅通道 upper band).
+          Adj Close is kept as fallback only for stocks where raw Close is unavailable.
 """
 
 import json
@@ -231,7 +239,7 @@ def fetch_batch(codes: list, start: date, end: date) -> dict:
                         o = _get_val(row, "Open",      "open")
                         h = _get_val(row, "High",      "high")
                         l = _get_val(row, "Low",       "low")
-                        c = _get_val(row, "Adj Close", "adj close", "Close", "close")
+                        c = _get_val(row, "Close", "close", "Adj Close", "adj close")  # raw close; adj only as fallback
                         v = int(_get_val(row, "Volume", "volume"))
                         if c > 0:
                             result[code5][ds] = {
