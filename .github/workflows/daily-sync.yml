@@ -35,6 +35,16 @@ on:
           - rank-history-backfill  # manual: rebuild rank_history.json from 2026-02-02
           - tv-stock-build   # manual: full rebuild of all tv_{code5}.json on R2
           - turnover-from-yahoo  # manual: rebuild turnover_YYYY.json from yahoo_{code5}.json on R2
+      tfy_from_year:
+        description: 'turnover-from-yahoo: start year (default: 2025)'
+        required: false
+        default: '2025'
+        type: string
+      tfy_to_year:
+        description: 'turnover-from-yahoo: end year (default: 2026, dates >= 2026-02-02 always protected)'
+        required: false
+        default: '2026'
+        type: string
       backfill_date:
         description: 'Date to backfill (YYYY-MM-DD) — e.g. 2025-04-11. Required for sdw-backfill.'
         required: false
@@ -1190,7 +1200,7 @@ jobs:
   # Use when turnover_YYYY.json is missing stocks (e.g. 02800) that exist in Yahoo.
   # After this completes, run tv-stock-build to merge into tv_{code5}.json.
   turnover-from-yahoo:
-    name: Rebuild turnover from Yahoo R2 files
+    name: Rebuild turnover from Yahoo R2 files (${{ inputs.tfy_from_year || '2025' }}-${{ inputs.tfy_to_year || '2026' }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
@@ -1207,15 +1217,20 @@ jobs:
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
-      - name: Rebuild turnover_2025.json from Yahoo R2 files
+      - name: Rebuild turnover_2025.json and turnover_2026.json from Yahoo R2 files
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION   : auto
           R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
-        run: python build_turnover_from_yahoo.py --rebuild --year 2025
+        env:
+          TFY_FROM_YEAR: ${{ inputs.tfy_from_year || '2025' }}
+          TFY_TO_YEAR  : ${{ inputs.tfy_to_year   || '2026' }}
+        run: |
+          # Dates >= 2026-02-02 are always protected (HKEX raw data from that date)
+          python build_turnover_from_yahoo.py --rebuild --from-year $TFY_FROM_YEAR --to-year $TFY_TO_YEAR
 
-      - name: Upload turnover_2025.json to R2
+      - name: Upload turnover files to R2
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -1225,16 +1240,24 @@ jobs:
           aws s3 cp turnover_2025.json s3://hk-stock-monitor/turnover_2025.json \
             --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} --no-progress
           echo "Uploaded turnover_2025.json to R2"
+          if [ -f turnover_2026.json ]; then
+            aws s3 cp turnover_2026.json s3://hk-stock-monitor/turnover_2026.json \
+              --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} --no-progress
+            echo "Uploaded turnover_2026.json to R2"
+          fi"
 
       - name: Verify
         run: |
           python3 - <<'PYEOF'
-          import json
-          d = json.load(open('turnover_2025.json'))
-          dates = sorted(d['by_date'].keys())
-          codes_first = list(d['by_date'][dates[0]].keys()) if dates else []
-          print(f'Dates: {len(dates)} ({dates[0] if dates else "none"} to {dates[-1] if dates else "none"})')
-          print(f'Stocks on first date: {len(codes_first)}')
-          code = '02800'
-          print(f'{code} present: {code in d["by_date"].get(dates[0], {})}')
+          import json, os
+          for fname in ['turnover_2025.json', 'turnover_2026.json']:
+              if not os.path.exists(fname): continue
+              d = json.load(open(fname))
+              dates = sorted(d['by_date'].keys())
+              code = '02800'
+              print(f'{fname}: {len(dates)} dates ({dates[0]} to {dates[-1]})')
+              print(f'  {code} present: {code in d["by_date"].get(dates[0], {})}')
+              if dates:
+                  sample = d['by_date'][dates[0]].get(code, {})
+                  print(f'  {code} close on {dates[0]}: {sample.get("close")}')
           PYEOF

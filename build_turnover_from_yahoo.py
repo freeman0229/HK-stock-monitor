@@ -20,21 +20,16 @@ Rules:
   • Use --year to process a single year
   • Use --from-year / --to-year to process a range
 
-Changelog:
-  [Fix 1] fetch_yahoo(): replaced yearly-aggregate fetch (yahoo_{YYYY}.json) with
-          per-stock fetch (yahoo_{code5}.json). R2 only stores per-stock files;
-          yahoo_2025.json does not exist on R2, causing fetch_yahoo() to always
-          return empty and producing an incomplete turnover_2025.json that was
-          missing many stocks (e.g. 00005, 02800). New logic fetches each stock's
-          file, filters to the requested year, and inverts to the expected
-          {date: {code5: rec}} structure. Legacy local yahoo_{YYYY}.json still
-          supported as a fallback for backwards compatibility.
-
 Usage:
   python build_turnover_from_yahoo.py                        # 2025 only (default)
   python build_turnover_from_yahoo.py --year 2024            # single year
   python build_turnover_from_yahoo.py --from-year 2020 --to-year 2025
   python build_turnover_from_yahoo.py --rebuild --year 2025  # force overwrite
+  python build_turnover_from_yahoo.py --rebuild --from-year 2025 --to-year 2026
+
+Changelog:
+  [Fix 1] fetch_yahoo(): per-stock R2 fetch replaces non-existent yearly aggregate.
+  [Fix 2] convert() + build_year(): max_date guard protects HKEX data from 2026-02-02.
 """
 
 import argparse
@@ -92,14 +87,13 @@ def _save_tv(year: int, lib: dict):
 def fetch_yahoo(year: int) -> dict:
     """
     Build a by_date dict for the given year from per-stock yahoo_{code5}.json
-    files on R2.  R2 stores one file per stock (not one per year), so we fetch
-    each stock's file, filter to the requested year, and invert the structure:
-        {date_str: {code5: {open, high, low, close, vol}}}
+    files on R2. R2 stores one file per stock (not one per year), so we fetch
+    each stock file, filter to the requested year, and invert the structure to
+    {date_str: {code5: {open, high, low, close, vol}}}.
 
-    Falls back to a local yahoo_{YYYY}.json aggregate file if it exists (legacy
-    support for environments where the yearly file was pre-built).
+    Falls back to a local yahoo_{YYYY}.json aggregate file if it exists (legacy).
     """
-    # Legacy fallback: yearly aggregate file (local only — not on R2)
+    # Legacy fallback: yearly aggregate file (local only -- not on R2)
     local_path = f"yahoo_{year}.json"
     if os.path.exists(local_path):
         log.info("Loading local %s (legacy aggregate) ...", local_path)
@@ -110,10 +104,9 @@ def fetch_yahoo(year: int) -> dict:
             log.info("yahoo_%d.json (local): %d dates loaded", year, len(by_date))
             return by_date
         except Exception as e:
-            log.warning("Failed to read local %s: %s -- falling through to per-stock fetch", local_path, e)
+            log.warning("Failed to read local %s: %s -- falling through", local_path, e)
 
-    # Primary path: fetch per-stock yahoo_{code5}.json from R2 CDN
-    # and invert to {date: {code5: rec}} structure filtered to `year`.
+    # Primary: fetch per-stock yahoo_{code5}.json from R2 CDN
     from ccass_universe import get_universe_codes
     universe = sorted(get_universe_codes())
     log.info("Fetching per-stock yahoo files from R2 for year %d (%d stocks) ...", year, len(universe))
@@ -150,16 +143,20 @@ def fetch_yahoo(year: int) -> dict:
 
 # ── Convert ───────────────────────────────────────────────────────────────────
 
-def convert(yahoo_by_date: dict, existing_dates: set, rebuild: bool) -> dict:
+def convert(yahoo_by_date: dict, existing_dates: set, rebuild: bool,
+            max_date: str = "") -> dict:
     """
     Convert yahoo by_date to turnover by_date format.
     prev_close is derived from the previous date's close in the yahoo data.
+    max_date: skip dates >= max_date (e.g. "2026-02-02" to protect HKEX data).
     """
     # Sort dates so we can look up previous day
     all_dates = sorted(yahoo_by_date.keys())
     result    = {}
 
     for i, ds in enumerate(all_dates):
+        if max_date and ds >= max_date:
+            continue  # protected: HKEX data covers from this date
         if not rebuild and ds in existing_dates:
             continue  # already in turnover library
 
@@ -215,7 +212,9 @@ def build_year(year: int, rebuild: bool = False):
     log.info("turnover_%d: %d existing dates, %d yahoo dates",
              year, len(existing_dates), len(yahoo_by_date))
 
-    new_data = convert(yahoo_by_date, existing_dates, rebuild)
+    # For 2026, only write dates before 2026-02-02 (HKEX covers from that date)
+    max_date = "2026-02-02" if year == 2026 else ""
+    new_data = convert(yahoo_by_date, existing_dates, rebuild, max_date=max_date)
 
     if not new_data:
         log.info("turnover_%d: nothing new to add", year)
