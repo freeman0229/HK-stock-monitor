@@ -38,6 +38,21 @@
 #   sc_top10 to be empty for multiple consecutive HK trading days.
 #   Fix: walk back using joint HK+CN open check (_is_sc_open), up to 5 valid SC
 #   trading days (14 calendar days max). Handles Golden Week and other long holidays.
+# [Fix 10 — 2026-05-22] concentration=0 for stocks whose SDW data lags behind
+#   today_ds (e.g. newly listed stocks like 09660). sdw_get_holders(code, today_ds)
+#   returns [] when the DB has no row for exactly today, leaving concentration=0
+#   in data.json. Fix: fall back to sdw_get_holders_history(code, 1, today_ds) to
+#   get the most recent available snapshot regardless of date. Also falls back
+#   total_sh via sdw_get_total_sh(code, today_ds) for the same reason.
+#   This ensures concentration is always written to data.json for all stocks that
+#   have any SDW history, eliminating the need for frontend fallback calculations.
+#
+# [Fix 11 — 2026-05-22] classify_stock(): 03141 (華夏亞投債), 03199 (iShares USD Asia HY
+#   Bond ETF) missing from _BOND_CODES; 02834 (安碩指一百 iShares CSI A50 ETF) not
+#   caught by _ETF_NAME_KW. These were classified as "stock" causing them to appear
+#   in 累積沽空 summary cards, bubble chart, and 挾倉風險 Top 15.
+#   Fix: added missing codes to _BOND_CODES; broadened _ETF_NAME_KW with ISHARES/
+#   CSOP/PREMIA/GX; broadened _BOND_NAME_KW with Chinese bond keywords 債券/亞投債/國債.
 # ──────────────────────────────────────────────────────────────────────────────
 
 import json
@@ -416,7 +431,7 @@ _ETF_CODES = {
     # previously missing ETFs
     "03451","03190","03415","03195","03455",
 }
-_ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND",
+_ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND", "ISHARES", "CSOP", "PREMIA", "GX ",
                 "GX CHINA", "GX HK", "GX ", "CSOP", "PREMIA")
 
 # Derivative products — leveraged/inverse/futures; structurally extreme short ratios
@@ -430,10 +445,15 @@ _DERIV_CODES = {
 # Bond instruments — bond ETFs + retail/govt bonds (04xxx series)
 _BOND_CODES = {
     "02829",  # iShares China Govt Bond ETF 安碩中國國債
-    "03108",  # Premia ESG領先債券ETF 嗎實ESG領
+    "03108",  # Premia ESG領先債券ETF
+    "03141",  # ChinaAMC AIIB Bond ETF 華夏亞投債
+    "03199",  # iShares Barclays USD Asia HY Bond ETF
+    "04362",  # iBond 2024
+    "04363",  # iBond 2025
 }
 _BOND_NAME_KW = ("BOND ETF", "GOLD ETF", "MONEY MARKET ETF",
-                 "IBOND", "EXCHANGE FUND NOTE", "EFN", " BOND ")
+                 "IBOND", "EXCHANGE FUND NOTE", "EFN", " BOND ",
+                 "債券", "債基", "亞投債", "國債")
 
 def classify_stock(code: str, name: str) -> str:
     n = name.upper()
@@ -1062,7 +1082,17 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         _holders = _sdw_holders_map.get(code) or []
         if not _holders and _SDW_AVAILABLE:
             _holders = sdw_get_holders(code, today_ds)
+        # Fall back to most recent available snapshot in DB if today has no data.
+        # This ensures concentration is always populated (e.g. for newer stocks
+        # like 09660 whose SDW data may lag by a week or more).
+        if not _holders and _SDW_AVAILABLE:
+            _fb = sdw_get_holders_history(code, 1, today_ds)
+            if _fb:
+                _holders = _fb[0]
         _total_sh_conc = _sdw_total_sh_map.get(code, 0)
+        # Also fall back total_sh if not in today's map
+        if not _total_sh_conc and _SDW_AVAILABLE:
+            _total_sh_conc = sdw_get_total_sh(code, today_ds) or 0
         if _holders and _total_sh_conc > 0:
             top5_sh = sum(h.get('sh', 0) for h in _holders[:5])
             concentration = round(top5_sh / _total_sh_conc * 100, 2)

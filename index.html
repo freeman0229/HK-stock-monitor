@@ -182,23 +182,13 @@ FIX LOG
   Root cause: renderShort() read s.concentration directly from data.json (allStocks).
   data.json concentration is only written when main.py runs with SDW available at that
   moment — if SDW was unavailable or the latest SDW date post-dates the main.py run,
-  concentration is 0. Meanwhile sdwData is already seeded in memory from per-stock
-  sdw_XXXXX.json files loaded by the 大戶持倉 panel, which have up-to-date holders.
+  concentration is 0.
   Fix: in the augmented map in renderShort(), when s.concentration is 0, walk sdwDates
-  in reverse to find the latest available date for that stock, then compute concentration
-  as sum(top5 sh) / total_sh × 100 (falling back to sum of pct if total_sh unavailable)
-  — identical to the computation in main.py and sdwComputeSummary().
-  Location: renderShort() augmented map (merged with existing SFC augmentation).
-
-[Fix 22 — 2026-05-21] 累積沽空排行 持倉集中度 still showing "—" after Fix 19.
-  Root cause: Fix 19 augmented concentration from sdwData, but sdwData is only
-  populated for stocks the user has already viewed in 大戶持倉. For all other
-  stocks sdwData is empty at renderShort() time, so the lookup finds nothing.
-  Fix: compute concentration directly from s.sdw_holders + s.sdw_total_sh in
-  allStocks — these fields come from data.json and are always available at page
-  load without any extra network request. sdwData lookup is kept as fallback
-  (Priority 2) for cases where sdw_holders is absent from data.json.
-  Location: renderShort() augmented map, concentration block.
+  in reverse to find the latest available date for that stock in the global sdwData cache,
+  then compute concentration as sum(top5 sh) / total_sh × 100.
+  Note: sdw_holders is NOT stored in data.json (size concern). sdwData is seeded from
+  per-stock sdw snapshot on page load and updated lazily via fetchSdwCodeHistory().
+  Location: renderShort() augmented map; further improved in Fix 22, 24.
 
 [Fix 20 — 2026-05-21] 個股波幅通道: upper band spiky for dividend-paying / index-rebalancing stocks (e.g. 02800).
   Root cause: σ_up = std(high[i] - adj_close[i-1]). Yahoo close is dividend-adjusted but
@@ -224,6 +214,53 @@ FIX LOG
       stock-to to today before calling stkApplyRange(), and stkApplyRange() itself
       always sets stock-to = today when called from the dropdown.
   Location: stkApplyRange(), stock-range change listener in initStockPanel().
+
+[Fix 22 — 2026-05-21] 累積沽空排行 持倉集中度 still showing "—" after Fix 19.
+  Root cause: Fix 19 augmented concentration from sdwData, but sdwData is only
+  populated for stocks the user has already viewed in 大戶持倉. For all other
+  stocks sdwData is empty at renderShort() time, so the lookup finds nothing.
+  Fix: compute concentration directly from s.sdw_holders + s.sdw_total_sh in
+  allStocks — these fields come from data.json and are always available at page
+  load without any extra network request. sdwData lookup is kept as fallback
+  (Priority 2) for cases where sdw_holders is absent from data.json.
+  Location: renderShort() augmented map, concentration block.
+
+[Fix 23 — 2026-05-22] 恒生指數預測通道: x-axis dates missing on initial load.
+  Root cause: on first render renderHsiPanel() read from = hsi-from.value which
+  was hardcoded as "2002-01-01" in the HTML input element. This caused view to
+  include all ~1200 weeks of history regardless of the dropdown's default "1年"
+  selection, making tickEvery=52 (one label per year) and producing very few
+  visible labels on screen. The dropdown change listener correctly updated
+  hsi-from.value, so labels appeared after first interaction but not on load.
+  Fix: on initial render (hsi-from blank or "2002-01-01" and dropdown != from2002),
+  compute from from the dropdown value and update hsi-from.value. Also removed
+  hardcoded value="2002-01-01" from the HTML input so the detection is reliable.
+  Location: renderHsiPanel() date range setup; hsi-from input element.
+
+[Fix 24 — 2026-05-22] 累積沽空排行 持倉集中度 still "—" for stocks where data.json
+  has empty sdw_holders (e.g. 09660 地平線機器人-W) even though sdw_{code}.json
+  has holder data. Two-part fix:
+  (a) Inline sdwData fallback per row: when s.concentration is 0, look up
+      sdwLatestDateForCode() + sdwData live at render time, so any SDW data
+      already in memory (from a previous 大戶持倉 visit) is used immediately.
+  (b) Re-render trigger: after fetchSdwCodeHistory() loads a per-stock SDW file,
+      if 累積沽空 panel is active, call renderShort() so newly loaded data
+      appears without requiring a page reload.
+  Location: renderShort() row template (conc inline fallback);
+            fetchSdwCodeHistory() completion (re-render trigger).
+
+[Fix 25 — 2026-05-22] Bonds/ETFs (e.g. 03141 華夏亞投債, 02834 安碩指一百) appearing
+  in 挾倉風險圖 bubble chart and 挾倉風險 Top 15. Root cause: same as Fix 18 —
+  these instruments have stock_type="stock" in data.json because classify_stock()
+  in main.py didn't recognise them. The !NON_EQUITY_TYPES filter was insufficient.
+  Frontend fix: added isEquityStock(s) helper combining stock_type check with
+  name-based EXCL_KW check (same keywords as Fix 18). Applied to both the bubble
+  chart pts filter and the Top 15 eligible filter.
+  Backend fix (main.py Fix 11): added 03141/03199 to _BOND_CODES; broadened
+  _ETF_NAME_KW with ISHARES/CSOP/PREMIA; broadened _BOND_NAME_KW with Chinese
+  bond keywords. Next main.py run will fix stock_type permanently in data.json.
+  Location: isEquityStock() helper near NON_EQUITY_TYPES; drawShortRiskMap() pts
+            filter; drawShortRiskTop15() eligible filter.
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -1467,7 +1504,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <option value="from2002">2002至今</option>
       </select>
       <label style="font-size:13px;color:var(--muted)">自</label>
-      <input type="date" id="hsi-from" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)" value="2002-01-01" min="2002-01-01">
+      <input type="date" id="hsi-from" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)" min="2002-01-01">
       <label style="font-size:13px;color:var(--muted)">至</label>
       <input type="date" id="hsi-to" style="font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
       <button id="hsi-apply" style="font-size:13px;padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer">套用</button>
@@ -1616,6 +1653,16 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 let allStocks = [];
 const NON_EQUITY_TYPES = new Set(['etf', 'bond', 'derivative']);
+// Name-based non-equity filter — catches misclassified instruments in data.json
+// (e.g. bond ETFs whose stock_type is wrong until next main.py run).
+// Same keyword set as computeSfcCards() Fix 18.
+const _NON_EQUITY_NAME_KW = ['ETF','TRACKER FUND','INDEX FUND','LEVERAGED','INVERSE',
+  'GX ','CSOP','PREMIA','BOND','ISHARES','債','基金','指數'];
+function isEquityStock(s) {
+  if (NON_EQUITY_TYPES.has(s.stock_type)) return false;
+  const n = (s.name || s.name_chi || '').toUpperCase();
+  return !_NON_EQUITY_NAME_KW.some(k => n.includes(k));
+}
 let sdwRangeWeeks = 26; // default 6M
 let updateTime = '';
 let sbDate = '';          // date of southbound data (may be yesterday)
@@ -3296,38 +3343,26 @@ function renderShort() {
       if (rec.hkd) out = { ...out, sfc_hkd: rec.hkd || 0, sfc_sh: rec.sh || 0 };
     }
 
-    // Augment concentration when data.json has 0.
-    // Priority 1: compute directly from allStocks[s].sdw_holders (always available
-    //             from data.json snapshot — no sdwData lookup needed).
-    // Priority 2: fall back to live sdwData (populated after 大戶持倉 panel loads).
-    if (!(out.concentration > 0)) {
-      let conc = 0;
-      // Priority 1: sdw_holders snapshot in allStocks (data.json)
-      const snapHolders = s.sdw_holders || [];
-      const snapTotal   = s.sdw_total_sh || 0;
-      if (snapHolders.length > 0) {
-        const top5sh = snapHolders.slice(0, 5).reduce((a, h) => a + (h.sh || 0), 0);
-        conc = snapTotal > 0
-          ? Math.round(top5sh / snapTotal * 10000) / 100
-          : Math.round(snapHolders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0) * 100) / 100;
-      }
-      // Priority 2: live sdwData (only if Priority 1 gave nothing)
-      if (!(conc > 0) && sdwLatestDs) {
-        const latestStockDs = sdwDates.slice().reverse()
-          .find(d => sdwEntryHasHolders((sdwData[d] || {})[code5]));
-        if (latestStockDs) {
-          const raw     = (sdwData[latestStockDs] || {})[code5];
-          const holders = raw ? (Array.isArray(raw) ? raw : (raw.p || [])) : [];
-          const totalSh = raw && !Array.isArray(raw) ? (raw.total_sh || 0) : 0;
-          if (holders.length > 0) {
-            const top5sh = holders.slice(0, 5).reduce((a, h) => a + (h.sh || 0), 0);
-            conc = totalSh > 0
-              ? Math.round(top5sh / totalSh * 10000) / 100
-              : Math.round(holders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0) * 100) / 100;
-          }
+    // Augment concentration from live sdwData when data.json has 0.
+    // sdw_holders is not stored in data.json (too large); instead we look up
+    // the most recent available date for this stock in the global sdwData cache,
+    // which is populated from data.json's sdw snapshot on page load and updated
+    // lazily as the user visits stocks in the 大戶持倉 panel.
+    if (!(out.concentration > 0) && sdwLatestDs) {
+      const latestStockDs = sdwDates.slice().reverse()
+        .find(d => sdwEntryHasHolders((sdwData[d] || {})[code5]));
+      if (latestStockDs) {
+        const raw     = (sdwData[latestStockDs] || {})[code5];
+        const holders = raw ? (Array.isArray(raw) ? raw : (raw.p || [])) : [];
+        const totalSh = raw && !Array.isArray(raw) ? (raw.total_sh || 0) : 0;
+        if (holders.length > 0) {
+          const top5sh = holders.slice(0, 5).reduce((a, h) => a + (h.sh || 0), 0);
+          const conc   = totalSh > 0
+            ? Math.round(top5sh / totalSh * 10000) / 100
+            : Math.round(holders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0) * 100) / 100;
+          if (conc > 0) out = { ...out, concentration: conc };
         }
       }
-      if (conc > 0) out = { ...out, concentration: conc };
     }
 
     return out;
@@ -3423,7 +3458,25 @@ function renderShort() {
       : '—';
     const sfcPct    = s.sfc_pct || 0;
     const sfcPctFlag = sfcPct > 100 ? ' <span style="font-size:10px;color:var(--muted)" title="超過100%可能源於結算股數差異">*</span>' : '';
-    const conc      = s.concentration || 0;
+    // Compute concentration: prefer augmented value, fall back to live sdwData
+    // (sdwData may have been loaded after renderShort() was called, e.g. user
+    // visited 大戶持倉 for this stock after the table first rendered)
+    let conc = s.concentration || 0;
+    if (!(conc > 0)) {
+      const code5 = norm5(s.code);
+      const latestDs = sdwLatestDateForCode(code5);
+      if (latestDs) {
+        const raw = (sdwData[latestDs] || {})[code5];
+        const holders = raw ? (Array.isArray(raw) ? raw : (raw.p || [])) : [];
+        const totalSh = raw && !Array.isArray(raw) ? (raw.total_sh || 0) : 0;
+        if (holders.length > 0) {
+          const top5sh = holders.slice(0, 5).reduce((a, h) => a + (h.sh || 0), 0);
+          conc = totalSh > 0
+            ? Math.round(top5sh / totalSh * 10000) / 100
+            : Math.round(holders.slice(0, 5).reduce((a, h) => a + (h.pct || 0), 0) * 100) / 100;
+        }
+      }
+    }
     const tier      = concTier(conc);
     const concTxt   = conc > 0 ? conc.toFixed(1) + '%' : '—';
     const shortSt   = s.short_st  || 0;
@@ -3496,7 +3549,7 @@ function renderSqueezeTop10(stocks) {
   // squeeze_score is pre-computed in main.py and written to data.json
   const eligible = stocks.filter(s =>
     s.turnover > 0 && (s.short_ratio||0) > 0 && (s.days_to_cover||0) > 0
-    && !NON_EQUITY_TYPES.has(s.stock_type)  // ETFs/bonds/derivatives excluded
+    && isEquityStock(s)  // ETFs/bonds/derivatives excluded (stock_type + name check)
   );
   const top10 = [...eligible]
     .sort((a,b) => (b.squeeze_score||0) - (a.squeeze_score||0))
@@ -3542,7 +3595,7 @@ function drawShortRiskMap(stocks) {
   const pts = stocks.filter(s =>
     s.turnover > 0 && s.short_ratio > 0 && (s.days_to_cover||0) > 0
     && (s.squeeze_score || 0) >= 6
-    && !NON_EQUITY_TYPES.has(s.stock_type)  // ETFs/bonds/derivatives excluded
+    && isEquityStock(s)  // ETFs/bonds/derivatives excluded (stock_type + name check)
   );
 
   const PAD = {top:24, right:72, bottom:50, left:56};
@@ -3804,6 +3857,11 @@ async function fetchSdwCodeHistory(code) {
     }
   } catch(e) { /* file absent — stock has no history yet */ }
   sdwCodeCache[code5] = true;
+  // If 累積沽空 panel is currently active, re-render the table so newly
+  // loaded SDW concentration data shows immediately without a page reload.
+  if (document.getElementById('panel-short')?.style.display !== 'none') {
+    renderShort();
+  }
 }
 
 // ── Populate date selector ──────────────────────────────────────────────────
@@ -5458,10 +5516,22 @@ function renderHsiPanel() {
   const toEl = document.getElementById('hsi-to');
   if (toEl && !toEl.value) toEl.value = lastDs;
 
-  // Apply date range from controls
-  const fromEl = document.getElementById('hsi-from');
-  const from   = (fromEl?.value) || '2002-01-01';
-  const to     = (toEl?.value)   || lastDs;
+  // Apply date range from controls.
+  // On first render the hsi-from input has value="2002-01-01" hardcoded in HTML,
+  // which would always show full history regardless of the dropdown selection.
+  // Fix: if hsi-from matches the HTML default AND the dropdown is not 'from2002',
+  // compute from from the dropdown value so the default 1年 view is respected.
+  const fromEl  = document.getElementById('hsi-from');
+  const rangeElV = document.getElementById('hsi-range')?.value || '52';
+  let from;
+  if (rangeElV !== 'from2002' && (!fromEl?.value || fromEl.value === '2002-01-01')) {
+    const nw = parseInt(rangeElV) || 52;
+    from = dates.length > nw ? dates[dates.length - nw] : '2002-01-01';
+    if (fromEl) fromEl.value = from;
+  } else {
+    from = (fromEl?.value) || '2002-01-01';
+  }
+  const to     = (toEl?.value) || lastDs;
   const filtered = dates.filter(d => d >= from && d <= to);
   const view     = filtered.length >= 4 ? filtered : dates.slice(-52);
 
