@@ -1223,9 +1223,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION   : auto
           R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
-        env:
-          TFY_FROM_YEAR: ${{ inputs.tfy_from_year || '2025' }}
-          TFY_TO_YEAR  : ${{ inputs.tfy_to_year   || '2026' }}
+          TFY_FROM_YEAR        : ${{ inputs.tfy_from_year || '2025' }}
+          TFY_TO_YEAR          : ${{ inputs.tfy_to_year   || '2026' }}
         run: |
           # Dates >= 2026-02-02 are always protected (HKEX raw data from that date)
           python build_turnover_from_yahoo.py --rebuild --from-year $TFY_FROM_YEAR --to-year $TFY_TO_YEAR
