@@ -778,7 +778,7 @@ jobs:
       - name: Backfill SDW for date ${{ inputs.backfill_date }} (3 workers)
         env:
           SDW_WORKERS: "3"
-          SDW_WORKER_TIMEOUT: "5400"
+          SDW_WORKER_TIMEOUT: "21000"  # 350 min — matches 360 min job timeout with 10 min buffer
         run: python ccass_sdw_library.py --date "${{ inputs.backfill_date }}"
       - name: Verify DB before upload
         run: |
