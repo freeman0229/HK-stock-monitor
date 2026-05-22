@@ -261,6 +261,17 @@ FIX LOG
   bond keywords. Next main.py run will fix stock_type permanently in data.json.
   Location: isEquityStock() helper near NON_EQUITY_TYPES; drawShortRiskMap() pts
             filter; drawShortRiskTop15() eligible filter.
+
+[Fix 26 — 2026-05-22] 個股波幅通道: upper band spiky for high-volume stocks (e.g. 00388).
+  Root cause: vol_ratio = today_vol / avg_last_5_days. On earnings/rebalancing days,
+  today_vol can be 5-10x the 5-day average, blowing out the upper band. This is
+  separate from the adj/raw mismatch issue (Fix 20) which affects dividend stocks.
+  Fix: replaced with avg6/avg23 ratio (this week's avg vs last month's avg baseline).
+  avg6  = mean of last 6 days including today (current week).
+  avg23 = mean of last 23 days including today (rolling month baseline).
+  Week/month ratio is naturally bounded to ~2-3x in most cases, eliminating the
+  extreme spikes while still reflecting genuine elevated volatility periods.
+  Location: drawCai() per-day vol_ratio computation loop.
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -4859,17 +4870,23 @@ async function drawCai() {
   const sigmaUp   = _std(upMoves);
   const sigmaDown = _std(dnMoves);
 
-  // Compute per-day vol_ratio_5 and bands
+  // Compute per-day vol_ratio and bands.
+  // vol_ratio = avg6 / avg23:
+  //   avg6  = mean of last 6 trading days (current week including today)
+  //   avg23 = mean of last 23 trading days (rolling month baseline)
+  // Using a week/month ratio rather than today/5-day avoids extreme spikes on
+  // single high-volume days (earnings, index rebalancing) where today/avg5 can
+  // reach 5-10x. avg6/avg23 is naturally bounded to ~2-3x in most cases.
   const upper3 = [], lower3 = [], upper25 = [], lower25 = [];
   for (let i = 0; i < closeArr.length; i++) {
-    const vols5 = volArr.slice(Math.max(0, i-5), i).filter(v => v > 0);
-    const avgVol5 = vols5.length > 0 ? _mean(vols5) : 0;
-    const vr5 = (volArr[i] > 0 && avgVol5 > 0) ? volArr[i] / avgVol5 : 1.0;
+    const avg6  = _mean(volArr.slice(Math.max(0, i-5), i+1).filter(v => v > 0));
+    const avg23 = _mean(volArr.slice(Math.max(0, i-22), i+1).filter(v => v > 0));
+    const vr = (avg6 > 0 && avg23 > 0) ? avg6 / avg23 : 1.0;
     const c = closeArr[i];
-    upper3.push(+(c + sigmaUp   * vr5 * 2.6).toFixed(3));
-    lower3.push(+(c - sigmaDown * vr5 * 2.6).toFixed(3));
-    upper25.push(+(c + sigmaUp  * vr5 * 2.0).toFixed(3));
-    lower25.push(+(c - sigmaDown* vr5 * 2.0).toFixed(3));
+    upper3.push(+(c + sigmaUp   * vr * 2.6).toFixed(3));
+    lower3.push(+(c - sigmaDown * vr * 2.6).toFixed(3));
+    upper25.push(+(c + sigmaUp  * vr * 2.0).toFixed(3));
+    lower25.push(+(c - sigmaDown* vr * 2.0).toFixed(3));
   }
 
   // Determine view window based on pill range or custom date inputs
