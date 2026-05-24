@@ -272,6 +272,15 @@ FIX LOG
   Week/month ratio is naturally bounded to ~2-3x in most cases, eliminating the
   extreme spikes while still reflecting genuine elevated volatility periods.
   Location: drawCai() per-day vol_ratio computation loop.
+
+[Fix 27 — 2026-05-23] 恒生指數預測通道: x-axis dates still missing after Fix 23.
+  Root cause 1: tickEvery fixed thresholds were fragile — replaced with adaptive
+  formula tickEvery = max(1, round(view.length/10)) targeting ~10 labels.
+  Root cause 2: callback returned '' (empty string) for skipped ticks. Chart.js
+  with autoSkip:false allocates space for empty-string ticks and then hides
+  adjacent non-empty labels due to overlap. Fix: return null instead of '' for
+  skipped ticks — null tells Chart.js to truly skip the tick entirely.
+  Location: renderHsiPanel() tickEvery + sub-chart x-axis tick callback.
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -5570,7 +5579,8 @@ function renderHsiPanel() {
   const lowVsMa  = view.map((d,i) => +(weekly[d].l - ma4[i]).toFixed(0));
 
   const isDark    = matchMedia('(prefers-color-scheme:dark)').matches;
-  const tickEvery = view.length > 260 ? 52 : view.length > 104 ? 26 : view.length > 52 ? 13 : 4;
+  // tickEvery: target ~8-12 visible labels regardless of view size
+  const tickEvery = Math.max(1, Math.round(view.length / 10));
 
   if (hsiChartInst) { hsiChartInst.destroy(); hsiChartInst = null; }
   if (hsiVolInst)   { hsiVolInst.destroy();   hsiVolInst   = null; }
@@ -5894,7 +5904,9 @@ function renderHsiPanel() {
         x: { offset: false, display: true, ticks: {
             callback: (v,i) => {
               if (i === N-1) return '下週 ' + predLabel.slice(5);
-              return i % tickEvery === 0 ? chartLabels[i].slice(0,7) : '';
+              // Return null (not '') for skipped ticks — null tells Chart.js to
+              // truly skip the tick, preventing overlap-hiding of visible labels.
+              return i % tickEvery === 0 ? chartLabels[i].slice(0,7) : null;
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
             maxRotation: 0, font: { size: 10 }, padding: 4, autoSkip: false
