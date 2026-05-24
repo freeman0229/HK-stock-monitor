@@ -45,6 +45,7 @@ on:
         required: false
         default: '2026'
         type: string
+
       backfill_date:
         description: 'Date to backfill (YYYY-MM-DD) — e.g. 2025-04-11. Required for sdw-backfill.'
         required: false
@@ -1243,7 +1244,7 @@ jobs:
             aws s3 cp turnover_2026.json s3://hk-stock-monitor/turnover_2026.json \
               --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} --no-progress
             echo "Uploaded turnover_2026.json to R2"
-          fi"
+          fi
 
       - name: Verify
         run: |
