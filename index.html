@@ -948,8 +948,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
 /* ── HSI panel ─────────────────── */
 #panel-hsi { padding: 0 0 40px; }
-.hsi-chart-wrap { position: relative; width: 100%; height: 380px; margin-bottom: 0; }
-.hsi-vol-wrap   { position: relative; width: 100%; height: 200px; }
+.hsi-chart-wrap { position: relative; width: 100%; height: 280px; margin-bottom: 0; }
+.hsi-vol-wrap   { position: relative; width: 100%; height: 140px; }
 .hsi-loading    { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
 
 </style>
@@ -5906,7 +5906,7 @@ function renderHsiPanel() {
               if (i === N-1) return '下週 ' + predLabel.slice(5);
               // Return null (not '') for skipped ticks — null tells Chart.js to
               // truly skip the tick, preventing overlap-hiding of visible labels.
-              return i % tickEvery === 0 ? chartLabels[i].slice(0,7) : null;
+              return i % tickEvery === 0 ? chartLabels[i].slice(2,10) : null;
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
             maxRotation: 0, font: { size: 10 }, padding: 4, autoSkip: false
