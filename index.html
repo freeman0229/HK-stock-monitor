@@ -5035,8 +5035,8 @@ async function drawCai() {
   const aFit  = s => { s.width = YW; };
   const aFitR = s => { s.width = 32; };
   const xHide = {offset:false, ticks:{display:false}, grid:{color:gc}, border:{display:false}};
-  const xShow = {offset:false, ticks:{font:{size:10}, color:'#888', maxRotation:0,
-    callback:(v,i) => i % Math.max(1, Math.floor(N/8)) === 0 ? chartLabels[i].slice(2,10) : ''},
+  const xShow = {offset:false, ticks:{font:{size:10}, color:'#888', maxRotation:0, autoSkip:false,
+    callback:(v,i) => { if (i % Math.max(1, Math.floor(N/8)) !== 0) return null; const l=chartLabels[i]||''; return l.length===10 ? l.slice(8,10)+'/'+l.slice(5,7)+'/'+l.slice(2,4) : l; }},
     grid:{color:gc}, border:{display:false}};
 
   // Main price + channel chart
@@ -5906,7 +5906,7 @@ function renderHsiPanel() {
               if (i === N-1) return '下週 ' + predLabel.slice(5);
               // Return null (not '') for skipped ticks — null tells Chart.js to
               // truly skip the tick, preventing overlap-hiding of visible labels.
-              return i % tickEvery === 0 ? chartLabels[i].slice(2,10) : null;
+              return i % tickEvery === 0 ? (chartLabels[i].length===10 ? chartLabels[i].slice(8,10)+'/'+chartLabels[i].slice(5,7)+'/'+chartLabels[i].slice(2,4) : chartLabels[i]) : null;
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
             maxRotation: 0, font: { size: 10 }, padding: 4, autoSkip: false
@@ -6273,12 +6273,11 @@ function stkDrawCharts(series) {
 
   const afterFitY = scale => { scale.width = YW; };
   const xHide = { offset:false, ticks:{display:false}, grid:{color:gc}, border:{display:false} };
-  const xShow = { offset:false, ticks:{font:{size:10},color:'#888',maxRotation:0,
+  const xShow = { offset:false, ticks:{font:{size:10},color:'#888',maxRotation:0, autoSkip:false,
     callback:(v,i) => {
-      if (i % Math.max(1, Math.floor(N/8)) !== 0) return '';
+      if (i % Math.max(1, Math.floor(N/8)) !== 0) return null;
       const lbl = series.labels[i] || '';
-      // series.labels are now YYYY-MM-DD — show MM-DD for compactness
-      return lbl.length === 10 ? lbl.slice(5) : lbl;
+      return lbl.length === 10 ? lbl.slice(8,10)+'/'+lbl.slice(5,7)+'/'+lbl.slice(2,4) : lbl;
     }},
     grid:{color:gc}, border:{display:false} };
 
