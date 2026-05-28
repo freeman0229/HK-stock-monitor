@@ -5903,10 +5903,9 @@ function renderHsiPanel() {
       scales: {
         x: { offset: false, display: true, ticks: {
             callback: (v,i) => {
-              if (i === N-1) return '下週 ' + predLabel.slice(5);
-              // Return null (not '') for skipped ticks — null tells Chart.js to
-              // truly skip the tick, preventing overlap-hiding of visible labels.
-              return i % tickEvery === 0 ? (chartLabels[i].length===10 ? chartLabels[i].slice(8,10)+'/'+chartLabels[i].slice(5,7)+'/'+chartLabels[i].slice(2,4) : chartLabels[i]) : null;
+              if (i === N-1) return '下週 ' + (predLabel.length===10 ? predLabel.slice(8,10)+'/'+predLabel.slice(5,7)+'/'+predLabel.slice(2,4) : predLabel.slice(5));
+              const l = chartLabels[i] || '';
+              return i % tickEvery === 0 ? (l.length===10 ? l.slice(8,10)+'/'+l.slice(5,7)+'/'+l.slice(2,4) : l||null) : null;
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
             maxRotation: 0, font: { size: 10 }, padding: 4, autoSkip: false
