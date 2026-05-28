@@ -260,7 +260,7 @@ FIX LOG
   _ETF_NAME_KW with ISHARES/CSOP/PREMIA; broadened _BOND_NAME_KW with Chinese
   bond keywords. Next main.py run will fix stock_type permanently in data.json.
   Location: isEquityStock() helper near NON_EQUITY_TYPES; drawShortRiskMap() pts
-            filter; drawShortRiskTop15() eligible filter.
+            filter; renderSqueezeTop10() eligible filter.
 
 [Fix 26 — 2026-05-22] 個股波幅通道: upper band spiky for high-volume stocks (e.g. 00388).
   Root cause: vol_ratio = today_vol / avg_last_5_days. On earnings/rebalancing days,
@@ -949,7 +949,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 /* ── HSI panel ─────────────────── */
 #panel-hsi { padding: 0 0 40px; }
 .hsi-chart-wrap { position: relative; width: 100%; height: 280px; margin-bottom: 0; }
-.hsi-vol-wrap   { position: relative; width: 100%; height: 140px; }
+.hsi-vol-wrap   { position: relative; width: 100%; height: 165px; }
 .hsi-loading    { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
 
 </style>
@@ -1771,6 +1771,7 @@ const isValidName = s => {
 const CACHE_KEY       = 'hk_dashboard_data_v5';
 const SDW_BASE_URL    = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
 const CHART_CACHE_KEY = 'hk_chart_data_v5';
+const SFC_CACHE_KEY   = 'hk_sfc_cards_v1';
 // CACHE_TTL_MS / _isCacheValid removed — cache is now kept indefinitely as
 // last-known-good data, shown until a fresh data.json fetch succeeds.
 
@@ -1841,10 +1842,16 @@ function applyData(d, stale) {
 
   // Reset SDW state so fresh data reseeds correctly
   if (!stale) {
-    sdwLoaded = false;
-    sdwData   = {};
-    sdwDates  = [];
+    sdwLoaded    = false;
+    sdwData      = {};
+    sdwDates     = [];
     stkRankCache = null;
+    // Clear per-stock JSON caches so 5-min refresh picks up latest data
+    if (typeof stkSfcCache  !== 'undefined') stkSfcCache  = {};
+    if (typeof stkSdwCache  !== 'undefined') stkSdwCache  = {};
+    if (typeof sdwCodeCache !== 'undefined') sdwCodeCache = {};
+    if (typeof yahooStockCache !== 'undefined') yahooStockCache = {};
+    if (typeof tvStockCache    !== 'undefined') tvStockCache    = {};
   }
 
   // Data sanity check
@@ -2561,7 +2568,6 @@ function computeSfcCards() {
   const topInc = [...entries].filter(e => e.hkd_delta > 0).sort((a,b) => b.hkd_delta - a.hkd_delta)[0];
   const topDec = [...entries].filter(e => e.hkd_delta < 0).sort((a,b) => a.hkd_delta - b.hkd_delta)[0];
 
-  const SFC_CACHE_KEY = 'hk_sfc_cards_v1';
   let sfcCache = {};
   try { sfcCache = JSON.parse(localStorage.getItem(SFC_CACHE_KEY) || '{}'); } catch(e) {}
 
@@ -2600,7 +2606,7 @@ function computeSfcCards() {
 // ── Yahoo Finance historical cache ────────────────────────────────────────────
 // Per-stock Yahoo cache: yahooStockCache[code5] = {date_str: {open,high,low,close,vol}}
 let yahooStockCache = {};
-const YAHOO_R2_BASE = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
+const YAHOO_R2_BASE = SDW_BASE_URL;  // same R2 bucket
 
 async function loadYahooStock(code5) {
   if (yahooStockCache[code5]) return yahooStockCache[code5];
@@ -2615,7 +2621,7 @@ async function loadYahooStock(code5) {
 
 // Per-stock TV+Short cache: tvStockCache[code5] = {date_str: {close,high,low,vol,tv?,vwap?,sv?,st?}}
 let tvStockCache = {};
-const TV_STOCK_BASE = 'https://pub-0b0781d969ec4b38b173f889109244a9.r2.dev';
+const TV_STOCK_BASE = SDW_BASE_URL;  // same R2 bucket
 
 async function loadTvStock(code5) {
   if (tvStockCache[code5]) return tvStockCache[code5];
@@ -3402,11 +3408,11 @@ function renderShort() {
   const avg = sorted.reduce((a,s) => a + s.short_ratio, 0) / sorted.length;
 
   // 日沽空 TOP — highest 沽空金額($) from adj_short section of HKEX dayquot (short_st = 沽空金額 HKD), exclude ETFs
-  const topVol  = [...sorted].filter(s => s.short_st > 0 && !NON_EQUITY_TYPES.has(s.stock_type))
+  const topVol  = [...sorted].filter(s => s.short_st > 0 && isEquityStock(s))
                              .sort((a,b) => (b.short_st||0) - (a.short_st||0))[0];
   // 日沽空比率 TOP — highest short_ratio = 沽空股數(SH) / 成交股數 × 100, exclude ETFs
   const topRatio = [...sorted].filter(s => s.short_ratio > 0 && s.short_ratio <= 100
-                                        && !NON_EQUITY_TYPES.has(s.stock_type) && s.turnover > 0)
+                                        && isEquityStock(s) && s.turnover > 0)
                               .sort((a,b) => b.short_ratio - a.short_ratio)[0];
   // 累積沽空 TOP — highest Aggregated Reportable Short Positions (HK$) from SFC
   const topSfc  = [...sorted].filter(s => s.sfc_hkd > 0)
@@ -3429,7 +3435,6 @@ function renderShort() {
 
   // SFC cards (累積沽空 TOP, 沽空增加最多, 空頭平倉最多) are driven by computeSfcCards()
   // which reads directly from sfc_YYYY.json — only populate from cache here as initial state
-  const SFC_CACHE_KEY = 'hk_sfc_cards_v1';
   let sfcCache = {};
   try { sfcCache = JSON.parse(localStorage.getItem(SFC_CACHE_KEY) || '{}'); } catch(e) {}
   const usingCache = !!sfcCache.sfcTopName;
@@ -3870,7 +3875,8 @@ async function fetchSdwCodeHistory(code) {
     }
     // Extend sdwDates using by_date keys (lib.dates may not exist in R2 files)
     const allFileDates = Object.keys(byDate);
-    const newDates = allFileDates.filter(d => !sdwDates.includes(d));
+    const sdwDateSet = new Set(sdwDates);
+    const newDates = allFileDates.filter(d => !sdwDateSet.has(d));
     if (newDates.length) {
       sdwDates = [...new Set([...sdwDates, ...newDates])].sort();
       sdwPopulateDates();
@@ -4672,29 +4678,6 @@ async function initSdwPanel() {
   }
 }
 
-// ── Cai Channel ──────────────────────────────────────────────────────────
-// ── ATR (Average True Range) ─────────────────────────────────────────────────
-function computeATR(highHistory, lowHistory, closeHistory, period = 24) {
-  const result = [];
-  for (let i = 0; i < closeHistory.length; i++) {
-    if (i === 0 || i < period) { result.push(null); continue; }
-    const trWindow = [];
-    for (let j = i - period + 1; j <= i; j++) {
-      const prevClose = closeHistory[j - 1];
-      const tr = Math.max(
-        highHistory[j]  - lowHistory[j],
-        Math.abs(highHistory[j]  - prevClose),
-        Math.abs(lowHistory[j]   - prevClose)
-      );
-      trWindow.push(tr);
-    }
-    const atr    = trWindow.reduce((a, v) => a + v, 0) / period;
-    const atrPct = closeHistory[i] > 0 ? atr / closeHistory[i] * 100 : 0;
-    result.push({ atr: +atr.toFixed(4), atrPct: +atrPct.toFixed(4) });
-  }
-  return result;
-}
-
 function caiSetStock(code) {
   const s = allStocks.find(x => x.code === code) || allStocks.find(x => String(parseInt(x.code)) === String(parseInt(code)));
   if (!s) return;
@@ -4899,7 +4882,7 @@ async function drawCai() {
   }
 
   // Determine view window based on pill range or custom date inputs
-  const todayStr = dates[dates.length - 1] || new Date().toISOString().slice(0, 10);
+  const todayStr = new Date().toISOString().slice(0, 10);
   let fromDs = caiFromDs, toDs = caiToDs || todayStr;
   if (!caiFromDs) {
     const msPerDay = 86400000;
@@ -4929,8 +4912,12 @@ async function drawCai() {
 
   // Append a synthetic "tomorrow" label so the final shifted-band prediction point
   // has a matching x-axis slot. Price/high/low get null for that slot.
+  // Skip weekends: if lastDate is Friday (+1=Sat) jump to Monday, if Thu (+1=Fri, ok).
   const lastDate   = dateView[dateView.length - 1] || toDs;
-  const tmrLabel   = new Date(new Date(lastDate).getTime() + 86400000).toISOString().slice(0, 10);
+  const _tmr = new Date(new Date(lastDate).getTime() + 86400000);
+  if (_tmr.getUTCDay() === 6) _tmr.setUTCDate(_tmr.getUTCDate() + 2); // Sat → Mon
+  else if (_tmr.getUTCDay() === 0) _tmr.setUTCDate(_tmr.getUTCDate() + 1); // Sun → Mon
+  const tmrLabel   = _tmr.toISOString().slice(0, 10);
   const chartLabels = [...dateView, tmrLabel];
   const chartClose  = [...closeView, null];
   const chartHigh   = [...highView,  null];
@@ -5108,34 +5095,6 @@ async function drawCai() {
   bindCaiHover(c2);
 }
 
-function calcRsi(data, period=14) {
-  const rsi = Array(data.length).fill(null);
-  let avgG=0, avgL=0;
-  for (let i=1; i<=period; i++) { const d=data[i]-data[i-1]; if(d>0) avgG+=d; else avgL-=d; }
-  avgG/=period; avgL/=period;
-  rsi[period] = +(100-100/(1+(avgG/(avgL||1e-9)))).toFixed(2);
-  for (let i=period+1; i<data.length; i++) {
-    const d=data[i]-data[i-1], g=d>0?d:0, l=d<0?-d:0;
-    avgG=(avgG*(period-1)+g)/period; avgL=(avgL*(period-1)+l)/period;
-    rsi[i] = +(100-100/(1+(avgG/(avgL||1e-9)))).toFixed(2);
-  }
-  return rsi;
-}
-
-function calcEma(data, period) {
-  const k=2/(period+1), result=Array(data.length).fill(null);
-  let si=-1;
-  for (let i=0;i<data.length;i++) { if(data[i]!=null){si=i;break;} }
-  if (si<0) return result;
-  const initSlice = data.slice(si, si+period).filter(v=>v!=null);
-  if (initSlice.length < period) return result;
-  result[si+period-1] = initSlice.reduce((a,b)=>a+b,0)/period;
-  for (let i=si+period; i<data.length; i++) {
-    if (data[i]==null||result[i-1]==null) continue;
-    result[i] = +(data[i]*k+result[i-1]*(1-k)).toFixed(4);
-  }
-  return result;
-}
 
 
 // ── SbChart hover tooltip ─────────────────────────────────────────────────────
@@ -5337,7 +5296,7 @@ function renderSignalPanel() {
 
   // ── Section 1: 不尋常沽空 ──────────────────────────────────────────────────
   const shortStocks = allStocks
-    .filter(s => s.insight === '🚨 不尋常沽空' && !NON_EQUITY_TYPES.has(s.stock_type))
+    .filter(s => s.insight === '🚨 不尋常沽空' && isEquityStock(s))
     .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
     .slice(0, 10);
 
@@ -5368,7 +5327,7 @@ function renderSignalPanel() {
 
   // ── Section 2: 大戶增持 ────────────────────────────────────────────────────
   const dahuStocks = allStocks
-    .filter(s => s.insight === '🏦 大戶增持' && !NON_EQUITY_TYPES.has(s.stock_type))
+    .filter(s => s.insight === '🏦 大戶增持' && isEquityStock(s))
     .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
     .slice(0, 10);
 
@@ -5399,7 +5358,7 @@ function renderSignalPanel() {
 
   // ── Section 3: 空頭平倉 ────────────────────────────────────────────────────
   const coverStocks = allStocks
-    .filter(s => s.insight === '📉 空頭平倉' && !NON_EQUITY_TYPES.has(s.stock_type))
+    .filter(s => s.insight === '📉 空頭平倉' && isEquityStock(s))
     .sort((a, b) => (b.turnover || 0) - (a.turnover || 0))
     .slice(0, 10);
 
@@ -5538,9 +5497,9 @@ function renderHsiPanel() {
   document.getElementById('hsi-ph30').textContent      = ph25avg.toFixed(0);
   document.getElementById('hsi-pl30').textContent      = pl25avg.toFixed(0);
 
-  // Set default 'to' date to latest
+  // Set default 'to' date to today so the latest weeks are always visible
   const toEl = document.getElementById('hsi-to');
-  if (toEl && !toEl.value) toEl.value = lastDs;
+  if (toEl && !toEl.value) toEl.value = new Date().toISOString().slice(0, 10);
 
   // Apply date range from controls.
   // On first render the hsi-from input has value="2002-01-01" hardcoded in HTML,
@@ -5557,7 +5516,7 @@ function renderHsiPanel() {
   } else {
     from = (fromEl?.value) || '2002-01-01';
   }
-  const to     = (toEl?.value) || lastDs;
+  const to     = (toEl?.value) || new Date().toISOString().slice(0, 10);
   const filtered = dates.filter(d => d >= from && d <= to);
   const view     = filtered.length >= 4 ? filtered : dates.slice(-52);
 
@@ -5898,7 +5857,7 @@ function renderHsiPanel() {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      layout: { padding: { left: 0, right: 0 } },
+      layout: { padding: { left: 0, right: 0, bottom: 2 } },
       plugins: { legend: { display: false }, tooltip: { enabled: false } },
       scales: {
         x: { offset: false, display: true, ticks: {
@@ -5908,8 +5867,8 @@ function renderHsiPanel() {
               return i % tickEvery === 0 ? (l.length===10 ? l.slice(8,10)+'/'+l.slice(5,7)+'/'+l.slice(2,4) : l||null) : null;
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
-            maxRotation: 0, font: { size: 10 }, padding: 4, autoSkip: false
-          }, afterFit: s => { s.height = Math.max(s.height, 42); }, grid: { display: false }, border: { display: false } },
+            maxRotation: 0, font: { size: 10 }, padding: 2, autoSkip: false
+          }, grid: { display: false }, border: { display: false } },
         y: {
           afterFit: s => { s.width = 52; },
           min: -maxOscHsi * 1.3,
@@ -5945,7 +5904,7 @@ function renderHsiPanel() {
         const fromDate = dates.length > nw ? dates[dates.length - nw] : '2002-01-01';
         document.getElementById('hsi-from').value = fromDate;
       }
-      document.getElementById('hsi-to').value = lastDs;
+      document.getElementById('hsi-to').value = new Date().toISOString().slice(0, 10);
       hsiVlineIdx = null;
       renderHsiPanel();
     });
@@ -6054,8 +6013,8 @@ async function initHsiPanel() {
   if (rangeEl && fromEl) {
     const v = rangeEl.value;
     const dates = Object.keys(hsiData.weekly).sort();
-    const lastDs = dates[dates.length - 1];
-    if (toEl && !toEl.value) toEl.value = lastDs;
+    const lastDs = dates[dates.length - 1]; // still needed for hsi-from calculation
+    if (toEl && !toEl.value) toEl.value = new Date().toISOString().slice(0, 10);
     if (v === 'from2002') {
       fromEl.value = '2002-01-01';
     } else {
@@ -6113,7 +6072,7 @@ async function stkEnsureSdw(code5) {
   if (stkSdwCache[code5]) return;
   try {
     const r = await fetch(`${SDW_BASE_URL}/sdw_${code5}.json`, {cache:'no-cache'});
-    if (!r.ok) return;
+    if (!r.ok) { stkSdwCache[code5] = {}; return; }
     const lib = await r.json();
     stkSdwCache[code5] = lib;
     // Merge into global sdwData/sdwDates so drawSdwChart (持倉集中度趨勢) can use it
@@ -6124,10 +6083,12 @@ async function stkEnsureSdw(code5) {
         if (!sdwData[ds]) sdwData[ds] = {};
         sdwData[ds][code5] = entry;
       }
-      const newDates = Object.keys(byDate).filter(d => !sdwDates.includes(d));
+      const newDates = Object.keys(byDate).filter(d => !new Set(sdwDates).has(d));
       if (newDates.length)
         sdwDates = [...new Set([...sdwDates, ...newDates])].sort();
     }
+    // Mark sdwCodeCache so fetchSdwCodeHistory skips a redundant re-fetch
+    if (typeof sdwCodeCache !== 'undefined') sdwCodeCache[code5] = true;
   } catch(e) {}
 }
 
