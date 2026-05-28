@@ -40,6 +40,11 @@ Changelog:
           amount while raw high/low stay at pre-div levels, inflating sigma_up and
           producing visible spikes in the 個股波幅通道 upper band).
           Adj Close is kept as fallback only for stocks where raw Close is unavailable.
+  [Fix 8] SLEEP_BATCH reduced from 10s → 3s. yf.download() makes one HTTP
+          request per batch of 20 tickers — SLEEP_BATCH is a between-batch pause,
+          not a per-ticker delay. 3s is a meaningful rate-limit guard and saves
+          ~9 min over 133 batches. --update / --rebuild use the same constant
+          and benefit equally from the reduction.
 """
 
 import json
@@ -72,7 +77,13 @@ for _yf_logger_name in ("yfinance", "yfinance.base", "yfinance.download"):
     logging.getLogger(_yf_logger_name).addFilter(_YFTzFilter())
 
 START_YEAR      = 1995
-SLEEP_BATCH     = 10
+# [Fix 8] Reduced from 10s → 3s. yf.download() fetches all BATCH_SIZE tickers
+# in a single HTTP request, so SLEEP_BATCH guards between batch-level API calls
+# (133 total for 2652 stocks), not per-ticker. 3s is still a meaningful pause
+# against Yahoo rate-limiting while saving ~9 min over a full --today run.
+# --update and --rebuild are unaffected in terms of safety; they sleep between
+# batches the same way and their per-year sleep(2) is unchanged.
+SLEEP_BATCH     = 3
 BATCH_SIZE      = 20
 MAX_RETRIES     = 3
 RETRY_SLEEP     = 30

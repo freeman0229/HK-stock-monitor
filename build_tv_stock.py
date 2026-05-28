@@ -35,6 +35,13 @@ Changelog:
           build_turnover.py job) was available, so tv_*.json files were missing
           all 2025 data. Called at the start of run() and the --code single-stock
           path so all modes benefit.
+  [Fix 2] _sync_r2_tv_files() now accepts an optional `codes` set. In daily
+          incremental mode, active stocks are determined first (from the latest
+          date in turnover data), then only those tv_*.json files are fetched
+          from R2 via targeted aws s3 cp calls instead of a full aws s3 sync.
+          This cuts the daily tv-build step from ~61 min (sync all 2280 files)
+          to ~2-3 min (sync only today's active stocks, typically ~1500-2000).
+          Backfill and rebuild modes are unchanged — they still use full sync.
 
 Usage:
   python build_tv_stock.py              # incremental update (normal daily use)
@@ -197,24 +204,59 @@ def _sync_r2_turnover_files():
         log.warning("_sync_r2_turnover_files failed: %s", e)
 
 
-def _sync_r2_tv_files():
-    """Batch download all tv_*.json from R2 using aws s3 sync (fast, one call)."""
+def _sync_r2_tv_files(codes: set = None):
+    """
+    Download tv_*.json files from R2.
+
+    If `codes` is given (a set of code5 strings), only those specific files are
+    fetched using individual aws s3 cp calls — fast for small sets (daily
+    incremental: ~active stocks on today's date, typically << 2280).
+
+    If `codes` is None, falls back to aws s3 sync for the full bucket — used by
+    backfill/rebuild modes where all stocks are needed.
+    """
     if not R2_ENDPOINT:
         return
-    try:
-        cmd = ["aws", "s3", "sync", R2_BUCKET, ".",
-               "--endpoint-url", R2_ENDPOINT,
-               "--exclude", "*",
-               "--include", "tv_*.json",
-               "--no-progress"]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if r.returncode == 0:
-            count = len(re.findall(r"tv_\d{5}\.json", r.stdout))
-            log.info("Synced %d tv_*.json files from R2", count)
-        else:
-            log.warning("R2 sync warning: %s", r.stderr.strip()[:200])
-    except Exception as e:
-        log.warning("R2 sync failed: %s -- will start fresh", e)
+    if codes is not None:
+        # Targeted download: one cp per stock — O(active) instead of O(universe)
+        log.info("Syncing %d tv_*.json files from R2 (targeted) …", len(codes))
+        ok = fail = skip = 0
+        for code5 in sorted(codes):
+            path = tv_path(code5)
+            if os.path.exists(path):
+                skip += 1
+                continue
+            try:
+                cmd = ["aws", "s3", "cp",
+                       f"{R2_BUCKET}/{path}", path,
+                       "--endpoint-url", R2_ENDPOINT, "--no-progress"]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                if r.returncode == 0:
+                    ok += 1
+                else:
+                    # File may not exist on R2 yet (new stock) — not an error
+                    fail += 1
+            except Exception as e:
+                log.warning("R2 cp failed for %s: %s", code5, e)
+                fail += 1
+        log.info("Targeted sync done: downloaded=%d skipped=%d not_on_r2=%d",
+                 ok, skip, fail)
+    else:
+        # Full sync — backfill / rebuild modes
+        try:
+            cmd = ["aws", "s3", "sync", R2_BUCKET, ".",
+                   "--endpoint-url", R2_ENDPOINT,
+                   "--exclude", "*",
+                   "--include", "tv_*.json",
+                   "--no-progress"]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if r.returncode == 0:
+                count = len(re.findall(r"tv_\d{5}\.json", r.stdout))
+                log.info("Synced %d tv_*.json files from R2", count)
+            else:
+                log.warning("R2 sync warning: %s", r.stderr.strip()[:200])
+        except Exception as e:
+            log.warning("R2 sync failed: %s -- will start fresh", e)
 
 
 def _list_r2_tv_codes() -> set:
@@ -339,22 +381,25 @@ def run(universe: list, rebuild: bool = False, backfill: bool = False):
     if rebuild:
         # Full rebuild: process every stock, overwrite all existing dates
         active = set(universe)
+        # Full sync needed — all stocks required
+        log.info("Syncing all tv_*.json from R2 (rebuild) …")
+        _sync_r2_tv_files(codes=None)
     else:
-        # Both backfill and daily incremental: sync existing tv_*.json from R2
-        # in one batch call so we can merge new dates into existing history.
-        log.info("Syncing existing tv_*.json from R2 …")
-        _sync_r2_tv_files()
-
         if backfill:
             # Backfill: process all stocks in universe
             active = set(universe)
             log.info("Backfill: %d stocks to process", len(active))
+            # Full sync needed — all stocks required
+            log.info("Syncing all tv_*.json from R2 (backfill) …")
+            _sync_r2_tv_files(codes=None)
         else:
-            # Daily incremental: only process stocks active on the most recent
-            # trading day — avoids uploading unchanged stocks every day.
+            # Daily incremental: determine active stocks first, then only sync
+            # those tv_*.json files from R2 — avoids downloading all 2280 files.
             latest_ds = max(tv_all.keys())
             active    = set(tv_all[latest_ds].keys()) & set(universe)
             log.info("Incremental: %d stocks active on %s", len(active), latest_ds)
+            # Targeted sync: only fetch tv files for today's active stocks
+            _sync_r2_tv_files(codes=active)
 
     total   = len(active)
     updated = skipped = 0

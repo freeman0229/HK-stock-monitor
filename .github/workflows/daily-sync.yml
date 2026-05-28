@@ -99,6 +99,9 @@ jobs:
   # [Fix] timeout-minutes: 45 → 30. Tighter ceiling gives yahoo-backfill (13:30 UTC)
   #       a guaranteed 60-min gap instead of the previous 45-min gap, preventing
   #       simultaneous R2 access if daily ever ran close to its old timeout.
+  # [Fix] TV+Short per-stock build moved to daily-tv-build job (needs: daily) so it
+  #       never competes with the 30-min budget here. daily-tv-build runs after this
+  #       job completes and has its own 90-min timeout, well before yahoo-backfill.
   daily:
     name: Daily analysis
     runs-on: ubuntu-latest
@@ -185,6 +188,47 @@ jobs:
           git diff --staged --quiet || \
             (git commit -m "Update data: $(date +'%Y-%m-%d %H:%M')" && git push)
 
+  # ── Daily TV+Short per-stock build (Mon–Fri, after daily) ──────────────────
+  # Runs after the daily job completes (needs: daily) so it never competes with
+  # the 30-min daily budget. Reads fresh turnover/short data from R2, builds
+  # tv_{code5}.json per stock and uploads to R2.
+  # timeout-minutes: 90 — 2280 stocks × ~1.6s ≈ 61 min + setup overhead.
+  # Safe ceiling: daily starts 12:00 UTC, daily typically finishes ~12:27,
+  # so tv-build runs ~12:27–13:30 at most, ending before yahoo-backfill (13:30 UTC).
+  daily-tv-build:
+    name: Daily TV+Short per-stock build
+    needs: daily
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: daily-tv-build
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 12 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'daily')
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with: { python-version: '3.11', cache: 'pip' }
+      - run: pip install -r requirements.txt
+
+      - name: Download turnover files from R2
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          aws s3 cp s3://hk-stock-monitor/turnover_2026.json turnover_2026.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "Warning: turnover_2026.json not found in R2"
+          aws s3 cp s3://hk-stock-monitor/turnover_2025.json turnover_2025.json \
+            --endpoint-url ${{ secrets.R2_ENDPOINT_URL }} || \
+          echo "Warning: turnover_2025.json not found in R2"
+
       - name: Build per-stock TV+Short files → upload to R2
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -192,7 +236,6 @@ jobs:
           AWS_DEFAULT_REGION   : auto
           R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
         run: python build_tv_stock.py
-        # Runs AFTER commit — so timeout here never blocks data.json update
         # Reads all local turnover_{YYYY}.json + short_{YYYY}.json
         # Merges per stock per day → tv_{code5}.json → uploads to R2
         # Incremental: never overwrites existing dates
