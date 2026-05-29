@@ -281,6 +281,71 @@ FIX LOG
   adjacent non-empty labels due to overlap. Fix: return null instead of '' for
   skipped ticks — null tells Chart.js to truly skip the tick entirely.
   Location: renderHsiPanel() tickEvery + sub-chart x-axis tick callback.
+
+[Fix 28 — 2026-05-29] 恒生指數預測通道: x-axis dates still missing after Fix 27.
+  Three-part fix:
+  (a) tickEvery was computed from view.length before predLabel was appended, so
+      the stride was 1 short. Moved tickEvery declaration to after N is defined
+      and changed formula to round(N/10) so the stride correctly covers all
+      chartLabels including the prediction point.
+  (b) Chart.js internal overlap suppression was firing despite autoSkip:false —
+      added maxTicksLimit:20 and autoSkipPadding:0 to the sub-chart x-axis ticks
+      to prevent Chart.js from silently hiding labels in cramped layouts.
+  (c) .hsi-vol-wrap height increased from 165px to 185px to give Chart.js enough
+      vertical room to render tick labels without triggering layout suppression.
+  Location: renderHsiPanel() tickEvery placement + N formula; hsiVolInst x-axis
+            ticks (maxTicksLimit, autoSkipPadding); .hsi-vol-wrap CSS height.
+
+[Fix 29 — 2026-05-29] 個股通道 tooltip shows 高/收市/低: — for the latest date.
+  Root cause: the chart always appends a synthetic "tomorrow" label so the
+  final shifted prediction band has an x-axis slot. That slot (idx === N-1)
+  has null for price — intentional — but the tooltip showed the date with
+  高/收市/低: — alongside real band values, looking like a data error.
+  Fix: showCaiTip() detects isPredSlot = (idx === N-1). For prediction slots:
+  - Adds a red 預測 badge next to the date in the header.
+  - Omits 高/收市/低 and 高-5MA/低-5MA rows entirely (not available yet).
+  - Shows only the four band values (預測上2.6σ / 上2σ / 下2σ / 下2.6σ).
+  When Yahoo data eventually includes that date it becomes a real slot and
+  reverts to full display automatically.
+  Location: showCaiTip() — isPredSlot guard + conditional row rendering.
+
+[Fix 30 — 2026-05-29] 個股綜合分析 換手率 top chart: broken line gap (Aug–Sep 2025).
+  Root cause: turnArr pushes null when totalSh === 0. totalSh comes from
+  sdwByDate[nearestSdw] where nearestSdw is the most recent SDW date ≤ ds.
+  For early dates in the 1-year view the per-stock sdw_{code}.json starts
+  later than the view range, so nearestSdw is undefined → totalSh = 0 →
+  null for every day in the gap → Chart.js spanGaps:false breaks the line.
+  Two-part fix:
+  (a) fallbackTotSh: reads sdw_total_sh from allStocks (data.json snapshot,
+      always present at page load) and uses it as totalSh denominator when
+      SDW history has no entry for that date — gives a stable approximation
+      for early history rather than null.
+  (b) spanGaps:true on the 換手率 dataset — belt-and-suspenders: any
+      remaining isolated nulls (genuine missing vol days) are bridged over
+      rather than breaking the line.
+  Location: stkBuildSeries() fallbackTotSh + totalSh fallback chain;
+            stkDrawCharts() Panel 1 dataset spanGaps.
+
+[Cleanup — 2026-05-29] Redundancy and inconsistency pass.
+  CSS:
+  - Removed unused .lap-only {} rule.
+  - Removed redundant gap:0 from .ticker-inner and #tabbar (flex default).
+  - Extracted 3 reusable CSS classes to replace repeated inline styles:
+    .btn-toggle (展開明細 ▼ buttons), .btn-range / .btn-range.active
+    (SDW 3M/6M/1Y and 前5位/前10位 range buttons).
+  JS redundancy:
+  - toggleShortTable / toggleBshuiTable / toggleCcassTop collapsed into one
+    toggleTable(wrapId, btnId); aliases kept for safety.
+  - sdwSetRange / sdwSetTopN: replaced btn.style.cssText inline-string
+    manipulation with btn.classList.toggle('active', ...).
+  - predLabel = nextMonday pure alias removed; IIFE assigned directly to
+    predLabel; weekly[nextMonday] updated to weekly[predLabel].
+  - isDark grid color expression repeated 3× in renderHsiPanel extracted
+    to const gridColor.
+  JS inconsistency / bug:
+  - computeSfcCards() had local EXCL_KW array missing 'ISHARES' vs global
+    _NON_EQUITY_NAME_KW. Replaced with _NON_EQUITY_NAME_KW — now consistent
+    and ISHARES instruments are correctly excluded.
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -376,7 +441,6 @@ body {
 }
 .ticker-inner {
   display: inline-flex;
-  gap: 0;
   animation: scroll 40s linear infinite;
 }
 #ticker:hover .ticker-inner { animation-play-state: paused; }
@@ -393,7 +457,6 @@ body {
   border-bottom: 1px solid var(--border);
   display: flex;
   padding: 0 16px;
-  gap: 0;
   position: sticky;
   top: var(--header-h);
   z-index: 90;
@@ -442,7 +505,6 @@ body {
 }
 
 /* ── Visibility helpers ── */
-.lap-only  { }
 .mob-hide  { }
 .land-hide { }
 .port-hide { }
@@ -944,12 +1006,25 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 }
 
 
-
+/* ── Reusable button classes ── */
+/* Toggle expand/collapse buttons (展開明細 ▼) */
+.btn-toggle {
+  border: 1px solid var(--border); background: var(--card); color: var(--muted);
+  border-radius: 4px; padding: 4px 12px; font-size: 12px; cursor: pointer;
+  font-family: 'Noto Sans TC', sans-serif; transition: all .2s;
+}
+/* Small pill range / topN buttons (3M / 6M / 1Y / 前5位 / 前10位) */
+.btn-range {
+  padding: 4px 10px; font-size: 11px; border-radius: 6px;
+  border: 0.5px solid var(--border); background: var(--card); color: var(--muted);
+  cursor: pointer; font-family: inherit;
+}
+.btn-range.active { border-color: var(--red); background: var(--red); color: #fff; }
 
 /* ── HSI panel ─────────────────── */
 #panel-hsi { padding: 0 0 40px; }
 .hsi-chart-wrap { position: relative; width: 100%; height: 280px; margin-bottom: 0; }
-.hsi-vol-wrap   { position: relative; width: 100%; height: 165px; }
+.hsi-vol-wrap   { position: relative; width: 100%; height: 185px; }
 .hsi-loading    { text-align: center; padding: 60px 0; color: var(--muted); font-size: 14px; }
 
 </style>
@@ -1028,11 +1103,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <!-- Toggle button -->
   <div class="sec-head">
     <div class="sec-title">個股明細</div>
-    <button id="toggle-bshui-tbl" onclick="toggleBshuiTable()" style="
-      border:1px solid var(--border);background:var(--card);color:var(--muted);
-      border-radius:4px;padding:4px 12px;font-size:12px;cursor:pointer;
-      font-family:'Noto Sans TC',sans-serif;transition:all .2s;
-    ">展開明細 ▼</button>
+    <button id="toggle-bshui-tbl" onclick="toggleTable('bshui-tbl-wrap','toggle-bshui-tbl')" class="btn-toggle">展開明細 ▼</button>
   </div>
   <div id="bshui-tbl-wrap" class="tbl-wrap" style="display:none;">
     <table id="tbl-bshui">
@@ -1057,11 +1128,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
   <div class="sec-head" style="margin-top:16px">
     <div class="sec-title">北水持股比例</div>
-    <button id="toggle-ccass-top" onclick="toggleCcassTop()" style="
-      border:1px solid var(--border);background:var(--card);color:var(--muted);
-      border-radius:4px;padding:4px 12px;font-size:12px;cursor:pointer;
-      font-family:'Noto Sans TC',sans-serif;transition:all .2s;
-    ">展開明細 ▼</button>
+    <button id="toggle-ccass-top" onclick="toggleTable('ccass-top-wrap','toggle-ccass-top')" class="btn-toggle">展開明細 ▼</button>
   </div>
   <div id="ccass-top-wrap" class="tbl-wrap" style="display:none">
     <table id="tbl-ccass-top">
@@ -1190,10 +1257,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
   <div class="sec-head">
     <div class="sec-title">累積沽空排行</div>
-    <button id="toggle-short-tbl" onclick="toggleShortTable()"
-      style="border:1px solid var(--border);background:var(--card);color:var(--muted);
-             border-radius:4px;padding:4px 12px;font-size:12px;cursor:pointer;
-             font-family:'Noto Sans TC',sans-serif;transition:all .2s;">展開明細 ▼</button>
+    <button id="toggle-short-tbl" onclick="toggleTable('short-tbl-wrap','toggle-short-tbl')" class="btn-toggle">展開明細 ▼</button>
   </div>
   <div id="short-tbl-wrap" class="tbl-wrap" style="display:none">
     <table id="tbl-short">
@@ -1287,9 +1351,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <div id="sdw-group-sub" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
       </div>
       <div id="sdw-range-btns" style="display:flex;gap:6px;align-items:center">
-        <button onclick="sdwSetRange(13)"  id="sdw-range-13"  style="padding:4px 10px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">3M</button>
-        <button onclick="sdwSetRange(26)"  id="sdw-range-26"  style="padding:4px 10px;font-size:11px;border-radius:6px;border:0.5px solid var(--red);background:var(--red);color:#fff;cursor:pointer;font-family:inherit">6M</button>
-        <button onclick="sdwSetRange(52)"  id="sdw-range-52"  style="padding:4px 10px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">1Y</button>
+        <button onclick="sdwSetRange(13)"  id="sdw-range-13"  class="btn-range">3M</button>
+        <button onclick="sdwSetRange(26)"  id="sdw-range-26"  class="btn-range active">6M</button>
+        <button onclick="sdwSetRange(52)"  id="sdw-range-52"  class="btn-range">1Y</button>
       </div>
     </div>
     <canvas id="sdwGroupCanvas" style="width:100%;display:block;min-height:200px"></canvas>
@@ -1309,10 +1373,8 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <div style="font-size:11px;color:var(--label);margin-top:2px" id="sdw-tbl-sub"></div>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
-        <button id="sdw-top5-btn-5"  onclick="sdwSetTopN(5)"
-          style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--red);background:var(--red);color:#fff;cursor:pointer;font-family:inherit">前5位</button>
-        <button id="sdw-top5-btn-10" onclick="sdwSetTopN(10)"
-          style="padding:4px 12px;font-size:11px;border-radius:6px;border:0.5px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;font-family:inherit">前10位</button>
+        <button id="sdw-top5-btn-5"  onclick="sdwSetTopN(5)"  class="btn-range active">前5位</button>
+        <button id="sdw-top5-btn-10" onclick="sdwSetTopN(10)" class="btn-range">前10位</button>
       </div>
     </div>
     <div class="tbl-wrap">
@@ -2111,29 +2173,18 @@ function stockSortCmp(a, b, col, dir) {
   return dir === 'asc' ? av - bv : bv - av;
 }
 
-function toggleShortTable() {
-  const wrap = document.getElementById('short-tbl-wrap');
-  const btn  = document.getElementById('toggle-short-tbl');
+// Generic expand/collapse for 展開明細 ▼ buttons
+function toggleTable(wrapId, btnId) {
+  const wrap = document.getElementById(wrapId);
+  const btn  = document.getElementById(btnId);
   const open = wrap.style.display === 'none';
   wrap.style.display = open ? 'block' : 'none';
   btn.textContent = open ? '收起明細 ▲' : '展開明細 ▼';
 }
-
-function toggleBshuiTable() {
-  const wrap = document.getElementById('bshui-tbl-wrap');
-  const btn  = document.getElementById('toggle-bshui-tbl');
-  const open = wrap.style.display === 'none';
-  wrap.style.display = open ? 'block' : 'none';
-  btn.textContent = open ? '收起明細 ▲' : '展開明細 ▼';
-}
-
-function toggleCcassTop() {
-  const wrap = document.getElementById('ccass-top-wrap');
-  const btn  = document.getElementById('toggle-ccass-top');
-  const open = wrap.style.display === 'none';
-  wrap.style.display = open ? 'block' : 'none';
-  btn.textContent = open ? '收起明細 ▲' : '展開明細 ▼';
-}
+// Aliases kept for any external references
+const toggleShortTable  = () => toggleTable('short-tbl-wrap',  'toggle-short-tbl');
+const toggleBshuiTable  = () => toggleTable('bshui-tbl-wrap',  'toggle-bshui-tbl');
+const toggleCcassTop    = () => toggleTable('ccass-top-wrap',   'toggle-ccass-top');
 
 // ── Layout detection ─────────────────────────────────────────────────────
 function getLayout() {
@@ -2555,11 +2606,9 @@ function computeSfcCards() {
       // (covers warrants, bonds, and other SFC-reported instruments outside our universe)
       if (!s) return false;
       if (NON_EQUITY_TYPES.has(s.stock_type)) return false;
-      // Name-based fallback: catch non-equity instruments misclassified in data.json
+      // Name-based fallback: use global keyword list (same as isEquityStock)
       const n = (e.name || '').toUpperCase();
-      const EXCL_KW = ['ETF','TRACKER FUND','INDEX FUND','LEVERAGED','INVERSE','GX ','CSOP','PREMIA','BOND',
-                       '債','基金','指數'];
-      return !EXCL_KW.some(k => n.includes(k));
+      return !_NON_EQUITY_NAME_KW.some(k => n.includes(k));
     });
 
   if (!entries.length) return;
@@ -3801,24 +3850,15 @@ function sdwSetRange(weeks) {
   sdwRangeWeeks = weeks;
   [13, 26, 52].forEach(w => {
     const btn = document.getElementById(`sdw-range-${w}`);
-    if (!btn) return;
-    btn.style.cssText = `padding:4px 10px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;` +
-      (w === weeks ? 'border:0.5px solid var(--red);background:var(--red);color:#fff'
-                   : 'border:0.5px solid var(--border);background:var(--card);color:var(--muted)');
+    if (btn) btn.classList.toggle('active', w === weeks);
   });
   renderSdwPanel();
 }
 
 function sdwSetTopN(n) {
   sdwTopN = n;
-  document.getElementById('sdw-top5-btn-5').style.cssText  =
-    `padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;` +
-    (n===5  ? 'border:0.5px solid var(--red);background:var(--red);color:#fff'
-             : 'border:0.5px solid var(--border);background:var(--card);color:var(--muted)');
-  document.getElementById('sdw-top5-btn-10').style.cssText =
-    `padding:4px 12px;font-size:11px;border-radius:6px;cursor:pointer;font-family:inherit;` +
-    (n===10 ? 'border:0.5px solid var(--red);background:var(--red);color:#fff'
-             : 'border:0.5px solid var(--border);background:var(--card);color:var(--muted)');
+  document.getElementById('sdw-top5-btn-5') .classList.toggle('active', n === 5);
+  document.getElementById('sdw-top5-btn-10').classList.toggle('active', n === 10);
   renderSdwPanel();
 }
 const SDW_COLORS  = [
@@ -4974,6 +5014,7 @@ async function drawCai() {
     const wrap = document.getElementById('cai-charts-wrap');
     if (!tip || !wrap) return;
     if (idx === null) { tip.style.display = 'none'; return; }
+    const isPredSlot = idx === N - 1;  // synthetic tomorrow slot — no real price data
     const c   = closeView[idx];
     const hi  = highView[idx], lo = lowView[idx];
     const u3  = u3ViewS[idx],  l3 = l3ViewS[idx];
@@ -4981,16 +5022,22 @@ async function drawCai() {
     const hlH = hlOscHigh[idx], hlL = hlOscLow[idx];
     const row = (lbl, val, col) => `<span style="color:${col||'#aaa'}">${lbl}</span>　${val??'—'}<br>`;
     tip.innerHTML =
-      `<b style="color:#bbb">${chartLabels[idx]}</b><br>` +
-      row('高',      hi?.toFixed(3),  '#aaa') +
-      row('收市',    c?.toFixed(3),   '#378ADD') +
-      row('低',      lo?.toFixed(3),  '#aaa') +
-      row('預測上2.6σ', u3?.toFixed(3),  '#c0252d') +
-      row('預測上2σ',u25?.toFixed(3),'rgba(192,37,45,0.7)') +
-      row('預測下2σ',l25?.toFixed(3),'rgba(26,122,60,0.7)') +
-      row('預測下2.6σ', l3?.toFixed(3),  '#1a7a3c') +
-      row('高−5MA',  hlH != null ? (hlH >= 0 ? '+' : '') + hlH.toFixed(3) : '—', '#c0252d') +
-      row('低−5MA',  hlL != null ? (hlL >= 0 ? '+' : '') + hlL.toFixed(3) : '—', '#2a9d8f');
+      `<b style="color:#bbb">${chartLabels[idx]}${isPredSlot ? ' <span style="color:#c0252d;font-size:10px">預測</span>' : ''}</b><br>` +
+      (isPredSlot
+        ? row('預測上2.6σ', u3?.toFixed(3),  '#c0252d') +
+          row('預測上2σ',  u25?.toFixed(3), 'rgba(192,37,45,0.7)') +
+          row('預測下2σ',  l25?.toFixed(3), 'rgba(26,122,60,0.7)') +
+          row('預測下2.6σ', l3?.toFixed(3),  '#1a7a3c')
+        : row('高',      hi?.toFixed(3),  '#aaa') +
+          row('收市',    c?.toFixed(3),   '#378ADD') +
+          row('低',      lo?.toFixed(3),  '#aaa') +
+          row('預測上2.6σ', u3?.toFixed(3),  '#c0252d') +
+          row('預測上2σ',u25?.toFixed(3),'rgba(192,37,45,0.7)') +
+          row('預測下2σ',l25?.toFixed(3),'rgba(26,122,60,0.7)') +
+          row('預測下2.6σ', l3?.toFixed(3),  '#1a7a3c') +
+          row('高−5MA',  hlH != null ? (hlH >= 0 ? '+' : '') + hlH.toFixed(3) : '—', '#c0252d') +
+          row('低−5MA',  hlL != null ? (hlL >= 0 ? '+' : '') + hlL.toFixed(3) : '—', '#2a9d8f')
+      );
     tip.style.display = 'block';
     const wr = wrap.getBoundingClientRect();
     const cx = e.clientX - wr.left;
@@ -5538,8 +5585,7 @@ function renderHsiPanel() {
   const lowVsMa  = view.map((d,i) => +(weekly[d].l - ma4[i]).toFixed(0));
 
   const isDark    = matchMedia('(prefers-color-scheme:dark)').matches;
-  // tickEvery: target ~8-12 visible labels regardless of view size
-  const tickEvery = Math.max(1, Math.round(view.length / 10));
+  const gridColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
 
   if (hsiChartInst) { hsiChartInst.destroy(); hsiChartInst = null; }
   if (hsiVolInst)   { hsiVolInst.destroy();   hsiVolInst   = null; }
@@ -5548,14 +5594,15 @@ function renderHsiPanel() {
   // Prediction from week d uses d's close + next week's open (correct open-based sigma)
   // So prediction for week[i+1] is calculated from week[i]'s close + week[i+1]'s open
   // The last week's prediction goes to the 下週 label (next Monday's date)
-  const nextMonday = (() => {
+  const predLabel = (() => {
     const d = new Date(lastDs + 'T00:00:00');
     d.setDate(d.getDate() + 7);
     return d.toISOString().slice(0, 10);
   })();
-  const predLabel   = nextMonday;
   const chartLabels = [...labels, predLabel];
   const N = chartLabels.length;
+  // tickEvery: target ~10 visible labels; use N (includes prediction point) for correct stride
+  const tickEvery = Math.max(1, Math.round(N / 10));
 
   // Helper: get prediction value for week d, given next week's open nxo
   const predPh3  = (d, nxo) => +( ((weekly[d].c + sigmaUp  *channel[d].vr*3.0) + (nxo + sigmaUpO  *channel[d].vr*3.0)) / 2 ).toFixed(0);
@@ -5564,7 +5611,7 @@ function renderHsiPanel() {
   const predPl25 = (d, nxo) => +( ((weekly[d].c - sigmaDown*channel[d].vr*2.5) + (nxo - sigmaDownO*channel[d].vr*2.5)) / 2 ).toFixed(0);
 
   // Next week's open for last prediction point — from JSON if build_hsi fetched it, else fallback to lastRec.c
-  const nextWeekO = (weekly[nextMonday]?.o) || lastRec.c;
+  const nextWeekO = (weekly[predLabel]?.o) || lastRec.c;
 
   // Shift: prediction from view[i] displays at view[i+1]; first point is null
   const predPhData = [
@@ -5813,9 +5860,9 @@ function renderHsiPanel() {
         x: {
           offset: false,
           ticks: { display: false },
-          grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
+          grid: { color: gridColor }
         },
-        y:  { afterFit: s => { s.width = 52; }, ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' } },
+        y:  { afterFit: s => { s.width = 52; }, ticks: { callback: v => v.toFixed(0), font: { size: 11 } }, grid: { color: gridColor } },
         yR: { position: 'right', afterFit: s => { s.width = 32; }, display: true, ticks: { display: false }, grid: { display: false }, border: { display: false } }
       }
     }
@@ -5867,14 +5914,15 @@ function renderHsiPanel() {
               return i % tickEvery === 0 ? (l.length===10 ? l.slice(8,10)+'/'+l.slice(5,7)+'/'+l.slice(2,4) : l||null) : null;
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
-            maxRotation: 0, font: { size: 10 }, padding: 2, autoSkip: false
+            maxRotation: 0, font: { size: 10 }, padding: 2, autoSkip: false,
+            maxTicksLimit: 20, autoSkipPadding: 0
           }, grid: { display: false }, border: { display: false } },
         y: {
           afterFit: s => { s.width = 52; },
           min: -maxOscHsi * 1.3,
           max:  maxOscHsi * 1.3,
           ticks: { callback: v => v > 0 ? '+'+v : String(v), font: { size: 10 }, color: isDark ? 'rgba(255,255,255,0.4)' : '#888' },
-          grid: { color: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }
+          grid: { color: gridColor }
         },
         yR: { position: 'right', afterFit: s => { s.width = 32; }, display: true, ticks: { display: false }, grid: { display: false }, border: { display: false } }
       }
@@ -6128,6 +6176,10 @@ async function stkBuildSeries(code5, fromDs, toDs) {
   // SDW by_date
   const sdwByDate   = (stkSdwCache[code5] || {}).by_date || {};
   const sdwDateKeys = Object.keys(sdwByDate).sort();
+  // Fallback total_sh from data.json snapshot — used when sdw_code.json has no entry
+  // for early dates (prevents null gaps in the 換手率 line for the full date range)
+  const stockRec      = allStocks.find(s => norm5(s.code) === code5);
+  const fallbackTotSh = stockRec?.sdw_total_sh || 0;
 
   // Build vol index for O(1) rolling 24-day lookup
   const sortedVolDates = tradingDays.filter(d => (tvByDate[d]?.vol || 0) > 0);
@@ -6146,13 +6198,15 @@ async function stkBuildSeries(code5, fromDs, toDs) {
     volArr  .push(rec.vol   > 0 ? rec.vol   : null);
 
     // 換手率: rolling 24-day vol sum / SDW total_sh
+    // Falls back to data.json sdw_total_sh when the per-stock SDW file has no entry
+    // for this date — prevents null gaps in early history where sdw_code.json starts late.
     const dsIdx = volDateIdx.has(ds) ? volDateIdx.get(ds) : -1;
     const vol24 = dsIdx >= 0
       ? sortedVolDates.slice(Math.max(0, dsIdx - 23), dsIdx + 1)
           .reduce((s, d) => s + (tvByDate[d]?.vol || 0), 0)
       : 0;
     const nearestSdw = sdwDateKeys.filter(d => d <= ds).slice(-1)[0];
-    const totalSh    = nearestSdw ? (sdwByDate[nearestSdw]?.total_sh || 0) : 0;
+    const totalSh    = (nearestSdw ? (sdwByDate[nearestSdw]?.total_sh || 0) : 0) || fallbackTotSh;
     turnArr.push(totalSh > 0 && vol24 > 0 ? +(vol24 / totalSh * 100).toFixed(2) : null);
 
     // Top10持倉 — exact SDW Friday dates only
@@ -6347,7 +6401,7 @@ function stkDrawCharts(series) {
       label:'換手率',data:series.turn,
       borderColor:'#b8860b',borderWidth:1.5,
       backgroundColor:'rgba(184,134,11,0.07)',
-      fill:true,pointRadius:0,tension:0.3,spanGaps:false,
+      fill:true,pointRadius:0,tension:0.3,spanGaps:true,
     }]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false},tooltip:{enabled:false}},
