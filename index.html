@@ -5883,9 +5883,39 @@ function renderHsiPanel() {
     ...lowVsMa.filter(v=>v!=null).map(Math.abs), 1
   );
 
+  // Custom plugin: draw x-axis date labels directly on canvas, bypassing
+  // Chart.js internal overlap detection which suppresses labels on wide desktop canvases.
+  const hsiVolXLabelsPlugin = {
+    id: 'hsiVolXLabels',
+    afterDraw(chart) {
+      const xScale = chart.scales.x;
+      if (!xScale) return;
+      const ctx2 = chart.ctx;
+      const bottom = chart.chartArea.bottom;
+      ctx2.save();
+      ctx2.font = '10px sans-serif';
+      ctx2.textAlign = 'center';
+      ctx2.textBaseline = 'top';
+      for (let i = 0; i < N; i++) {
+        if (i !== N - 1 && i % tickEvery !== 0) continue;
+        const x = xScale.getPixelForValue(i);
+        let label;
+        if (i === N - 1) {
+          label = '下週 ' + (predLabel.length === 10 ? predLabel.slice(8,10)+'/'+predLabel.slice(5,7)+'/'+predLabel.slice(2,4) : predLabel.slice(5));
+        } else {
+          const l = chartLabels[i] || '';
+          label = l.length === 10 ? l.slice(8,10)+'/'+l.slice(5,7)+'/'+l.slice(2,4) : l;
+        }
+        ctx2.fillStyle = i === N - 1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888');
+        ctx2.fillText(label, x, bottom - 12);
+      }
+      ctx2.restore();
+    }
+  };
+
   hsiVolInst = new Chart(document.getElementById('hsiVolCanvas'), {
     type: 'bar',
-    plugins: [makeHsiVolVline()],
+    plugins: [makeHsiVolVline(), hsiVolXLabelsPlugin],
     data: {
       labels: chartLabels,
       datasets: [
@@ -5915,18 +5945,8 @@ function renderHsiPanel() {
       plugins: { legend: { display: false }, tooltip: { enabled: false } },
       scales: {
         x: { offset: false, display: true, ticks: {
-            callback: (v,i) => {
-              if (i === N-1) return '下週 ' + (predLabel.length===10 ? predLabel.slice(8,10)+'/'+predLabel.slice(5,7)+'/'+predLabel.slice(2,4) : predLabel.slice(5));
-              const l = chartLabels[i] || '';
-              return i % tickEvery === 0 ? (l.length===10 ? l.slice(8,10)+'/'+l.slice(5,7)+'/'+l.slice(2,4) : l||null) : null;
-            },
-            color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
-            maxRotation: 0, font: { size: 10 }, padding: 2,
-            autoSkip: false, autoSkipPadding: 0,
-            sampleSize: N,
-          },
-          afterBuildTicks(axis) {
-            axis.ticks = axis.ticks.filter((t, i) => i === N-1 || i % tickEvery === 0);
+            display: false,
+            autoSkip: false,
           },
           grid: { display: false }, border: { display: false } },
         y: {
