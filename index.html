@@ -2381,10 +2381,10 @@ function renderBshui() {
     }
   }
 
-  const topBuy    = [...display].sort((a,b) => b.sb_net - a.sb_net)[0];
-  const topSell   = [...display].sort((a,b) => a.sb_net - b.sb_net)[0];
+  const topBuy    = [...sorted].sort((a,b) => b.sb_net - a.sb_net)[0];
+  const topSell   = [...sorted].sort((a,b) => a.sb_net - b.sb_net)[0];
 
-  const topConsec = [...display].sort((a,b) => (b.sb_consec||0) - (a.sb_consec||0))[0];
+  const topConsec = [...sorted].sort((a,b) => (b.sb_consec||0) - (a.sb_consec||0))[0];
 
   document.getElementById('sb-top-buy').textContent = topBuy ? fmtM(topBuy.sb_net) : '--';
   document.getElementById('sb-top-buy-name').textContent = topBuy ? topBuy.name_chi : '--';
@@ -2419,7 +2419,7 @@ function renderBshui() {
   }
 
   // Draw chart — compute sb_net rank change
-  const prevSorted = [...display].sort((a,b) => (b.sb_net_prev||0) - (a.sb_net_prev||0));
+  const prevSorted = [...sorted].sort((a,b) => (b.sb_net_prev||0) - (a.sb_net_prev||0));
   const prevRankMap = {};
   prevSorted.forEach((s,i) => { prevRankMap[s.code] = i + 1; });
   const sortedWithRankChange = sorted.map((s,i) => {
