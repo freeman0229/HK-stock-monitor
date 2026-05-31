@@ -5727,9 +5727,11 @@ function renderHsiPanel() {
   document.getElementById('hsi-loading').style.display = 'none';
   document.getElementById('hsi-content').style.display = 'block';
 
-  // Double rAF: first frame triggers browser layout, second frame lets Chart.js
-  // read the correct canvas pixel width before building tick label measurements.
-  requestAnimationFrame(() => requestAnimationFrame(() => {
+  // Use setTimeout(0) to yield to the browser so it can complete the layout pass
+  // for the newly-visible panel before Chart.js measures canvas dimensions.
+  // rAF alone is insufficient because the .panel.active class change and initHsiPanel()
+  // are called in the same synchronous event handler tick.
+  setTimeout(() => {
 
   hsiChartInst = new Chart(document.getElementById('hsiCanvas'), {
     type: 'line',
@@ -5939,7 +5941,7 @@ function renderHsiPanel() {
     }
   });
 
-  })); // end double requestAnimationFrame
+  }, 0); // end setTimeout — ensures browser layout before Chart.js init
 
   // Wire up range selector
   const rangeEl  = document.getElementById('hsi-range');
