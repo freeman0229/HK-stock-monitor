@@ -326,6 +326,19 @@ FIX LOG
   Location: stkBuildSeries() fallbackTotSh + totalSh fallback chain;
             stkDrawCharts() Panel 1 dataset spanGaps.
 
+[Fix 31 — 2026-05-29] 恒生指數預測通道: x-axis dates missing on desktop (visible on mobile).
+  Root cause: desktop renders the full-width chart with all data points spread across a
+  wide canvas. Chart.js's internal overlap-detection suppresses ticks even with autoSkip:false
+  when the computed label widths sum to more than the axis pixel width — this fires on desktop
+  but not on mobile (fewer visible points in the narrower canvas).
+  Fix: added afterBuildTicks(axis) to hsiVolInst's x-axis. This hook runs after Chart.js
+  builds its tick list but before it renders — by filtering axis.ticks directly to only
+  the desired stride indices (i % tickEvery === 0) plus the prediction point (i === N-1),
+  the suppressor has nothing left to remove. The callback still formats the label text.
+  Also added sampleSize:N to prevent Chart.js from sampling a subset of ticks for width
+  measurement on large datasets.
+  Location: hsiVolInst x-axis — afterBuildTicks + sampleSize added.
+
 [Cleanup — 2026-05-29] Redundancy and inconsistency pass.
   CSS:
   - Removed unused .lap-only {} rule.
@@ -500,14 +513,8 @@ body {
   gap: 10px;
   margin-bottom: 16px;
 }
-#sb-summary {
-  grid-template-columns: repeat(4, 1fr);
-}
 
-/* ── Visibility helpers ── */
-.mob-hide  { }
-.land-hide { }
-.port-hide { }
+/* ── Visibility helpers (hidden by media queries below) ── */
 
 /* ══════════════════════════════════════════════════
    PHONE LANDSCAPE / TABLET  481–1023px
@@ -549,7 +556,7 @@ body {
 ══════════════════════════════════════════════════ */
 @media (max-width: 480px) {
   :root { --header-h: 42px; }
-  #header { padding: 0 10px; gap: 6px; height: 42px; }
+  #header { padding: 0 10px; gap: 6px; }
   .logo { font-size: 16px; }
   .header-meta { font-size: 11px; gap: 6px; }
   #ticker { display: none; }
@@ -558,7 +565,7 @@ body {
     grid-template-columns: 1fr 1fr;
     padding: 0;
     overflow-x: visible;
-    top: 42px;
+    top: var(--header-h);
   }
   .tab-btn {
     height: 38px; font-size: 13px; padding: 0 8px;
@@ -1021,6 +1028,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 }
 .btn-range.active { border-color: var(--red); background: var(--red); color: #fff; }
 
+/* ── Sum card sub-code line (stock code under name in summary cards) ── */
+.sum-code { font-size: 10px; color: var(--muted); margin-top: 1px; }
+
 /* ── HSI panel ─────────────────── */
 #panel-hsi { padding: 0 0 40px; }
 .hsi-chart-wrap { position: relative; width: 100%; height: 280px; margin-bottom: 0; }
@@ -1149,11 +1159,11 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <!-- ═══ Panel 2: 累積沽空 ════════════════════════════════════════════════════ -->
 <div class="panel" id="panel-short">
   <div class="summary-bar" style="grid-template-columns:repeat(5,1fr)">
-    <div class="sum-card"><div class="sum-label">日沽空 TOP</div><div class="sum-val up" id="sh-vol-top-name">--</div><div class="sum-sub" id="sh-vol-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-vol-top-val">--</div></div>
-    <div class="sum-card"><div class="sum-label">日沽空比率 TOP</div><div class="sum-val up" id="sh-ratio-top-name">--</div><div class="sum-sub" id="sh-ratio-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-ratio-top-val">--</div></div>
-    <div class="sum-card"><div class="sum-label">累積沽空 TOP</div><div class="sum-val gold" id="sh-sfc-top-name">--</div><div class="sum-sub" id="sh-sfc-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-sfc-top-val">--</div></div>
-    <div class="sum-card"><div class="sum-label">沽空增加最多</div><div class="sum-val up" id="sh-inc-top-name">--</div><div class="sum-sub" id="sh-inc-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-inc-top-val">--</div></div>
-    <div class="sum-card"><div class="sum-label">空頭平倉最多</div><div class="sum-val dn" id="sh-dec-top-name">--</div><div class="sum-sub" id="sh-dec-top-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div><div class="sum-sub" id="sh-dec-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">日沽空 TOP</div><div class="sum-val up" id="sh-vol-top-name">--</div><div class="sum-code" id="sh-vol-top-code"></div><div class="sum-sub" id="sh-vol-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">日沽空比率 TOP</div><div class="sum-val up" id="sh-ratio-top-name">--</div><div class="sum-code" id="sh-ratio-top-code"></div><div class="sum-sub" id="sh-ratio-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">累積沽空 TOP</div><div class="sum-val gold" id="sh-sfc-top-name">--</div><div class="sum-code" id="sh-sfc-top-code"></div><div class="sum-sub" id="sh-sfc-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">沽空增加最多</div><div class="sum-val up" id="sh-inc-top-name">--</div><div class="sum-code" id="sh-inc-top-code"></div><div class="sum-sub" id="sh-inc-top-val">--</div></div>
+    <div class="sum-card"><div class="sum-label">空頭平倉最多</div><div class="sum-val dn" id="sh-dec-top-name">--</div><div class="sum-code" id="sh-dec-top-code"></div><div class="sum-sub" id="sh-dec-top-val">--</div></div>
   </div>
 
   <!-- ── Risk map ── -->
@@ -1293,25 +1303,25 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div class="sum-card">
       <div class="sum-label">持倉最集中</div>
       <div class="sum-val" id="sdw-conc-name">--</div>
-      <div class="sum-sub" id="sdw-conc-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div>
+      <div class="sum-code" id="sdw-conc-code"></div>
       <div class="sum-sub" id="sdw-conc-val">--</div>
     </div>
     <div class="sum-card">
       <div class="sum-label">最大單一持倉</div>
       <div class="sum-val up" id="sdw-max-name">--</div>
-      <div class="sum-sub" id="sdw-max-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div>
+      <div class="sum-code" id="sdw-max-code"></div>
       <div class="sum-sub" id="sdw-max-pct">--</div>
     </div>
     <div class="sum-card">
       <div class="sum-label">本週增持最多</div>
       <div class="sum-val up" id="sdw-inc-name">--</div>
-      <div class="sum-sub" id="sdw-inc-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div>
+      <div class="sum-code" id="sdw-inc-code"></div>
       <div class="sum-sub" id="sdw-inc-val">--</div>
     </div>
     <div class="sum-card">
       <div class="sum-label">本週減持最多</div>
       <div class="sum-val dn" id="sdw-dec-name">--</div>
-      <div class="sum-sub" id="sdw-dec-code" style="font-size:10px;color:var(--muted);margin-top:1px"></div>
+      <div class="sum-code" id="sdw-dec-code"></div>
       <div class="sum-sub" id="sdw-dec-val">--</div>
     </div>
   </div>
@@ -1779,6 +1789,7 @@ const fmtM = n => n == null ? '--' : (Math.abs(n) >= 1e8 ? (n/1e8).toFixed(2)+'�
 const norm5 = c => String(c).replace(/^0+/, '').padStart(5, '0'); // mirrors normalize_code()
 const fmtPct = n => (n == null || n === 0) ? '—' : n.toFixed(2)+'%';
 const sign = n => n > 0 ? '+' : '';
+const todayDs = () => todayDs();
 
 // ── Global DOM helpers ────────────────────────────────────────────────────────
 // Defined here so all functions (computeSfcCards, renderShort, renderSdwPanel,
@@ -1948,7 +1959,6 @@ async function loadData() {
   } catch(e) { localStorage.removeItem(CACHE_KEY); }
 
   // 2. Live fetch — diagnose failures precisely so the user knows what to fix
-  let fetchOk = false;
   try {
     // Detect file:// protocol early — fetch('data.json') always fails there
     if (location.protocol === 'file:') {
@@ -1972,22 +1982,18 @@ async function loadData() {
       localStorage.removeItem(CACHE_KEY);
     }
     applyData(d, false);
-    fetchOk = true;
 
     // Clear any stale banner on success
     if (banner) banner.classList.remove('visible');
 
   } catch(e) {
     const isOffline  = !navigator.onLine;
-    const isFileProto = location.protocol === 'file:';
     // Build human-readable reason
     let msg;
     if (e._hint) {
       msg = e._hint;
     } else if (isOffline) {
       msg = '目前離線，無法獲取最新數據。請檢查網路連線後重試。';
-    } else if (isFileProto) {
-      msg = '請透過 HTTP 伺服器開啟（如 GitHub Pages 或 <code>python -m http.server</code>）。';
     } else if (e instanceof SyntaxError) {
       msg = 'data.json 格式損壞（JSON 解析失敗）。請重新執行 <code>python main.py</code>。';
     } else {
@@ -2058,10 +2064,8 @@ function generateMockData() {
     const absMag = Math.abs(sbn);
     const mockSbBuy  = sbn > 0 ? Math.round(sbn * 1.2) : (sbn < 0 ? Math.round(absMag * 0.3) : 0);
     const mockSbSell = sbn > 0 ? Math.round(sbn * 0.8) : (sbn < 0 ? Math.round(absMag * 1.3) : 0);
-    const mockTotal  = mockSbBuy + mockSbSell;
     // sb_pct: realistic 5–60% participation for demo stocks; zero for non-SB stocks
     const mockSbPct  = i < SB_TOP ? (10 + Math.random() * 50) : 0;
-    const dualListed = i < 8;
     return {
       rank: i+1, rank_new: Math.random()>0.85,
       ...s, turnover: tv,
@@ -2181,10 +2185,6 @@ function toggleTable(wrapId, btnId) {
   wrap.style.display = open ? 'block' : 'none';
   btn.textContent = open ? '收起明細 ▲' : '展開明細 ▼';
 }
-// Aliases kept for any external references
-const toggleShortTable  = () => toggleTable('short-tbl-wrap',  'toggle-short-tbl');
-const toggleBshuiTable  = () => toggleTable('bshui-tbl-wrap',  'toggle-bshui-tbl');
-const toggleCcassTop    = () => toggleTable('ccass-top-wrap',   'toggle-ccass-top');
 
 // ── Layout detection ─────────────────────────────────────────────────────
 function getLayout() {
@@ -2204,12 +2204,11 @@ function drawSbChart(sorted) {
   const PAD_RIGHT= layout === 'portrait' ? 4   : layout === 'landscape' ? 8   : 10;
   const PAD_TOP  = 12, PAD_BOT = 24;
 
-  const stocks = sorted;
-  if (!stocks.length) return;
+  if (!sorted.length) return;
 
   const dpr = window.devicePixelRatio || 1;
   const W = Math.max(300, window.innerWidth - 48);
-  const H = PAD_TOP + stocks.length * ROW_H + PAD_BOT;
+  const H = PAD_TOP + sorted.length * ROW_H + PAD_BOT;
 
   canvas.width  = W * dpr;
   canvas.height = H * dpr;
@@ -2220,7 +2219,7 @@ function drawSbChart(sorted) {
   ctx.clearRect(0, 0, W, H);
 
   const chartW = W - PAD_LEFT - PAD_RIGHT;
-  const maxAbs = Math.max(...stocks.filter(s => s.sb_total > 0 || s.sb_buy > 0).map(s => Math.abs(s.sb_net)), 1);
+  const maxAbs = Math.max(...sorted.filter(s => s.sb_total > 0 || s.sb_buy > 0).map(s => Math.abs(s.sb_net)), 1);
 
   // zero line x
   const zeroX = PAD_LEFT + chartW / 2;
@@ -2240,7 +2239,7 @@ function drawSbChart(sorted) {
   ctx.strokeStyle = '#bbb'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(zeroX, PAD_TOP); ctx.lineTo(zeroX, H - PAD_BOT); ctx.stroke();
 
-  stocks.forEach((s, i) => {
+  sorted.forEach((s, i) => {
     const y = PAD_TOP + i * ROW_H;
     const cy = y + ROW_H / 2;
     const barH = ROW_H * 0.55;
@@ -2352,13 +2351,11 @@ function renderBshui() {
   // Apply active table sort (defaults to turnover desc if no header clicked yet)
   const { col, dir } = getTableSort('tbl-bshui', 'turnover');
   const sorted = base.sort((a, b) => stockSortCmp(a, b, col, dir));
-
-  const display = sorted;
   const countEl = document.getElementById('sb-stock-count');
-  if (countEl) countEl.textContent = display.length ? `(${display.length} 隻)` : '';
+  if (countEl) countEl.textContent = sorted.length ? `(${sorted.length} 隻)` : '';
 
   // No sb data yet — show message, keep last cached chart
-  if (!display.length) {
+  if (!sorted.length) {
     document.getElementById('sb-top-buy').textContent = '--';
     document.getElementById('sb-top-buy-name').textContent = '北水數據待更新';
     document.getElementById('sb-top-sell').textContent = '--';
@@ -2372,7 +2369,7 @@ function renderBshui() {
     return;
   }
   // Update date label — show stale notice if sb data is from a previous day
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayDs();
   const sbLabel  = document.getElementById('sb-date-label');
   if (sbLabel) {
     if (sbDate && sbDate !== todayStr) {
@@ -2416,7 +2413,7 @@ function renderBshui() {
         const fmt = v => (v >= 0 ? '+' : '') + fmtM(v);
         sbTotalSubEl.textContent = `滬: ${fmt(sseNet)} ｜ 深: ${fmt(szseNet)}`;
       } else {
-        sbTotalSubEl.textContent = display.length ? `Top ${display.length} 股合計（估算）` : '';
+        sbTotalSubEl.textContent = sorted.length ? `Top ${sorted.length} 股合計（估算）` : '';
       }
     }
   }
@@ -2425,7 +2422,7 @@ function renderBshui() {
   const prevSorted = [...display].sort((a,b) => (b.sb_net_prev||0) - (a.sb_net_prev||0));
   const prevRankMap = {};
   prevSorted.forEach((s,i) => { prevRankMap[s.code] = i + 1; });
-  const sortedWithRankChange = display.map((s,i) => {
+  const sortedWithRankChange = sorted.map((s,i) => {
     const todayRank = i + 1;
     const prevRank  = prevRankMap[s.code];
     const sbRankChange = prevRank != null ? prevRank - todayRank : null;
@@ -2433,7 +2430,7 @@ function renderBshui() {
   });
 
   // Save to cache if we have real data, use cache if display is empty
-  if (display.length) {
+  if (sorted.length) {
     lastChartData = sortedWithRankChange;
     try { localStorage.setItem(CHART_CACHE_KEY, JSON.stringify(lastChartData)); } catch(e) {}
   }
@@ -2461,7 +2458,7 @@ function renderBshui() {
   }
 
   // Build table rows
-  const html = display.map((s,i) => {
+  const html = sorted.map((s,i) => {
     const netClass = s.sb_net > 0 ? 'up-txt' : s.sb_net < 0 ? 'dn-txt' : 'na-txt';
     // 北水佔比 = (北水買入及賣出 from HKEX SC) / 全市場成交額 (from daily quotation)
     // HKEX counts buy + sell legs separately, so ratio can legitimately exceed 100%
@@ -2635,7 +2632,7 @@ function computeSfcCards() {
     try { localStorage.setItem(SFC_CACHE_KEY, JSON.stringify(sfcCache)); } catch(e) {}
   }
 
-  const today      = new Date().toISOString().slice(0, 10);
+  const today      = todayDs();
   const isStale    = latestDs < today;
   const staleTag   = isStale ? ` <span style="font-size:10px;color:var(--muted)">(${latestDs.slice(5).replace('-','/')})</span>` : '';
 
@@ -2698,7 +2695,7 @@ function sfcFilterDates() {
     const cutoff = new Date(Date.now() - (days[sfcRange] || 365) * 86400000);
     return cutoff.toISOString().slice(0, 10);
   })();
-  const to = sfcCustomTo || new Date().toISOString().slice(0, 10);
+  const to = sfcCustomTo || todayDs();
 
   return sfcDates.filter(d => d >= from && d <= to);
 }
@@ -3506,16 +3503,14 @@ function renderShort() {
 
   // ── Table ─────────────────────────────────────────────────────────────────
   // Always show top 20. When SFC data available: sorted by sfc_hkd desc.
-  // When absent: sorted by short_ratio — SFC columns show "—".
-  const display = sorted.slice(0, 20);
-  if (!display.length) {
+  if (!sorted.length) {
     document.getElementById('body-short').innerHTML =
       `<tr><td colspan="13"><div class="loading-box" style="padding:24px">
         ${sfcLoaded ? '⚠️ 無數據' : '📡 數據載入中…請稍候'}
       </div></td></tr>`;
     return;
   }
-  const html = display.map((s,i) => {
+  const html = sorted.map((s,i) => {
     const diff      = s.short_ratio - s.short_avg;
     const diffClass = diff > 2 ? 'up-txt' : diff < -2 ? 'dn-txt' : '';
     const dtc       = s.days_to_cover || 0;
@@ -3876,7 +3871,7 @@ function loadSdwFromDataJson() {
   let seeded = 0;
   allStocks.forEach(s => {
     if (!s.sdw_holders || !s.sdw_holders.length) return;
-    const ds = s.ccass_trade_date || new Date().toISOString().slice(0, 10);
+    const ds = s.ccass_trade_date || todayDs();
     if (!sdwData[ds]) sdwData[ds] = {};
     sdwData[ds][norm5(s.code)] = {
       p:         s.sdw_holders,
@@ -4922,7 +4917,7 @@ async function drawCai() {
   }
 
   // Determine view window based on pill range or custom date inputs
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayDs();
   let fromDs = caiFromDs, toDs = caiToDs || todayStr;
   if (!caiFromDs) {
     const msPerDay = 86400000;
@@ -5546,7 +5541,7 @@ function renderHsiPanel() {
 
   // Set default 'to' date to today so the latest weeks are always visible
   const toEl = document.getElementById('hsi-to');
-  if (toEl && !toEl.value) toEl.value = new Date().toISOString().slice(0, 10);
+  if (toEl && !toEl.value) toEl.value = todayDs();
 
   // Apply date range from controls.
   // On first render the hsi-from input has value="2002-01-01" hardcoded in HTML,
@@ -5563,7 +5558,7 @@ function renderHsiPanel() {
   } else {
     from = (fromEl?.value) || '2002-01-01';
   }
-  const to     = (toEl?.value) || new Date().toISOString().slice(0, 10);
+  const to     = (toEl?.value) || todayDs();
   const filtered = dates.filter(d => d >= from && d <= to);
   const view     = filtered.length >= 4 ? filtered : dates.slice(-52);
 
@@ -5914,9 +5909,14 @@ function renderHsiPanel() {
               return i % tickEvery === 0 ? (l.length===10 ? l.slice(8,10)+'/'+l.slice(5,7)+'/'+l.slice(2,4) : l||null) : null;
             },
             color: (ctx) => ctx.index === N-1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888'),
-            maxRotation: 0, font: { size: 10 }, padding: 2, autoSkip: false,
-            maxTicksLimit: 20, autoSkipPadding: 0
-          }, grid: { display: false }, border: { display: false } },
+            maxRotation: 0, font: { size: 10 }, padding: 2,
+            autoSkip: false, autoSkipPadding: 0,
+            sampleSize: N,
+          },
+          afterBuildTicks(axis) {
+            axis.ticks = axis.ticks.filter((t, i) => i === N-1 || i % tickEvery === 0);
+          },
+          grid: { display: false }, border: { display: false } },
         y: {
           afterFit: s => { s.width = 52; },
           min: -maxOscHsi * 1.3,
@@ -5952,7 +5952,7 @@ function renderHsiPanel() {
         const fromDate = dates.length > nw ? dates[dates.length - nw] : '2002-01-01';
         document.getElementById('hsi-from').value = fromDate;
       }
-      document.getElementById('hsi-to').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('hsi-to').value = todayDs();
       hsiVlineIdx = null;
       renderHsiPanel();
     });
@@ -6062,7 +6062,7 @@ async function initHsiPanel() {
     const v = rangeEl.value;
     const dates = Object.keys(hsiData.weekly).sort();
     const lastDs = dates[dates.length - 1]; // still needed for hsi-from calculation
-    if (toEl && !toEl.value) toEl.value = new Date().toISOString().slice(0, 10);
+    if (toEl && !toEl.value) toEl.value = todayDs();
     if (v === 'from2002') {
       fromEl.value = '2002-01-01';
     } else {
@@ -6465,7 +6465,7 @@ function stkDrawCharts(series) {
 function stkGetRange() {
   const toEl   = document.getElementById('stock-to');
   const fromEl = document.getElementById('stock-from');
-  const toDs   = toEl?.value   || new Date().toISOString().slice(0,10);
+  const toDs   = toEl?.value   || todayDs();
   const fromDs = fromEl?.value || (() => {
     const d = new Date(toDs);
     d.setFullYear(d.getFullYear() - 1);
@@ -6478,7 +6478,7 @@ function stkApplyRange() {
   const val   = document.getElementById('stock-range')?.value || '52w';
   const toEl  = document.getElementById('stock-to');
   const fromEl = document.getElementById('stock-from');
-  const today = new Date().toISOString().slice(0,10);
+  const today = todayDs();
   // Always reset to-date to today when using the dropdown
   if (toEl) toEl.value = today;
   const from  = new Date(today);
@@ -6558,7 +6558,7 @@ function initStockPanel() {
   stkApplyRange();
 
   const toEl = document.getElementById('stock-to');
-  if (toEl && !toEl.value) toEl.value = new Date().toISOString().slice(0,10);
+  if (toEl && !toEl.value) toEl.value = todayDs();
 
   const inp = document.getElementById('stock-search');
   inp?.addEventListener('input',  () => stkBuildDropdown(inp.value));
@@ -6570,7 +6570,7 @@ function initStockPanel() {
   document.getElementById('stock-range')?.addEventListener('change', () => {
     // Reset to-date to today so from-date is always relative to now, not a stale custom to-date
     const toEl = document.getElementById('stock-to');
-    if (toEl) toEl.value = new Date().toISOString().slice(0,10);
+    if (toEl) toEl.value = todayDs();
     stkApplyRange();
     if (stkCode) stkRenderCharts();
   });
