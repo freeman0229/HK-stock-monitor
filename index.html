@@ -5883,16 +5883,21 @@ function renderHsiPanel() {
     ...lowVsMa.filter(v=>v!=null).map(Math.abs), 1
   );
 
-  // Custom plugin: draw x-axis date labels directly on canvas, bypassing
-  // Chart.js internal overlap detection which suppresses labels on wide desktop canvases.
   const hsiVolXLabelsPlugin = {
     id: 'hsiVolXLabels',
-    afterDraw(chart) {
+    afterRender(chart) {
       const xScale = chart.scales.x;
       if (!xScale) return;
       const ctx2 = chart.ctx;
+      const dpr = window.devicePixelRatio || 1;
       const bottom = chart.chartArea.bottom;
+      const cw = chart.canvas.width / dpr;
+      const ch = chart.canvas.height / dpr;
       ctx2.save();
+      // Reset clip to full canvas so labels draw below chart area without clipping
+      ctx2.beginPath();
+      ctx2.rect(0, 0, cw, ch);
+      ctx2.clip();
       ctx2.font = '10px sans-serif';
       ctx2.textAlign = 'center';
       ctx2.textBaseline = 'top';
@@ -5901,13 +5906,13 @@ function renderHsiPanel() {
         const x = xScale.getPixelForValue(i);
         let label;
         if (i === N - 1) {
-          label = '下週 ' + (predLabel.length === 10 ? predLabel.slice(8,10)+'/'+predLabel.slice(5,7)+'/'+predLabel.slice(2,4) : predLabel.slice(5));
+          label = '\u4e0b\u9031 ' + (predLabel.length === 10 ? predLabel.slice(8,10)+'/'+predLabel.slice(5,7)+'/'+predLabel.slice(2,4) : predLabel.slice(5));
         } else {
           const l = chartLabels[i] || '';
           label = l.length === 10 ? l.slice(8,10)+'/'+l.slice(5,7)+'/'+l.slice(2,4) : l;
         }
         ctx2.fillStyle = i === N - 1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888');
-        ctx2.fillText(label, x, bottom - 12);
+        ctx2.fillText(label, x, bottom + 4);
       }
       ctx2.restore();
     }
@@ -5941,7 +5946,7 @@ function renderHsiPanel() {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      layout: { padding: { left: 0, right: 0, bottom: 2 } },
+      layout: { padding: { left: 0, right: 0, bottom: 20 } },
       plugins: { legend: { display: false }, tooltip: { enabled: false } },
       scales: {
         x: { offset: false, display: true, ticks: {
