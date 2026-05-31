@@ -5721,6 +5721,16 @@ function renderHsiPanel() {
     }
   });
 
+  // Show container BEFORE creating charts so Chart.js measures real canvas dimensions.
+  // Without this, on desktop the canvas reports zero/wrong width during chart init,
+  // causing Chart.js overlap detection to suppress all x-axis tick labels.
+  document.getElementById('hsi-loading').style.display = 'none';
+  document.getElementById('hsi-content').style.display = 'block';
+
+  // Double rAF: first frame triggers browser layout, second frame lets Chart.js
+  // read the correct canvas pixel width before building tick label measurements.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+
   hsiChartInst = new Chart(document.getElementById('hsiCanvas'), {
     type: 'line',
     plugins: [predDividerPlugin, vlinePlugin],
@@ -5929,13 +5939,7 @@ function renderHsiPanel() {
     }
   });
 
-  document.getElementById('hsi-loading').style.display  = 'none';
-  document.getElementById('hsi-content').style.display  = 'block';
-  // Force chart resize after panel becomes visible
-  setTimeout(() => {
-    if (hsiChartInst) hsiChartInst.resize();
-    if (hsiVolInst)   hsiVolInst.resize();
-  }, 50);
+  })); // end double requestAnimationFrame
 
   // Wire up range selector
   const rangeEl  = document.getElementById('hsi-range');
