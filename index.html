@@ -5890,11 +5890,12 @@ function renderHsiPanel() {
       if (!xScale) return;
       const ctx2 = chart.ctx;
       const dpr = window.devicePixelRatio || 1;
-      const bottom = chart.chartArea.bottom;
+      const { left, right, bottom } = chart.chartArea;
       const cw = chart.canvas.width / dpr;
       const ch = chart.canvas.height / dpr;
+      // Compute bar slot width: each of N bars occupies equal space
+      const slotW = (right - left) / N;
       ctx2.save();
-      // Reset clip to full canvas so labels draw below chart area without clipping
       ctx2.beginPath();
       ctx2.rect(0, 0, cw, ch);
       ctx2.clip();
@@ -5903,7 +5904,8 @@ function renderHsiPanel() {
       ctx2.textBaseline = 'top';
       for (let i = 0; i < N; i++) {
         if (i !== N - 1 && i % tickEvery !== 0) continue;
-        const x = xScale.getPixelForValue(i);
+        // Centre of bar slot i
+        const x = left + (i + 0.5) * slotW;
         let label;
         if (i === N - 1) {
           label = '\u4e0b\u9031 ' + (predLabel.length === 10 ? predLabel.slice(8,10)+'/'+predLabel.slice(5,7)+'/'+predLabel.slice(2,4) : predLabel.slice(5));
