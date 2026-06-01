@@ -1333,6 +1333,14 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         if _sc_max_inc: _sdw_summary["max_inc"] = _sc_max_inc
         if _sc_max_dec: _sdw_summary["max_dec"] = _sc_max_dec
 
+    # Full list of SDW-tracked codes with Chinese names — used by the client-side
+    # search dropdown to surface stocks that are in CCASS SDW but not in the
+    # short-sell universe (e.g. 02461 獅騰控股二九).  Kept compact: code + zh name only.
+    _sdw_codes = [
+        {"code": c, "name_chi": (_universe_names.get(c, {}).get("zh") or c)}
+        for c in sorted(_sdw_holders_map)
+    ] if _SDW_AVAILABLE and _sdw_holders_map else []
+
     output = {
         "update_time":      trading_day.strftime("%Y-%m-%d %H:%M"),
         "sb_date":          sb_date_used,
@@ -1340,6 +1348,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
         "northbound_flow":  northbound_flow,
         "ccass_holdings":   ccass_holdings,
         "sdw_summary":      _sdw_summary,
+        "sdw_codes":        _sdw_codes,
         # name_map removed — JS never reads it from data.json (saved separately as name_map.json)
         "stocks":           results,
     }

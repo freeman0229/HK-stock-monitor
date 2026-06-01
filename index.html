@@ -1877,6 +1877,12 @@ function applyData(d, stale) {
   // Apply pre-computed SDW summary cards immediately (no need to wait for SDW panel load)
   if (d.sdw_summary) applySdwSummary(d.sdw_summary);
 
+  // Seed full SDW universe for search — covers stocks not in short-sell universe
+  if (d.sdw_codes && d.sdw_codes.length) {
+    sdwUniverse = {};
+    d.sdw_codes.forEach(e => { sdwUniverse[norm5(e.code)] = cleanName(e.name_chi || e.code); });
+  }
+
   // ── Isolated sources — read directly, no universe filtering ──────────────
   // Source 1: sc_top10_library → 北水淨流入 / 個股明細
   northboundFlow = (d.northbound_flow || []).map(s => ({
@@ -1919,6 +1925,7 @@ function applyData(d, stale) {
     sdwLoaded    = false;
     sdwData      = {};
     sdwDates     = [];
+    sdwUniverse  = {};
     stkRankCache = null;
     // Clear per-stock JSON caches so 5-min refresh picks up latest data
     if (typeof stkSfcCache  !== 'undefined') stkSfcCache  = {};
@@ -3841,6 +3848,7 @@ let sdwTopN       = 5;    // current top-n selection
 let sdwData       = {};   // { ds: { code: {p, total_sh, issued_sh} } }
 let sdwDates      = [];   // sorted ascending list of all known dates
 let sdwCodeCache  = {};   // { code: true } — per-stock files already fetched
+let sdwUniverse   = {};   // { code5: name_chi } — full SDW universe from data.json sdw_codes
 
 function sdwSetRange(weeks) {
   sdwRangeWeeks = weeks;
@@ -4034,10 +4042,20 @@ function sdwComputeSummary() {
 function applySdwSummary(sdwSum) {
   if (!sdwSum) return;
   const { max_conc, max_holder, max_inc, max_dec } = sdwSum;
-  if (max_conc)   { el('sdw-conc-name', cleanName(max_conc.name)); el('sdw-conc-code', max_conc.code||''); el('sdw-conc-val', `前5大 ${max_conc.conc.toFixed(1)}%`); }
-  if (max_holder) { el('sdw-max-name', cleanName(max_holder.name)); el('sdw-max-code', max_holder.code||''); el('sdw-max-pct', `${cleanName(max_holder.holder||'').slice(0,18)} ${max_holder.pct.toFixed(2)}%`); }
-  if (max_inc)    { el('sdw-inc-name', cleanName(max_inc.name)); el('sdw-inc-code', max_inc.code||''); el('sdw-inc-val', `Top10 +${max_inc.delta.toFixed(2)}pp`); }
-  if (max_dec)    { el('sdw-dec-name', cleanName(max_dec.name)); el('sdw-dec-code', max_dec.code||''); el('sdw-dec-val', `Top10 ${max_dec.delta.toFixed(2)}pp`); }
+  const clickStyle = 'cursor:pointer;text-decoration:underline dotted';
+  function wireCard(nameId, codeId, valId, item, valHtml) {
+    if (!item) return;
+    const nameEl = document.getElementById(nameId);
+    const codeEl = document.getElementById(codeId);
+    const valEl  = document.getElementById(valId);
+    if (nameEl) { nameEl.textContent = cleanName(item.name); nameEl.style.cssText += ';' + clickStyle; nameEl.onclick = () => { document.getElementById('sdw-search').dispatchEvent(new Event('focus')); sdwSelectCode(item.code); }; }
+    if (codeEl) { codeEl.textContent = item.code || ''; codeEl.style.cssText += ';' + clickStyle; codeEl.onclick = () => sdwSelectCode(item.code); }
+    if (valEl && valHtml !== undefined) valEl.textContent = valHtml;
+  }
+  wireCard('sdw-conc-name', 'sdw-conc-code', 'sdw-conc-val',  max_conc,   max_conc   ? `前5大 ${max_conc.conc.toFixed(1)}%`        : undefined);
+  wireCard('sdw-max-name',  'sdw-max-code',  'sdw-max-pct',   max_holder, max_holder ? `${cleanName(max_holder.holder||'').slice(0,18)} ${max_holder.pct.toFixed(2)}%` : undefined);
+  wireCard('sdw-inc-name',  'sdw-inc-code',  'sdw-inc-val',   max_inc,    max_inc    ? `Top10 +${max_inc.delta.toFixed(2)}pp`       : undefined);
+  wireCard('sdw-dec-name',  'sdw-dec-code',  'sdw-dec-val',   max_dec,    max_dec    ? `Top10 ${max_dec.delta.toFixed(2)}pp`        : undefined);
 }
 
 // ── Stock search dropdown ───────────────────────────────────────────────────
@@ -4046,15 +4064,20 @@ function sdwBuildDropdown(query) {
   const q   = query.trim().toLowerCase();
 
   // Union of data.json stocks + any code seen in SDW data (for pre-data.json runs)
-  const latestDs  = sdwDates[sdwDates.length - 1] || '';
-  // Union of ALL codes across all dates — latestDs may only have partial backfill
   // norm5 applied so sdwCodes keys always match nameMap keys and sdwData keys
   const sdwCodes  = new Set(sdwDates.flatMap(ds => Object.keys(sdwData[ds] || {}).map(norm5)));
   const nameMap   = {};
+  // Seed from full SDW universe (sdw_codes in data.json) — covers stocks not in allStocks
+  Object.entries(sdwUniverse).forEach(([c, name]) => { nameMap[c] = { chi: name, eng: '' }; });
+  // allStocks overwrites with richer data where available
   allStocks.forEach(s => { nameMap[norm5(s.code)] = { chi: s.name_chi, eng: s.name }; });
 
-  // Merge: allStocks first (norm5), then any SDW-only codes — deduped
-  const allCodes  = [...new Set([...allStocks.map(s => norm5(s.code)), ...sdwCodes])];
+  // Universe: allStocks + lazy-loaded sdwCodes + full sdwUniverse
+  const allCodes  = [...new Set([
+    ...allStocks.map(s => norm5(s.code)),
+    ...sdwCodes,
+    ...Object.keys(sdwUniverse),
+  ])];
 
   let matches = allCodes.filter(code => {
     if (!q) return sdwCodes.has(code);   // if empty, only show SDW-tracked
@@ -4099,6 +4122,7 @@ function sdwBuildDropdown(query) {
 async function sdwSelectCode(code) {
   sdwCurCode = code;
   const nameMap = {};
+  Object.entries(sdwUniverse).forEach(([c, name]) => { nameMap[c] = name; });
   allStocks.forEach(s => { nameMap[norm5(s.code)] = s.name_chi; });
   const name = nameMap[norm5(code)] || code;
   document.getElementById('sdw-search').value = `${code}  ${name}`;
