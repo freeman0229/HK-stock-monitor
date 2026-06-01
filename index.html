@@ -1605,7 +1605,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
     <div class="hsi-chart-wrap"><canvas id="hsiCanvas" role="img" aria-label="HSI weekly price channel">HSI weekly channel chart.</canvas></div>
     <div class="hsi-vol-wrap"><canvas id="hsiVolCanvas" role="img" aria-label="HSI weekly oscillation vs 4-week MA">HSI weekly high/low vs 4-week MA.</canvas></div>
-    <div id="hsi-vol-xlabels" style="position:relative;width:100%;height:18px;overflow:hidden;"></div>
+    <div id="hsi-vol-xlabels" style="position:relative;width:100%;height:18px;"></div>
 
     <div id="hsi-vline-bar" style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;font-size:12px;padding:8px 12px;border-radius:8px;background:var(--bg);border:0.5px solid var(--border);margin-top:8px;min-height:38px;">
       <span style="color:var(--muted)">— 點擊圖表設定基準線</span>
@@ -5907,7 +5907,7 @@ function renderHsiPanel() {
       }
       const span = document.createElement('span');
       span.textContent = label;
-      span.style.cssText = 'position:absolute;font-size:10px;transform:translateX(-50%);white-space:nowrap;left:' + xCenter + 'px;color:' + (i === N - 1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888')) + ';';
+      span.style.cssText = 'position:absolute;font-size:10px;transform:translateX(-50%);white-space:nowrap;left:' + xCenter + 'px;color:' + (i === N - 1 ? '#c0252d' : '#444') + ';';
       el.appendChild(span);
     }
   }
@@ -5964,6 +5964,7 @@ function renderHsiPanel() {
     }
   });
 
+  setTimeout(() => renderHsiVolXLabels(), 50);
   }, 0); // end setTimeout — ensures browser layout before Chart.js init
 
   // Wire up range selector
