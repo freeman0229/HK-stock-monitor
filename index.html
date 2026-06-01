@@ -5892,10 +5892,7 @@ function renderHsiPanel() {
     const el = document.getElementById('hsi-vol-xlabels');
     if (!el) return;
     const { left, right } = chart.chartArea;
-    const canvasRect = chart.canvas.getBoundingClientRect();
-    const wrapRect = el.parentElement.getBoundingClientRect();
-    // Offset from the wrap div's left edge to the canvas chart area
-    const offsetLeft = canvasRect.left - wrapRect.left + left;
+    const offsetLeft = chart.canvas.offsetLeft + left;
     const slotW = (right - left) / N;
     el.innerHTML = '';
     for (let i = 0; i < N; i++) {
