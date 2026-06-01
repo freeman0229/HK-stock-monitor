@@ -430,9 +430,20 @@ _ETF_CODES = {
     "02803","02820","02845","03003","03191","03486",
     # previously missing ETFs
     "03451","03190","03415","03195","03455",
+    "03111",   # E Fund CSI A50 ETF 易方達A50
+    # crypto ETFs — Bitcoin / Ether spot ETFs (approved SFC 2024)
+    "03008",   # Bosera Hashkey Bitcoin ETF
+    "03042",   # CSOP Bitcoin ETF
+    "03046",   # CSOP Ether ETF
+    "03179",   # Harvest Bitcoin ETF
+    "03325",   # China AMC Bitcoin ETF
+    "03326",   # China AMC Ether ETF
+    "03439",   # Hashkey Bitcoin ETF
+    "03440",   # Hashkey Ether ETF
 }
 _ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND", "ISHARES", "CSOP", "PREMIA", "GX ",
-                "GX CHINA", "GX HK", "GX ", "CSOP", "PREMIA")
+                "GX CHINA", "GX HK", "BITCOIN", "ETHER", "CRYPTO", "HASHKEY",
+                "BTC ETF", "ETH ETF")
 
 # Derivative products — leveraged/inverse/futures; structurally extreme short ratios
 _DERIV_NAME_KW = ("LEVERAGED", "INVERSE", "FUTURES ETF", "L&I")
@@ -450,9 +461,27 @@ _BOND_CODES = {
     "03199",  # iShares Barclays USD Asia HY Bond ETF
     "04362",  # iBond 2024
     "04363",  # iBond 2025
+    # money market ETFs — vulnerable to name truncation, hardened by code list
+    "03196",  # Bosera USD Money Market ETF A博時美元
+    "03197",  # Harvest USD Money Market ETF
+    "03477",  # BOCOM USD Money Market ETF
+    "03918",  # CMBI USD Money Market ETF
+    "03919",  # BOCI USD Money Market ETF
+    "03960",  # China AMC USD Money Market ETF
+    "03053",  # CSOP USD Money Market ETF
+    "03085",  # HSBCMF USD Money Market ETF
+    "03109",  # CMS USD Money Market ETF
+    "03077",  # ICBC CSOP USD Money Market ETF
+    # bond ETFs — additional
+    "03018",  # CSOP China USD Bond ETF
+    "03126",  # CSOP Asia Investment Grade Bond ETF
+    "03139",  # Huaan Asia High Yield Bond ETF
+    "03047",  # Aberdeen Std USD Bond (no keyword coverage — must be code-listed)
+    "03080",  # Fullerton SGD Cash Fund (no keyword coverage — must be code-listed)
 }
 _BOND_NAME_KW = ("BOND ETF", "GOLD ETF", "MONEY MARKET ETF",
                  "IBOND", "EXCHANGE FUND NOTE", "EFN", " BOND ",
+                 "CASH FUND",
                  "債券", "債基", "亞投債", "國債")
 
 def classify_stock(code: str, name: str) -> str:
