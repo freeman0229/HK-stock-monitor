@@ -5907,7 +5907,7 @@ function renderHsiPanel() {
       }
       const span = document.createElement('span');
       span.textContent = label;
-      span.style.cssText = 'position:absolute;font-size:10px;transform:translateX(-50%);white-space:nowrap;left:' + xCenter + 'px;color:' + (i === N - 1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#444')) + ';';
+      span.style.cssText = 'position:absolute;font-size:10px;transform:translateX(-50%);white-space:nowrap;left:' + xCenter + 'px;color:' + (i === N - 1 ? '#c0252d' : '#444') + ';';
       el.appendChild(span);
     }
   }
