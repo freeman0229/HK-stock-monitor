@@ -5885,7 +5885,7 @@ function renderHsiPanel() {
 
   const hsiVolXLabelsPlugin = {
     id: 'hsiVolXLabels',
-    afterRender(chart) {
+    afterDraw(chart) {
       const xScale = chart.scales.x;
       if (!xScale) return;
       const ctx2 = chart.ctx;
@@ -5893,18 +5893,13 @@ function renderHsiPanel() {
       const { left, right, bottom } = chart.chartArea;
       const cw = chart.canvas.width / dpr;
       const ch = chart.canvas.height / dpr;
-      // Compute bar slot width: each of N bars occupies equal space
       const slotW = (right - left) / N;
       ctx2.save();
-      ctx2.beginPath();
-      ctx2.rect(0, 0, cw, ch);
-      ctx2.clip();
       ctx2.font = '10px sans-serif';
       ctx2.textAlign = 'center';
       ctx2.textBaseline = 'top';
       for (let i = 0; i < N; i++) {
         if (i !== N - 1 && i % tickEvery !== 0) continue;
-        // Centre of bar slot i
         const x = left + (i + 0.5) * slotW;
         let label;
         if (i === N - 1) {
@@ -5914,7 +5909,7 @@ function renderHsiPanel() {
           label = l.length === 10 ? l.slice(8,10)+'/'+l.slice(5,7)+'/'+l.slice(2,4) : l;
         }
         ctx2.fillStyle = i === N - 1 ? '#c0252d' : (isDark ? 'rgba(255,255,255,0.5)' : '#888');
-        ctx2.fillText(label, x, bottom + 4);
+        ctx2.fillText(label, x, chart.chartArea.bottom - 12);
       }
       ctx2.restore();
     }
