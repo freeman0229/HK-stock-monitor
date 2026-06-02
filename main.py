@@ -440,6 +440,17 @@ _ETF_CODES = {
     "03326",   # China AMC Ether ETF
     "03439",   # Hashkey Bitcoin ETF
     "03440",   # Hashkey Ether ETF
+    "03430",   # MBC Bitcoin ETF MBC比特幣
+    "03431",   # MBC Ether ETF MBC以太幣
+    # thematic ETFs — truncated names lose "ETF" suffix; must be code-listed
+    "03460",   # China AMC SOL ETF 華夏SOL
+    "03489",   # E Fund AI ETF 易方達AI
+    "03076",   # Fubon Taiwan Semiconductor ETF 富邦台灣半導體
+    "03468",   # China AMC MSCI China ETF
+    "03462",   # Bosera MSCI China A ETF
+    "03465",   # Harvest MSCI China A ETF
+    "03470",   # GX China Innovation ETF
+    "03488",   # E Fund MSCI China A ETF
     # active mutual funds / unit trusts — no ETF keyword in name; must be code-listed
     "03406",   # Ping An Technology Select Fund 平安科技精選
     "03396",   # Ping An of China Asset Management 平安資管
@@ -486,6 +497,13 @@ _BOND_CODES = {
     "03047",  # Aberdeen Std USD Bond (no keyword coverage — must be code-listed)
     "03080",  # Fullerton SGD Cash Fund (no keyword coverage — must be code-listed)
     "03472",  # China AMC USD Money Market ETF (A華夏美元數 — separate share class from 03960)
+    # HKD money market ETFs — same truncation vulnerability as USD variants
+    "03471",  # China AMC HKD Money Market ETF A華夏港元數
+    "03157",  # CSOP HKD Money Market ETF
+    "03158",  # Bosera HKD Money Market ETF
+    "03173",  # Harvest HKD Money Market ETF
+    "03167",  # Ping An HKD Money Market ETF
+    "03490",  # E Fund HKD Money Market ETF
 }
 _BOND_NAME_KW = ("BOND ETF", "GOLD ETF", "MONEY MARKET ETF",
                  "IBOND", "EXCHANGE FUND NOTE", "EFN", " BOND ",

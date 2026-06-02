@@ -57,6 +57,15 @@ STOCKS: dict[str, dict] = {
     "03195": {"en":"HS SP500 ETF",          "zh":"恒生標普五百",      "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
     "03455": {"en":"INVESCO QQQ ETF",       "zh":"景順QQQ",           "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
     "03111": {"en":"E FUND CSI A50 ETF",    "zh":"易方達A50",          "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
+    # ── 主題 ETF（截短名稱不含 ETF 字眼，須靠代碼列表攔截）────────────────────────
+    "03460": {"en":"CHINA AMC SOL ETF",              "zh":"華夏SOL ETF",        "industry":"ETF","ind_zh":"ETF","type":"etf"},
+    "03489": {"en":"E FUND AI ETF",                  "zh":"易方達AI ETF",        "industry":"ETF","ind_zh":"ETF","type":"etf"},
+    "03076": {"en":"FUBON TAIWAN SEMICONDUCTOR ETF", "zh":"富邦台灣半導體ETF",   "industry":"ETF","ind_zh":"ETF","type":"etf"},
+    "03468": {"en":"CHINA AMC MSCI CHINA ETF",       "zh":"華夏MSCI中國ETF",    "industry":"ETF","ind_zh":"ETF","type":"etf"},
+    "03462": {"en":"BOSERA MSCI CHINA A ETF",        "zh":"博時MSCI A股ETF",    "industry":"ETF","ind_zh":"ETF","type":"etf"},
+    "03465": {"en":"HARVEST MSCI CHINA A ETF",       "zh":"嘉實MSCI A股ETF",    "industry":"ETF","ind_zh":"ETF","type":"etf"},
+    "03470": {"en":"GX CHINA INNOVATION ETF",        "zh":"GX中國創新ETF",      "industry":"ETF","ind_zh":"ETF","type":"etf"},
+    "03488": {"en":"E FUND MSCI CHINA A ETF",        "zh":"易方達MSCI A股ETF",  "industry":"ETF","ind_zh":"ETF","type":"etf"},
     # ── 加密貨幣 ETF ─────────────────────────────────────────────────────────
     "03008": {"en":"BOSERA HASHKEY BITCOIN ETF", "zh":"博時HashKey比特幣ETF","industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03042": {"en":"CSOP BITCOIN ETF",           "zh":"南方比特幣ETF",       "industry":"ETF","ind_zh":"ETF","type":"etf"},
@@ -85,7 +94,16 @@ STOCKS: dict[str, dict] = {
     "03139": {"en":"HUAAN ASIA HY BOND ETF",         "zh":"華安亞洲高收益債ETF","industry":"ETF","ind_zh":"債券","type":"bond"},
     "03047": {"en":"ABERDEEN STD USD BOND",          "zh":"安本標準美元債",     "industry":"ETF","ind_zh":"債券","type":"bond"},
     "03080": {"en":"FULLERTON SGD CASH FUND",        "zh":"富敦新加坡元現金基金","industry":"ETF","ind_zh":"債券","type":"bond"},
-    "03472": {"en":"CHINA AMC USD MONEY MARKET ETF", "zh":"A華夏美元數",        "industry":"ETF","ind_zh":"債券","type":"bond"},
+    "03430": {"en":"MBC BITCOIN ETF",                    "zh":"MBC比特幣ETF",       "industry":"ETF","ind_zh":"ETF",  "type":"etf"},
+    "03431": {"en":"MBC ETHER ETF",                      "zh":"MBC以太幣ETF",       "industry":"ETF","ind_zh":"ETF",  "type":"etf"},
+    "03472": {"en":"CHINA AMC USD MONEY MARKET ETF",     "zh":"A華夏美元數",        "industry":"ETF","ind_zh":"債券", "type":"bond"},
+    # ── HKD 貨幣市場 ETF ─────────────────────────────────────────────────────
+    "03471": {"en":"CHINA AMC HKD MONEY MARKET ETF",     "zh":"A華夏港元數",        "industry":"ETF","ind_zh":"債券", "type":"bond"},
+    "03157": {"en":"CSOP HKD MONEY MARKET ETF",          "zh":"南方港元貨幣ETF",    "industry":"ETF","ind_zh":"債券", "type":"bond"},
+    "03158": {"en":"BOSERA HKD MONEY MARKET ETF",        "zh":"博時港元貨幣ETF",    "industry":"ETF","ind_zh":"債券", "type":"bond"},
+    "03173": {"en":"HARVEST HKD MONEY MARKET ETF",       "zh":"嘉實港元貨幣ETF",    "industry":"ETF","ind_zh":"債券", "type":"bond"},
+    "03167": {"en":"PING AN HKD MONEY MARKET ETF",       "zh":"平安港元貨幣ETF",    "industry":"ETF","ind_zh":"債券", "type":"bond"},
+    "03490": {"en":"E FUND HKD MONEY MARKET ETF",        "zh":"易方達港元貨幣ETF",  "industry":"ETF","ind_zh":"債券", "type":"bond"},
     # ── 主動基金 / 資產管理公司 ────────────────────────────────────────────────
     "03406": {"en":"PING AN TECHNOLOGY SELECT FUND", "zh":"平安科技精選",       "industry":"ETF","ind_zh":"基金","type":"etf"},
     "03396": {"en":"PING AN ASSET MANAGEMENT",       "zh":"平安資管",           "industry":"ETF","ind_zh":"基金","type":"etf"},
