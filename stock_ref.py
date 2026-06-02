@@ -85,6 +85,14 @@ STOCKS: dict[str, dict] = {
     "03139": {"en":"HUAAN ASIA HY BOND ETF",         "zh":"華安亞洲高收益債ETF","industry":"ETF","ind_zh":"債券","type":"bond"},
     "03047": {"en":"ABERDEEN STD USD BOND",          "zh":"安本標準美元債",     "industry":"ETF","ind_zh":"債券","type":"bond"},
     "03080": {"en":"FULLERTON SGD CASH FUND",        "zh":"富敦新加坡元現金基金","industry":"ETF","ind_zh":"債券","type":"bond"},
+    "03472": {"en":"CHINA AMC USD MONEY MARKET ETF", "zh":"A華夏美元數",        "industry":"ETF","ind_zh":"債券","type":"bond"},
+    # ── 主動基金 / 資產管理公司 ────────────────────────────────────────────────
+    "03406": {"en":"PING AN TECHNOLOGY SELECT FUND", "zh":"平安科技精選",       "industry":"ETF","ind_zh":"基金","type":"etf"},
+    "03396": {"en":"PING AN ASSET MANAGEMENT",       "zh":"平安資管",           "industry":"ETF","ind_zh":"基金","type":"etf"},
+    "03448": {"en":"BOSERA FUNDS",                   "zh":"博時基金",           "industry":"ETF","ind_zh":"基金","type":"etf"},
+    "03474": {"en":"CHINA SOUTHERN ASSET MANAGEMENT","zh":"南方資管",           "industry":"ETF","ind_zh":"基金","type":"etf"},
+    "03476": {"en":"E FUND MANAGEMENT",              "zh":"易方達資管",         "industry":"ETF","ind_zh":"基金","type":"etf"},
+    "03487": {"en":"HARVEST FUND MANAGEMENT",        "zh":"嘉實資管",           "industry":"ETF","ind_zh":"基金","type":"etf"},
 
     # ── 銀行 ─────────────────────────────────────────────────────────────────
     "00005": {"en":"HSBC HOLDINGS",         "zh":"滙豐控股",          "industry":"BNK","ind_zh":"銀行",     "type":"stable"},

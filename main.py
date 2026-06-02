@@ -440,10 +440,17 @@ _ETF_CODES = {
     "03326",   # China AMC Ether ETF
     "03439",   # Hashkey Bitcoin ETF
     "03440",   # Hashkey Ether ETF
+    # active mutual funds / unit trusts — no ETF keyword in name; must be code-listed
+    "03406",   # Ping An Technology Select Fund 平安科技精選
+    "03396",   # Ping An of China Asset Management 平安資管
+    "03448",   # Bosera Funds 博時基金
+    "03474",   # China Southern Asset Management 南方資管
+    "03476",   # E Fund Management 易方達資管
+    "03487",   # Harvest Fund Management 嘉實資管
 }
 _ETF_NAME_KW = ("ETF", "TRACKER FUND", "INDEX FUND", "ISHARES", "CSOP", "PREMIA", "GX ",
                 "GX CHINA", "GX HK", "BITCOIN", "ETHER", "CRYPTO", "HASHKEY",
-                "BTC ETF", "ETH ETF")
+                "BTC ETF", "ETH ETF", " FUND", "ASSET MANAGEMENT")
 
 # Derivative products — leveraged/inverse/futures; structurally extreme short ratios
 _DERIV_NAME_KW = ("LEVERAGED", "INVERSE", "FUTURES ETF", "L&I")
@@ -478,6 +485,7 @@ _BOND_CODES = {
     "03139",  # Huaan Asia High Yield Bond ETF
     "03047",  # Aberdeen Std USD Bond (no keyword coverage — must be code-listed)
     "03080",  # Fullerton SGD Cash Fund (no keyword coverage — must be code-listed)
+    "03472",  # China AMC USD Money Market ETF (A華夏美元數 — separate share class from 03960)
 }
 _BOND_NAME_KW = ("BOND ETF", "GOLD ETF", "MONEY MARKET ETF",
                  "IBOND", "EXCHANGE FUND NOTE", "EFN", " BOND ",
