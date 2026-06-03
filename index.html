@@ -377,6 +377,9 @@ FIX LOG
       Fix: replaced tradingCodes with equityCodes built via isEquityStock(s), which
       checks stock_type + name keywords.  Codes not in allStocks are now always excluded
       (they cannot be classified, so we treat them as non-equity).
+      Key alignment fix: equityCodes mapped with norm5(s.code) to match sdwData keys
+      (loadSdwFromDataJson stores all codes as norm5); without this the has() check
+      always missed, making codesForSummary fall back to unfiltered allSdwCodes.
       Location: sdwComputeSummary(), equityCodes / codesForSummary declarations.
 
   Note: main.py _sdw_summary block (line 1333) was already correct — no backend change needed.
@@ -4008,7 +4011,8 @@ function sdwComputeSummary() {
   // Build a strict equity-only set: must be in allStocks AND pass isEquityStock.
   // Intentionally does NOT require turnover > 0 — ETFs trade actively so turnover
   // is not a reliable exclusion signal. isEquityStock() checks stock_type + name keywords.
-  const equityCodes = new Set(allStocks.filter(s => isEquityStock(s)).map(s => s.code));
+  // Keys are norm5-padded to match sdwData keys (which are stored as norm5 via loadSdwFromDataJson).
+  const equityCodes = new Set(allStocks.filter(s => isEquityStock(s)).map(s => norm5(s.code)));
 
   // Union of ALL codes across all dates for WoW computation
   const allSdwCodes = [...new Set(sdwDates.flatMap(d => Object.keys(sdwData[d] || {})))];
