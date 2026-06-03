@@ -359,6 +359,27 @@ FIX LOG
   - computeSfcCards() had local EXCL_KW array missing 'ISHARES' vs global
     _NON_EQUITY_NAME_KW. Replaced with _NON_EQUITY_NAME_KW — now consistent
     and ISHARES instruments are correctly excluded.
+
+[Fix 30 — 2026-06-03] ETF/bond instruments appearing in summary cards for both
+  累積沽空 and 大戶持倉 panels (e.g. 03430 MBC比特幣, 03471 華夏港元數, 03076 富邦台灣半導體,
+  03460 華夏SOL, 03489 易方達AI).  Two separate bugs:
+
+  (A) renderShort() — topSfc / topInc / topDec filters missing isEquityStock(s):
+      These three SFC-based cards (累積沽空 TOP, 沽空增加最多, 空頭平倉最多) applied no
+      equity guard at all, unlike topVol and topRatio which already had isEquityStock(s).
+      Fix: added && isEquityStock(s) to all three filter chains.
+      Location: renderShort(), topSfc / topInc / topDec declarations.
+
+  (B) sdwComputeSummary() — tradingCodes used s.turnover > 0 as equity gate:
+      Active ETFs (比特幣/富邦/易方達 etc.) all have non-zero turnover, so the turnover
+      check never excluded them.  Additionally, any code in sdwData but absent from
+      allStocks entirely bypassed the filter (codesForSummary fell back to allSdwCodes).
+      Fix: replaced tradingCodes with equityCodes built via isEquityStock(s), which
+      checks stock_type + name keywords.  Codes not in allStocks are now always excluded
+      (they cannot be classified, so we treat them as non-equity).
+      Location: sdwComputeSummary(), equityCodes / codesForSummary declarations.
+
+  Note: main.py _sdw_summary block (line 1333) was already correct — no backend change needed.
 -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
@@ -3469,13 +3490,13 @@ function renderShort() {
                                         && isEquityStock(s) && s.turnover > 0)
                               .sort((a,b) => b.short_ratio - a.short_ratio)[0];
   // 累積沽空 TOP — highest Aggregated Reportable Short Positions (HK$) from SFC
-  const topSfc  = [...sorted].filter(s => s.sfc_hkd > 0)
+  const topSfc  = [...sorted].filter(s => s.sfc_hkd > 0 && isEquityStock(s))
                              .sort((a,b) => (b.sfc_hkd||0) - (a.sfc_hkd||0))[0];
   // 沽空增加最多 — largest positive HKD delta vs last week (SFC)
-  const topInc  = [...sorted].filter(s => s.sfc_hkd_delta > 0)
+  const topInc  = [...sorted].filter(s => s.sfc_hkd_delta > 0 && isEquityStock(s))
                              .sort((a,b) => (b.sfc_hkd_delta||0) - (a.sfc_hkd_delta||0))[0];
   // 空頭平倉最多 — largest negative HKD delta vs last week (SFC)
-  const topDec  = [...sorted].filter(s => s.sfc_hkd_delta < 0)
+  const topDec  = [...sorted].filter(s => s.sfc_hkd_delta < 0 && isEquityStock(s))
                              .sort((a,b) => (a.sfc_hkd_delta||0) - (b.sfc_hkd_delta||0))[0];
 
   // el/elHtml are global helpers defined at module level
@@ -3984,13 +4005,17 @@ function sdwComputeSummary() {
   const nameMap = {};
   allStocks.forEach(s => { nameMap[s.code] = s.name_chi; });
 
-  // Only consider equity stocks in today's trading universe — avoids ETFs/bonds/derivatives dominating
-  const tradingCodes = new Set(allStocks.filter(s => s.turnover > 0 && !NON_EQUITY_TYPES.has(s.stock_type)).map(s => s.code));
+  // Build a strict equity-only set: must be in allStocks AND pass isEquityStock.
+  // Intentionally does NOT require turnover > 0 — ETFs trade actively so turnover
+  // is not a reliable exclusion signal. isEquityStock() checks stock_type + name keywords.
+  const equityCodes = new Set(allStocks.filter(s => isEquityStock(s)).map(s => s.code));
 
   // Union of ALL codes across all dates for WoW computation
   const allSdwCodes = [...new Set(sdwDates.flatMap(d => Object.keys(sdwData[d] || {})))];
-  const codesForSummary = tradingCodes.size > 0
-    ? allSdwCodes.filter(c => tradingCodes.has(c))
+  // Keep only codes confirmed as equities; codes absent from allStocks entirely are excluded
+  // (they can't be classified and may be warrants/bonds/ETFs not yet in stock_ref).
+  const codesForSummary = equityCodes.size > 0
+    ? allSdwCodes.filter(c => equityCodes.has(c))
     : allSdwCodes;
 
   codesForSummary.forEach(code => {
