@@ -49,6 +49,7 @@ STOCKS: dict[str, dict] = {
     "02846": {"en":"ISHARES HS TECH",       "zh":"iShares恒生科技ETF","industry":"ETF","ind_zh":"ETF",      "type":"etf"},
     "03140": {"en":"FUTURE HSI ETF",        "zh":"未來恒生指數ETF",   "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
     "03037": {"en":"HUAXIA HS TECH ETF",    "zh":"華夏恒生科技ETF",   "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
+    "03039": {"en":"E FUND HSI ESG ETF",    "zh":"易方達恒指ESG ETF", "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
     "03011": {"en":"CSOP HSI ETF",          "zh":"南方恒生指數ETF",   "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
     "02823": {"en":"ISHARES A50",           "zh":"iShares A50 ETF",   "industry":"ETF","ind_zh":"ETF",      "type":"etf"},
     "03451": {"en":"AGX NASDAQ ETF",        "zh":"AGX納指兌",         "industry":"ETF","ind_zh":"ETF",      "type":"etf"},

@@ -1774,7 +1774,7 @@ const NON_EQUITY_TYPES = new Set(['etf', 'bond', 'derivative']);
 // (e.g. bond ETFs whose stock_type is wrong until next main.py run).
 // Same keyword set as computeSfcCards() Fix 18.
 const _NON_EQUITY_NAME_KW = ['ETF','TRACKER FUND','INDEX FUND','LEVERAGED','INVERSE',
-  'GX ','CSOP','PREMIA','BOND','ISHARES','債','基金','指數'];
+  'GX ','CSOP','PREMIA','BOND','ISHARES','債','基金','指數','ESG'];
 function isEquityStock(s) {
   if (NON_EQUITY_TYPES.has(s.stock_type)) return false;
   const n = (s.name || s.name_chi || '').toUpperCase();
