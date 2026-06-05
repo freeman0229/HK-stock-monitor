@@ -1384,27 +1384,19 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
 
     # ── 12. Telegram ──────────────────────────────────────────────────────
     if results:
-        flagged     = [s for s in results if s["insight"]]
-        new_entries = [s for s in results if s["rank_new"]]
-        big_movers  = [s for s in results if not s["rank_new"] and s["rank_change"] >= 5]
-        top = next((s for s in results if s["turnover"] > 0), results[0])
-        top_rc = (f" [↑{top['rank_change']}]" if top["rank_change"] > 0
-                  else (" [new]" if top["rank_new"] else ""))
+        top100      = results[:100]
+        flagged     = [s for s in top100 if s["insight"]]
         lines = [
             "📊 港股策略板",
             f"時間: {output['update_time']}",
-            f"榜首: {top['name_chi']} ({top['code']}){top_rc} 成交額 {top['turnover']:,}",
-            f"異動股: {len(flagged)} 隻 | 新進榜: {len(new_entries)} 隻",
+            "─────────────",
+            "📋 成交額 Top 10:",
         ]
-        if new_entries:
-            lines.append("⭐ 新進: " + "、".join(
-                f"{s['name_chi']}({s['code']})" for s in new_entries[:3]))
-        if big_movers:
-            lines.append("🔺 大升: " + "、".join(
-                f"{s['name_chi']} ↑{s['rank_change']}" for s in big_movers[:3]))
+        for i, s in enumerate(results[:10], 1):
+            lines.append(f"{i}. {s['name_chi']}({s['code']}) {s['turnover']:,}")
         if flagged:
             lines.append("─────────────")
-            for s in flagged[:5]:
+            for s in flagged:
                 rc = (f" [↑{s['rank_change']}]" if s["rank_change"] > 0
                       else (" [new]" if s["rank_new"] else ""))
                 lines.append(
@@ -1412,6 +1404,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
                     f" | 沽空率 {s['short_ratio']}%"
                     f" | CCASS {'+' if s['pct_delta']>=0 else ''}{s['pct_delta']}pp"
                 )
+        lines.append("\nhttps://hk.tardigradeanalytics.com")
         send_telegram("\n".join(lines))
 
 if __name__ == "__main__":
