@@ -71,6 +71,7 @@ STOCKS: dict[str, dict] = {
     "03008": {"en":"BOSERA HASHKEY BITCOIN ETF", "zh":"博時HashKey比特幣ETF","industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03042": {"en":"CSOP BITCOIN ETF",           "zh":"南方比特幣ETF",       "industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03046": {"en":"CSOP ETHER ETF",             "zh":"南方以太幣ETF",       "industry":"ETF","ind_zh":"ETF","type":"etf"},
+    "03135": {"en":"FA SAMSUNG BITCOIN ETF",     "zh":"FA三星比特幣ETF",     "industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03179": {"en":"HARVEST BITCOIN ETF",        "zh":"嘉實比特幣ETF",       "industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03325": {"en":"CHINA AMC BITCOIN ETF",      "zh":"華夏比特幣ETF",       "industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03326": {"en":"CHINA AMC ETHER ETF",        "zh":"華夏以太幣ETF",       "industry":"ETF","ind_zh":"ETF","type":"etf"},
