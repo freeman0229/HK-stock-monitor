@@ -65,6 +65,7 @@ STOCKS: dict[str, dict] = {
     "03468": {"en":"CHINA AMC MSCI CHINA ETF",       "zh":"華夏MSCI中國ETF",    "industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03462": {"en":"BOSERA MSCI CHINA A ETF",        "zh":"博時MSCI A股ETF",    "industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03465": {"en":"HARVEST MSCI CHINA A ETF",       "zh":"嘉實MSCI A股ETF",    "industry":"ETF","ind_zh":"ETF","type":"etf"},
+    "03466": {"en":"HANG SENG HIGH DIV YIELD ETF",   "zh":"恒生高息股ETF",       "industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03470": {"en":"GX CHINA INNOVATION ETF",        "zh":"GX中國創新ETF",      "industry":"ETF","ind_zh":"ETF","type":"etf"},
     "03488": {"en":"E FUND MSCI CHINA A ETF",        "zh":"易方達MSCI A股ETF",  "industry":"ETF","ind_zh":"ETF","type":"etf"},
     # ── 加密貨幣 ETF ─────────────────────────────────────────────────────────
