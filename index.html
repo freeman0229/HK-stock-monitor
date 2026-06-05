@@ -1964,7 +1964,7 @@ function applyData(d, stale) {
     console.warn(`[data check] ${northboundFlow.length} northbound stocks — max possible is 20 (10 SSE + 10 SZSE). Check sc_top10_library output.`);
   }
   const missingPct = allStocks.filter(s => s.pct_listed == null || s.pct_listed === 0).length;
-  if (missingPct > allStocks.length * 0.5) {
+  if (!stale && missingPct > allStocks.length * 0.5) {
     console.warn(`[data check] ${missingPct}/${allStocks.length} stocks missing pct_listed — normal for non-southbound stocks.`);
   }
 
