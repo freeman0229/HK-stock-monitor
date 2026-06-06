@@ -68,7 +68,7 @@ import os
 import re
 import subprocess
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import holidays
 import pandas as pd
@@ -640,7 +640,7 @@ def get_short_avg_ratio(stock_codes: list, days: int, daily_tv: dict,
     return pd.DataFrame(rows)
 
 def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
-    today       = for_date or datetime.now()
+    today       = for_date or datetime.now(tz=timezone(timedelta(hours=8))).replace(tzinfo=None)
     trading_day = last_trading_day(today)
     log.info("=== analysis — trading day: %s ===", trading_day.strftime("%Y-%m-%d"))
     today_ds = trading_day.strftime("%Y-%m-%d")
