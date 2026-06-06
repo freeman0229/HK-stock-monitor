@@ -99,6 +99,7 @@ STOCKS: dict[str, dict] = {
     "03080": {"en":"FULLERTON SGD CASH FUND",        "zh":"富敦新加坡元現金基金","industry":"ETF","ind_zh":"債券","type":"bond"},
     "03430": {"en":"MBC BITCOIN ETF",                    "zh":"MBC比特幣ETF",       "industry":"ETF","ind_zh":"ETF",  "type":"etf"},
     "03431": {"en":"MBC ETHER ETF",                      "zh":"MBC以太幣ETF",       "industry":"ETF","ind_zh":"ETF",  "type":"etf"},
+    "03425": {"en":"MBC ETHER ETF II",                   "zh":"MBC以太幣ETF II",    "industry":"ETF","ind_zh":"ETF",  "type":"etf"},
     "03472": {"en":"CHINA AMC USD MONEY MARKET ETF",     "zh":"A華夏美元數",        "industry":"ETF","ind_zh":"債券", "type":"bond"},
     # ── HKD 貨幣市場 ETF ─────────────────────────────────────────────────────
     "03471": {"en":"CHINA AMC HKD MONEY MARKET ETF",     "zh":"A華夏港元數",        "industry":"ETF","ind_zh":"債券", "type":"bond"},
