@@ -7,6 +7,7 @@ on:
     - cron: '0 6 * * 6'    # 06:00 UTC / 14:00 HKT (Saturday) — SDW weekly (self-retries internally)
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
     - cron: '0 3 * * 6'       # 03:00 UTC / 11:00 HKT (Saturday)  — HSI weekly update
+    - cron: '0 8 * * 6'       # 08:00 UTC / 16:00 HKT (Saturday)  — SFC weekly retry (catches late-published reports)
   workflow_dispatch:
     inputs:
       job:
@@ -505,7 +506,7 @@ jobs:
     permissions:
       contents: write
     if: |
-      (github.event_name == 'schedule' && github.event.schedule == '0 2 * * 6') ||
+      (github.event_name == 'schedule' && (github.event.schedule == '0 2 * * 6' || github.event.schedule == '0 8 * * 6')) ||
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'sfc-weekly' || inputs.job == 'both-weekly'))
 
     steps:

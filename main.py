@@ -53,12 +53,20 @@
 #   in 累積沽空 summary cards, bubble chart, and 挾倉風險 Top 15.
 #   Fix: added missing codes to _BOND_CODES; broadened _ETF_NAME_KW with ISHARES/
 #   CSOP/PREMIA/GX; broadened _BOND_NAME_KW with Chinese bond keywords 債券/亞投債/國債.
+#
+# [Fix 12 — 2026-06-06] Turnover library stale on local machine: main.py was reading
+#   turnover_{YYYY}.json from local disk, which was last updated 2026-05-13 and never
+#   refreshed automatically (file too large for GitHub; CI writes to R2 only).
+#   Fix: added _sync_turnover_from_r2() — called at the start of run_analysis() step 1,
+#   it pulls the current year's turnover_{YYYY}.json from R2 before the library is read.
+#   Always overwrites local copy to guarantee freshness. Read-only — never writes to R2.
 # ──────────────────────────────────────────────────────────────────────────────
 
 import json
 import logging
 import os
 import re
+import subprocess
 import time
 from datetime import date, datetime, timedelta
 
@@ -70,13 +78,10 @@ from stock_ref import get_zh_name, get_industry, get_type, STOCKS
 from ccass_universe import get_universe, is_included as _universe_included, normalize_code
 from ccass_library import get_pct_history, get_sh_history, load_year as _cc_load_year
 from short_library import get_short_ratio_history, load_year as sl_load_year
-from turnover_library import load_year as tv_load_year, load_recent as tv_load_recent, \
-                            get_high_history as tv_get_high_history, \
-                            get_low_history  as tv_get_low_history
+from turnover_library import load_year as tv_load_year, load_recent as tv_load_recent
 from sc_top10_library import get_top10, get_top10_history, get_sb_summary
 try:
-    from sfc_library import all_report_fridays as sfc_fridays, \
-    get_position_history as sfc_get_history, \
+    from sfc_library import get_position_history as sfc_get_history, \
     all_stored_dates as sfc_stored_dates, save_pct_bulk as sfc_save_pct_bulk
     _SFC_AVAILABLE = True
 except ImportError:
@@ -166,10 +171,6 @@ def ccass_trade_date(settlement_date: datetime) -> datetime:
     return business_days_back(settlement_date, 2)
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
-def to_num(s) -> float:
-    try:    return float(str(s).replace(",", "").strip())
-    except (ValueError, TypeError, AttributeError): return 0.0
-
 def load_store(path: str) -> dict:
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
@@ -179,6 +180,29 @@ def load_store(path: str) -> dict:
 def save_store(path: str, data: dict):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+
+def _sync_turnover_from_r2():
+    """
+    Pull the current year's turnover_{YYYY}.json from R2 before analysis.
+    Always overwrites the local copy to ensure freshness — local files are
+    considered stale backups only. Never writes back to R2 (read-only).
+    """
+    R2_ENDPOINT = os.environ.get("R2_ENDPOINT_URL", "").strip()
+    if not R2_ENDPOINT:
+        log.warning("R2_ENDPOINT_URL not set — skipping turnover sync, local file may be stale")
+        return
+    year  = date.today().year
+    fname = f"turnover_{year}.json"
+    log.info("Syncing %s from R2 …", fname)
+    cmd = ["aws", "s3", "cp",
+           f"s3://hk-stock-monitor/{fname}", fname,
+           "--endpoint-url", R2_ENDPOINT, "--no-progress"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    if r.returncode == 0:
+        log.info("%s synced from R2", fname)
+    else:
+        log.warning("Failed to sync %s from R2: %s — local file may be stale",
+                    fname, r.stderr.strip()[:200])
 
 def send_telegram(msg: str):
     if not TELEGRAM_TOKEN or not CHAT_ID:
@@ -625,6 +649,7 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
     _universe_names = get_universe()
 
     # ── 1. Daily quotation ────────────────────────────────────────────────────
+    _sync_turnover_from_r2()   # always pull fresh copy from R2 before reading
     _nm      = load_store(NAME_MAP_FILE)
     _lib_day = tv_load_year(trading_day.year).get("by_date", {}).get(today_ds, {})
 
@@ -734,7 +759,6 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
 
     if _SDW_AVAILABLE:
         from ccass_sdw_library import DB_PATH as _SDW_DB_PATH, get_conn as _sdw_get_conn
-        import sqlite3 as _sqlite3
         try:
             with _sdw_get_conn(_SDW_DB_PATH) as _sc:
                 _sdw_best_date = _sc.execute(
@@ -1056,16 +1080,6 @@ def run_analysis(for_date: datetime = None, suppress_telegram: bool = False):
             rec = _sh_all[ds].get(code5, {})
             if isinstance(rec, dict) and rec.get("sv", 0) > 0:
                 result.append({"date": ds, "sv": rec["sv"], "st": rec.get("st", 0)})
-            if len(result) >= n: break
-        return result
-
-    def _pct_hist(code5, n, before):
-        result = []
-        for ds in sorted(_cc_all.keys(), reverse=True):
-            if ds >= before: continue
-            rec = _cc_all[ds].get(code5, {})
-            pct = rec.get("pct", 0.0) if isinstance(rec, dict) else 0.0
-            if pct > 0: result.append(float(pct))
             if len(result) >= n: break
         return result
 
