@@ -1660,6 +1660,89 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <label style="font-size:12px;color:var(--muted)">至</label>
       <input type="date" id="stock-to" style="font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
       <button id="stock-apply" style="font-size:12px;padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer">套用</button>
+      <button onclick="stkShowHelp()" title="如何運用綜合參數" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg></button>
+
+      <script>
+      function stkShowHelp() {
+        const w = window.open('', '_blank', 'width=700,height=750,scrollbars=yes,resizable=yes');
+        w.document.write(`<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><title>個股綜合分析 說明</title>
+        <style>
+          body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:32px 40px;color:#222;line-height:1.7;max-width:640px;margin:0 auto;}
+          h1{font-size:20px;font-weight:700;margin-bottom:24px;color:#c0252d;border-bottom:2px solid #c0252d;padding-bottom:10px;}
+          h2{font-size:15px;font-weight:700;margin-top:28px;margin-bottom:8px;color:#333;}
+          ul{padding-left:18px;margin:6px 0;}
+          li{margin:5px 0;font-size:14px;}
+          .arrow{color:#c0252d;font-weight:600;}
+          table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}
+          th{background:#f4f4f4;padding:8px 10px;text-align:left;border:1px solid #ddd;font-weight:600;}
+          td{padding:7px 10px;border:1px solid #ddd;vertical-align:top;}
+          tr:nth-child(even) td{background:#fafafa;}
+          .legend{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:middle;}
+          .tip{background:#fff8f0;border-left:4px solid #c0252d;padding:12px 16px;margin-top:24px;border-radius:0 8px 8px 0;font-size:13px;}
+        </style></head><body>
+        <h1>個股綜合分析 — 如何運用綜合參數進行分析</h1>
+
+        <h2>一、換手率（%）— 上方圖表</h2>
+        <ul>
+          <li><span style="display:inline-block;width:12px;height:4px;background:#b8860b;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>橙色曲線</strong> = 每日股份易手的百分比</li>
+        </ul>
+        <strong style="font-size:13px;">如何運用：</strong>
+        <ul>
+          <li>換手率持續上升 <span class="arrow">→</span> 市場參與度增加，流動性強</li>
+          <li>突然急升 <span class="arrow">→</span> 警示異常活動，可能是主力吸籌或派發</li>
+          <li>換手率高但股價穩定 <span class="arrow">→</span> 有承接力，支撐較強</li>
+          <li>換手率高但股價下跌 <span class="arrow">→</span> 拋售壓力明顯，需警惕</li>
+        </ul>
+
+        <h2>二、收市價 / VWAP & 成交量 — 中間圖表</h2>
+        <ul>
+          <li><span style="display:inline-block;width:12px;height:4px;background:#4a90d9;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>藍色實線</strong> = 收市價</li>
+          <li><span style="display:inline-block;width:12px;height:4px;background:#c0252d;margin-right:6px;vertical-align:middle;border-radius:2px;border-top:2px dashed #c0252d;height:0;"></span><strong>紅色虛線</strong> = VWAP（成交量加權平均價）</li>
+          <li><span style="display:inline-block;width:12px;height:12px;background:#ccc;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>灰色柱狀</strong> = 每日成交量</li>
+        </ul>
+        <strong style="font-size:13px;">如何運用：</strong>
+        <ul>
+          <li>股價<strong>高於 VWAP</strong> <span class="arrow">→</span> 買方主導，偏多信號</li>
+          <li>股價<strong>低於 VWAP</strong> <span class="arrow">→</span> 賣方主導，偏空信號</li>
+          <li>成交量放大同時股價突破 VWAP <span class="arrow">→</span> 確認真實突破，信號可靠</li>
+          <li>成交量低迷且股價貼近 VWAP <span class="arrow">→</span> 方向不明，宜觀望</li>
+        </ul>
+
+        <h2>三、Top10持倉 / SFC賣空（%）— 下方圖表</h2>
+        <ul>
+          <li><span style="display:inline-block;width:12px;height:12px;background:rgba(42,157,143,0.6);margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>青色柱狀</strong> = 前十大機構持倉佔比</li>
+          <li><span style="display:inline-block;width:10px;height:10px;background:#c0252d;margin-right:6px;vertical-align:middle;border-radius:50%;"></span><strong>紅色圓點</strong> = 香港證監會（SFC）公布的賣空比率</li>
+        </ul>
+        <strong style="font-size:13px;">如何運用：</strong>
+        <ul>
+          <li>機構持倉集中度高（青柱高）<span class="arrow">→</span> 大資金積極參與，留意其方向</li>
+          <li>紅點上升同時股價下跌 <span class="arrow">→</span> 確認沽空壓力，看淡信號增強</li>
+          <li>賣空急增但股價企穩 <span class="arrow">→</span> 可能出現軋空（Short Squeeze），留意反彈風險</li>
+          <li>賣空低 + 機構持倉穩定 <span class="arrow">→</span> 籌碼穩定，波動較小</li>
+        </ul>
+
+        <h2>四、綜合信號解讀 — 四大指標聯動</h2>
+        <table>
+          <tr><th>市場情境</th><th>換手率</th><th>股價 vs VWAP</th><th>機構持倉</th><th>賣空比率</th><th>研判結論</th></tr>
+          <tr><td>強勢做多</td><td>持續上升</td><td>高於VWAP</td><td>增加</td><td>低</td><td>強烈買入信號</td></tr>
+          <tr><td>主力出貨</td><td>急速飆升</td><td>低於VWAP</td><td>下降</td><td>上升</td><td>大戶離場，小心</td></tr>
+          <tr><td>橫盤整固</td><td>平穩偏低</td><td>貼近VWAP</td><td>穩定</td><td>低</td><td>方向未明，觀望</td></tr>
+          <tr><td>軋空風險</td><td>上升</td><td>高於VWAP</td><td>偏高</td><td>急升</td><td>潛在急速反彈</td></tr>
+        </table>
+
+        <h2>五、實戰操作建議</h2>
+        <p style="font-size:14px;">分析時建議<strong>由上至下</strong>逐層確認：</p>
+        <ul>
+          <li><strong>換手率</strong> <span class="arrow">→</span> 確認市場動能是否足夠</li>
+          <li><strong>股價 vs VWAP</strong> <span class="arrow">→</span> 驗證目前價格強弱</li>
+          <li><strong>機構持倉</strong> <span class="arrow">→</span> 判斷大資金是否支持</li>
+          <li><strong>SFC賣空</strong> <span class="arrow">→</span> 評估沽空風險與軋空機會</li>
+        </ul>
+        <div class="tip">當四項指標<strong>方向一致</strong>時，交易信號最為可靠；若指標互相矛盾，則宜保持觀望，等待更清晰的市場訊號。</div>
+        </body></html>`);
+        w.document.close();
+      }
+      </script>
     </div>
     <div style="position:relative;">
       <input type="text" id="stock-search" placeholder="輸入代號或名稱…" autocomplete="off"
