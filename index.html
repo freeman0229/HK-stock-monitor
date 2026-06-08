@@ -841,6 +841,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 }
 .offline-dismiss:hover { color: #888; }
 /* ── Footer ── */
+.tg-footer-btn { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: var(--label); border-radius: 20px; padding: 4px 11px; font-size: 11px; font-weight: 500; text-decoration: none; border: 1px solid var(--border); transition: border-color 0.15s, color 0.15s; }
+.tg-footer-btn:hover { border-color: #229ED9; color: #229ED9; }
+
 #footer {
   display: flex;
   align-items: center;
@@ -1902,7 +1905,10 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 </div>
 
 <div id="footer">
-  <span>Email: <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="196d786b7d707e6b787d7c78777875606d707a6a597e74787075377a7674">[email&#160;protected]</a></span>
+  <span style="display:inline-flex;align-items:center;gap:8px;">
+    <a href="mailto:tardigradeanalytics@gmail.com" style="color:var(--label);text-decoration:none;">Email: tardigradeanalytics@gmail.com</a>
+    <a class="tg-footer-btn" href="https://t.me/hkstockmonitor" target="_blank"><svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#229ED9"/><path fill="#fff" d="M17.9 7.2L15.5 18c-.2.8-.7 1-1.3.6l-3-2.2-1.4 1.4c-.2.2-.4.3-.7.3l.2-3 5.5-5c.2-.2 0-.3-.4-.1L6.1 14.4l-2.9-.9c-.6-.2-.6-.6.1-.9L17 6.3c.6-.2 1.1.1.9.9z"/></svg> Telegram</a>
+  </span>
   <span>港股策略板 ｜ 數據來源：HKEX · SFC ｜ 僅供參考，不構成投資建議</span>
   <span>©2026 tardigradeanalytics.com All rights reserved</span>
 </div>
