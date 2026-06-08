@@ -387,7 +387,6 @@ FIX LOG
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-<meta name="google-site-verification" content="eFfXDxz8U0wTx40koTDd0AJy1Zq88A51WtwMpFjTsNE" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>港股策略板</title>
@@ -1574,6 +1573,70 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
         <span style="color:var(--muted);font-size:12px;">至</span>
         <input type="date" id="cai-to" style="padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:12px;">
         <button onclick="caiApplyDateRange()" style="padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:12px;cursor:pointer;">套用</button>
+        <button onclick="caiShowHelp()" title="如何運用波幅通道" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--card);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg></button>
+        <script>
+        function caiShowHelp() {
+          const w = window.open('', '_blank', 'width=700,height=750,scrollbars=yes,resizable=yes');
+          w.document.write(`<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><title>個股波幅通道 說明</title>
+          <style>
+            body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:32px 40px;color:#222;line-height:1.7;max-width:640px;margin:0 auto;}
+            h1{font-size:20px;font-weight:700;margin-bottom:24px;color:#c0252d;border-bottom:2px solid #c0252d;padding-bottom:10px;}
+            h2{font-size:15px;font-weight:700;margin-top:28px;margin-bottom:8px;color:#333;}
+            p{font-size:14px;margin:6px 0;}
+            ul{padding-left:18px;margin:6px 0;}
+            li{margin:5px 0;font-size:14px;}
+            .arrow{color:#c0252d;font-weight:600;}
+            table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}
+            th{background:#f4f4f4;padding:8px 10px;text-align:left;border:1px solid #ddd;font-weight:600;}
+            td{padding:7px 10px;border:1px solid #ddd;vertical-align:top;}
+            tr:nth-child(even) td{background:#fafafa;}
+            .tip{background:#fff8f0;border-left:4px solid #c0252d;padding:12px 16px;margin-top:24px;border-radius:0 8px 8px 0;font-size:13px;}
+          </style></head><body>
+          <h1>個股波幅通道 — 如何運用波幅通道進行分析</h1>
+          <h2>一、圖表組成</h2>
+          <ul>
+            <li><span style="display:inline-block;width:12px;height:4px;background:#c0252d;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>紅色上軌線</strong> = 2σ 預測上軌</li>
+            <li><span style="display:inline-block;width:12px;height:4px;background:#4a90d9;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>藍色中軌線</strong> = 收市價</li>
+            <li><span style="display:inline-block;width:12px;height:4px;background:#2a7a2a;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>綠色下軌線</strong> = 2σ 預測下軌</li>
+            <li><span style="display:inline-block;width:12px;height:0;border-top:2px dashed #bbb;margin-right:6px;vertical-align:middle;"></span><strong>灰色虛線</strong> = 高／低箱圍</li>
+            <li><span style="display:inline-block;width:12px;height:12px;background:#ccc;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>下方柱狀圖</strong> = 高／低與5日均價之差值</li>
+          </ul>
+          <h2>二、統計超買與超賣</h2>
+          <p>波幅通道以<strong>標準差（σ）</strong>界定股價的統計正常波動範圍。當股價偏離均值達2σ或以上，在統計學上屬於<strong>極端值</strong>，出現概率低於5%。</p>
+          <ul>
+            <li>股價<strong>觸及或突破紅色上軌（+2σ）</strong> <span class="arrow">→</span> 統計上屬<strong>超買區間</strong>，股價偏離均衡水平過高，均值回歸壓力增加</li>
+            <li>股價<strong>觸及或跌穿綠色下軌（-2σ）</strong> <span class="arrow">→</span> 統計上屬<strong>超賣區間</strong>，股價偏離均衡水平過低，技術性反彈機會上升</li>
+            <li>股價<strong>在上下軌之間運行</strong> <span class="arrow">→</span> 屬正常波幅範圍，趨勢延續中</li>
+          </ul>
+          <h2>三、高／低與5日均價差值的意義</h2>
+          <p>下方柱狀圖顯示當日<strong>高價或低價與5日移動平均線的偏離幅度</strong>：</p>
+          <ul>
+            <li><span style="display:inline-block;width:10px;height:14px;background:#c0252d;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>紅色柱向上</strong> <span class="arrow">→</span> 當日高價高於5日均價，短線買盤強勢，動能偏多</li>
+            <li><span style="display:inline-block;width:10px;height:14px;background:#2a9d8f;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>青色柱向下</strong> <span class="arrow">→</span> 當日低價低於5日均價，短線賣壓浮現，動能偏空</li>
+            <li><strong>柱體持續放大</strong> <span class="arrow">→</span> 偏離均線加速，趨勢動能增強</li>
+            <li><strong>柱體由大轉小</strong> <span class="arrow">→</span> 偏離收窄，動能衰減，可能出現反轉</li>
+          </ul>
+          <h2>四、統計超買／超賣與均線偏離聯動判斷</h2>
+          <table>
+            <tr><th>上軌／下軌位置</th><th>均線差值柱</th><th>研判結論</th></tr>
+            <tr><td>價格觸及上軌（+2σ）</td><td>紅柱持續放大</td><td>超買但動能仍強，追高風險高，等待柱體收縮再減持</td></tr>
+            <tr><td>價格觸及上軌（+2σ）</td><td>紅柱開始收縮</td><td>超買且動能衰退，回調信號明確，考慮減持</td></tr>
+            <tr><td>價格觸及下軌（-2σ）</td><td>青柱持續放大</td><td>超賣但跌勢未止，勿急於接刀，等待柱體收縮</td></tr>
+            <tr><td>價格觸及下軌（-2σ）</td><td>青柱開始收縮</td><td>超賣且跌勢放緩，反彈機會上升，可留意入場</td></tr>
+            <tr><td>價格在通道中間</td><td>柱體細小</td><td>波幅收縮，方向未明，靜待突破</td></tr>
+          </table>
+          <h2>五、明日預測範圍</h2>
+          <p>頁面頂部「<strong>明日預測: XX.XXX – XX.XXX</strong>」以統計波幅推算次日高低區間，可視為：</p>
+          <ul>
+            <li><strong>預測上限</strong> <span class="arrow">→</span> 明日統計阻力位，超過即屬異常強勢</li>
+            <li><strong>預測下限</strong> <span class="arrow">→</span> 明日統計支撐位，跌穿即屬異常弱勢</li>
+          </ul>
+          <h2>六、實戰操作建議</h2>
+          <div class="tip">單獨依賴波幅通道判斷方向風險較高。建議與<strong>換手率</strong>及<strong>VWAP</strong>三者聯合確認——波幅通道界定統計位置，均線差值確認動能方向，換手率驗證資金參與度，三者一致時信號最為可靠。</div>
+          </body></html>`);
+          w.document.close();
+        }
+        </script>
       </div>
     </div>
 
@@ -1662,7 +1725,6 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
       <input type="date" id="stock-to" style="font-size:12px;padding:3px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">
       <button id="stock-apply" style="font-size:12px;padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer">套用</button>
       <button onclick="stkShowHelp()" title="如何運用綜合參數" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg></button>
-
       <script>
       function stkShowHelp() {
         const w = window.open('', '_blank', 'width=700,height=750,scrollbars=yes,resizable=yes');
@@ -1678,11 +1740,9 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           th{background:#f4f4f4;padding:8px 10px;text-align:left;border:1px solid #ddd;font-weight:600;}
           td{padding:7px 10px;border:1px solid #ddd;vertical-align:top;}
           tr:nth-child(even) td{background:#fafafa;}
-          .legend{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:middle;}
           .tip{background:#fff8f0;border-left:4px solid #c0252d;padding:12px 16px;margin-top:24px;border-radius:0 8px 8px 0;font-size:13px;}
         </style></head><body>
         <h1>個股綜合分析 — 如何運用綜合參數進行分析</h1>
-
         <h2>一、換手率（%）— 上方圖表</h2>
         <ul>
           <li><span style="display:inline-block;width:12px;height:4px;background:#b8860b;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>橙色曲線</strong> = 每日股份易手的百分比</li>
@@ -1694,11 +1754,10 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <li>換手率高但股價穩定 <span class="arrow">→</span> 有承接力，支撐較強</li>
           <li>換手率高但股價下跌 <span class="arrow">→</span> 拋售壓力明顯，需警惕</li>
         </ul>
-
         <h2>二、收市價 / VWAP & 成交量 — 中間圖表</h2>
         <ul>
           <li><span style="display:inline-block;width:12px;height:4px;background:#4a90d9;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>藍色實線</strong> = 收市價</li>
-          <li><span style="display:inline-block;width:12px;height:4px;background:#c0252d;margin-right:6px;vertical-align:middle;border-radius:2px;border-top:2px dashed #c0252d;height:0;"></span><strong>紅色虛線</strong> = VWAP（成交量加權平均價）</li>
+          <li><span style="display:inline-block;width:12px;height:0;border-top:2px dashed #c0252d;margin-right:6px;vertical-align:middle;"></span><strong>紅色虛線</strong> = VWAP（成交量加權平均價）</li>
           <li><span style="display:inline-block;width:12px;height:12px;background:#ccc;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>灰色柱狀</strong> = 每日成交量</li>
         </ul>
         <strong style="font-size:13px;">如何運用：</strong>
@@ -1708,7 +1767,6 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <li>成交量放大同時股價突破 VWAP <span class="arrow">→</span> 確認真實突破，信號可靠</li>
           <li>成交量低迷且股價貼近 VWAP <span class="arrow">→</span> 方向不明，宜觀望</li>
         </ul>
-
         <h2>三、Top10持倉 / SFC賣空（%）— 下方圖表</h2>
         <ul>
           <li><span style="display:inline-block;width:12px;height:12px;background:rgba(42,157,143,0.6);margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>青色柱狀</strong> = 前十大機構持倉佔比</li>
@@ -1721,7 +1779,6 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <li>賣空急增但股價企穩 <span class="arrow">→</span> 可能出現軋空（Short Squeeze），留意反彈風險</li>
           <li>賣空低 + 機構持倉穩定 <span class="arrow">→</span> 籌碼穩定，波動較小</li>
         </ul>
-
         <h2>四、綜合信號解讀 — 四大指標聯動</h2>
         <table>
           <tr><th>市場情境</th><th>換手率</th><th>股價 vs VWAP</th><th>機構持倉</th><th>賣空比率</th><th>研判結論</th></tr>
@@ -1730,7 +1787,6 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
           <tr><td>橫盤整固</td><td>平穩偏低</td><td>貼近VWAP</td><td>穩定</td><td>低</td><td>方向未明，觀望</td></tr>
           <tr><td>軋空風險</td><td>上升</td><td>高於VWAP</td><td>偏高</td><td>急升</td><td>潛在急速反彈</td></tr>
         </table>
-
         <h2>五、實戰操作建議</h2>
         <p style="font-size:14px;">分析時建議<strong>由上至下</strong>逐層確認：</p>
         <ul>
