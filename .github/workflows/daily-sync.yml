@@ -97,12 +97,12 @@ jobs:
 
   # ── Daily analysis (Mon–Fri 20:00 HKT) ─────────────────────────────────────
   # Depends on early-fetch (19:00) having already committed sc_top10 + ccass data.
-  # [Fix] timeout-minutes: 45 → 30. Tighter ceiling gives yahoo-backfill (13:30 UTC)
-  #       a guaranteed 60-min gap instead of the previous 45-min gap, preventing
+  # [Fix] timeout-minutes: 45 → 30. Tighter ceiling gives yahoo-backfill (16:00 UTC)
+  #       a guaranteed 3h30m gap instead of the previous 45-min gap, preventing
   #       simultaneous R2 access if daily ever ran close to its old timeout.
   # [Fix] TV+Short per-stock build moved to daily-tv-build job (needs: daily) so it
   #       never competes with the 30-min budget here. daily-tv-build runs after this
-  #       job completes and has its own 90-min timeout, well before yahoo-backfill.
+  #       job completes and has its own 90-min timeout, well before yahoo-backfill (16:00 UTC).
   daily:
     name: Daily analysis
     runs-on: ubuntu-latest
@@ -195,7 +195,7 @@ jobs:
   # tv_{code5}.json per stock and uploads to R2.
   # timeout-minutes: 90 — 2280 stocks × ~1.6s ≈ 61 min + setup overhead.
   # Safe ceiling: daily starts 12:00 UTC, daily typically finishes ~12:27,
-  # so tv-build runs ~12:27–13:30 at most, ending before yahoo-backfill (13:30 UTC).
+  # so tv-build runs ~12:27–13:30 at most, ending before yahoo-backfill (16:00 UTC).
   daily-tv-build:
     name: Daily TV+Short per-stock build
     needs: daily
