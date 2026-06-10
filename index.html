@@ -1103,6 +1103,7 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   <button class="tab-btn" data-tab="stock">個股綜合分析</button>
   <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
   <button class="tab-btn" data-tab="strategy">投資策略</button>
+  <button class="tab-btn" data-tab="aireport">AI分析報告</button>
 </div>
 
 <!-- Offline / stale data banner -->
@@ -1904,6 +1905,70 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   </div>
 </div>
 
+<div class="panel" id="panel-aireport">
+
+  <!-- ── Auth gate (always visible until unlocked) ── -->
+  <div id="air-auth-gate" style="max-width:480px;margin:0 auto 24px">
+    <div class="sec-title" style="margin-bottom:12px">🔒 生成新報告</div>
+    <div style="display:flex;gap:8px">
+      <input
+        id="air-password"
+        type="password"
+        placeholder="輸入密碼解鎖"
+        style="flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:6px;
+               background:var(--card);color:var(--text);font-size:14px;outline:none"
+        onkeydown="if(event.key==='Enter') airAuth()"
+      >
+      <button
+        onclick="airAuth()"
+        style="padding:9px 18px;background:var(--red);color:#fff;border:none;
+               border-radius:6px;font-size:14px;cursor:pointer;white-space:nowrap"
+      >解鎖</button>
+    </div>
+    <div id="air-auth-err"
+         style="color:var(--red);font-size:12px;margin-top:6px;display:none">
+      密碼錯誤，請重試
+    </div>
+  </div>
+
+  <!-- ── Search box (hidden until unlocked) ── -->
+  <div id="air-search-wrap"
+       style="display:none;max-width:640px;margin:0 auto 28px;padding:16px;
+              background:var(--card);border:1px solid var(--border);border-radius:10px">
+    <div class="sec-title" style="margin-bottom:12px">✅ 已解鎖 — 生成新報告</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input
+        id="air-code-input"
+        type="text"
+        placeholder="輸入股票代碼 (例如 388、700、2800)"
+        style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);
+               border-radius:6px;background:var(--bg);color:var(--text);font-size:14px;outline:none"
+        onkeydown="if(event.key==='Enter') airGenerate()"
+      >
+      <button
+        id="air-gen-btn"
+        onclick="airGenerate()"
+        style="padding:9px 20px;background:var(--red);color:#fff;border:none;
+               border-radius:6px;font-size:14px;cursor:pointer;white-space:nowrap"
+      >生成報告</button>
+    </div>
+    <div id="air-gen-status"
+         style="margin-top:10px;font-size:13px;color:var(--muted);display:none"></div>
+  </div>
+
+  <!-- ── Report history (public read) ── -->
+  <div style="max-width:820px">
+    <div class="sec-title" style="margin-bottom:16px">📋 分析報告存檔</div>
+    <div id="air-loading" style="color:var(--muted);font-size:13px">載入中...</div>
+    <div id="air-empty"
+         style="display:none;color:var(--muted);font-size:13px;padding:20px 0">
+      暫無報告。輸入密碼後生成第一份報告。
+    </div>
+    <div id="air-report-list"></div>
+  </div>
+
+</div><!-- /panel-aireport -->
+
 <div id="footer">
   <span style="display:inline-flex;align-items:center;gap:8px;">
     <a href="mailto:tardigradeanalytics@gmail.com" style="color:var(--label);text-decoration:none;">Email: tardigradeanalytics@gmail.com</a>
@@ -1934,7 +1999,512 @@ let lastChartData = [];   // cache last good chart render
 let northboundFlow = [];  // Source 1: sc_top10 raw — 北水淨流入 / 個股明細 (unfiltered)
 let ccassHoldings  = [];  // Source 2: mutualmarket raw — 北水持股比例 (unfiltered)
 
-// ── Tabs ────────────────────────────────────────────────────────────────────
+// ── AI Report Panel ─────────────────────────────────────────────────────────
+// ── Config — replace with your actual Worker URL after deployment ─────────────
+const AIR_WORKER_URL = 'https://hk-strategy-report.tardigradeanalytics.workers.dev';
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let airToken = sessionStorage.getItem('air_token') || null;
+
+// Cache: last computed σ values per stock code, populated by drawCai()
+// We hook into drawCai() below to capture these after every render.
+const airSigmaCache = {};   // { code5: { sigmaUp, sigmaDown } }
+const airCaiCache   = {};   // { code5: { close, upper25, lower25, tmrUpper, tmrLower, bandPos, histArr } }
+const airStkCache   = {};   // { code5: { series object from stkBuildSeries } }
+
+// ── Hook into drawCai to capture σ + band data after each render ──────────────
+// We wrap the existing drawCai function so σ is always available
+// without needing to re-fetch or re-compute.
+(function hookDrawCai() {
+  const _orig = window.drawCai;
+  if (typeof _orig !== 'function') {
+    // drawCai not yet defined — retry after page fully loads
+    window.addEventListener('load', hookDrawCai);
+    return;
+  }
+  window.drawCai = async function(...args) {
+    // Run the original first so all local vars are computed
+    const result = await _orig.apply(this, args);
+
+    // After drawCai runs, re-read what it computed by re-running a
+    // minimal version of its calculations using the already-cached Yahoo data.
+    // This avoids modifying drawCai's internals.
+    try {
+      const code  = caiGetSelectedCode();
+      const stock = allStocks.find(s => s.code === code)
+                 || allStocks.find(s => norm5(s.code) === '02800');
+      if (!stock) return result;
+      const code5 = norm5(stock.code);
+
+      // yahooStockCache is the lazy cache used by loadYahooStock()
+      const byDate = (typeof yahooStockCache !== 'undefined' && yahooStockCache[code5])
+                   ? yahooStockCache[code5]
+                   : null;
+      if (!byDate) return result;
+
+      const allDates = Object.keys(byDate).sort().filter(d => byDate[d]?.close > 0);
+
+      // ── 1-year window (≈252 trading days) ──
+      const cutoff   = new Date();
+      cutoff.setFullYear(cutoff.getFullYear() - 1);
+      const cutoffDs = cutoff.toISOString().slice(0, 10);
+      const dates    = allDates.filter(d => d >= cutoffDs);
+      if (dates.length < 30) return result;
+
+      const closeArr = dates.map(d => byDate[d].close);
+      const highArr  = dates.map(d => byDate[d].high  || byDate[d].close);
+      const lowArr   = dates.map(d => byDate[d].low   || byDate[d].close);
+      const volArr   = dates.map(d => byDate[d].vol   || 0);
+
+      // σ using the same 6-day smoothed logic as drawCai
+      const rawUp = [], rawDn = [];
+      for (let i = 1; i < closeArr.length; i++) {
+        rawUp.push(highArr[i] - closeArr[i-1]);
+        rawDn.push(closeArr[i-1] - lowArr[i]);
+      }
+      const upMoves = [], dnMoves = [];
+      for (let i = 1; i < closeArr.length; i++) {
+        const wStart = Math.max(0, i - 6);
+        const upSlice = rawUp.slice(wStart, i).filter(v => v > 0);
+        const dnSlice = rawDn.slice(wStart, i).filter(v => v > 0);
+        if (upSlice.length) upMoves.push(upSlice.reduce((a,b)=>a+b,0)/upSlice.length);
+        if (dnSlice.length) dnMoves.push(dnSlice.reduce((a,b)=>a+b,0)/dnSlice.length);
+      }
+      const _mean = a => a.reduce((s,v)=>s+v,0)/a.length;
+      const _std  = a => {
+        if (a.length < 2) return 0;
+        const m = _mean(a);
+        return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/a.length);
+      };
+      const sigmaUp   = _std(upMoves);
+      const sigmaDown = _std(dnMoves);
+      airSigmaCache[code5] = { sigmaUp, sigmaDown };
+
+      // Latest vol ratio
+      const n    = closeArr.length;
+      const avg6 = _mean(volArr.slice(Math.max(0,n-6)).filter(v=>v>0));
+      const avg23= _mean(volArr.slice(Math.max(0,n-23)).filter(v=>v>0));
+      const vr   = avg6 > 0 && avg23 > 0 ? avg6/avg23 : 1;
+
+      const latestClose = closeArr[n-1];
+      const upper25     = +(latestClose + sigmaUp   * vr * 2.0).toFixed(3);
+      const lower25     = +(latestClose - sigmaDown * vr * 2.0).toFixed(3);
+      const tmrUpper    = +(latestClose + sigmaUp   * vr * 2.0).toFixed(3);
+      const tmrLower    = +(latestClose - sigmaDown * vr * 2.0).toFixed(3);
+
+      // Band position
+      let bandPosition;
+      if      (latestClose >= upper25) bandPosition = '觸及/突破上軌（+2σ），統計超買區間';
+      else if (latestClose <= lower25) bandPosition = '觸及/突破下軌（−2σ），統計超賣區間';
+      else {
+        const mid = (latestClose - lower25) / (upper25 - lower25);
+        bandPosition = mid > 0.6 ? '通道上半部，偏強' : mid < 0.4 ? '通道下半部，偏弱' : '通道中間，方向未明';
+      }
+
+      // Histogram: high/low vs 5-day MA (last 20 bars)
+      const histArr = [];
+      for (let i = 4; i < closeArr.length; i++) {
+        const ma5 = _mean(closeArr.slice(i-4, i+1));
+        histArr.push(+(highArr[i] - ma5).toFixed(4)); // positive = red, negative = green
+      }
+
+      airCaiCache[code5] = {
+        close: latestClose, upper25, lower25, tmrUpper, tmrLower,
+        bandPosition,
+        histArr: histArr.slice(-20),
+      };
+    } catch(e) {
+      console.warn('[AIR] drawCai hook error:', e);
+    }
+    return result;
+  };
+})();
+
+// ── Hook into stkBuildSeries to cache stk series data ────────────────────────
+(function hookStkBuild() {
+  const _origRender = window.stkRenderCharts;
+  if (typeof _origRender !== 'function') {
+    window.addEventListener('load', hookStkBuild);
+    return;
+  }
+  window.stkRenderCharts = async function(...args) {
+    const result = await _origRender.apply(this, args);
+    // After render, capture the last series via stkBuildSeries with 1Y range
+    try {
+      if (!stkCode) return result;
+      const toDs   = new Date().toISOString().slice(0, 10);
+      const fromDt = new Date(); fromDt.setFullYear(fromDt.getFullYear() - 1);
+      const fromDs = fromDt.toISOString().slice(0, 10);
+      // Use existing cached data — stkBuildSeries is cheap if data already loaded
+      const series = await stkBuildSeries(stkCode, fromDs, toDs);
+      if (series) airStkCache[stkCode] = series;
+    } catch(e) {
+      console.warn('[AIR] stkRenderCharts hook error:', e);
+    }
+    return result;
+  };
+})();
+
+// ── Extract full 1-year trend summary from cached stk series ─────────────────
+function airExtractStkSummary(code5) {
+  const series = airStkCache[code5];
+  if (!series || !series.labels.length) return null;
+
+  const n = series.labels.length;
+
+  // Helper: get last non-null value from an array
+  const lastVal = arr => {
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i] != null) return arr[i];
+    }
+    return null;
+  };
+
+  // Helper: average of non-null values in a slice
+  const avg = arr => {
+    const vals = arr.filter(v => v != null && v > 0);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  };
+
+  // Helper: min/max of non-null values
+  const minVal = arr => { const v = arr.filter(x => x != null && x > 0); return v.length ? Math.min(...v) : null; };
+  const maxVal = arr => { const v = arr.filter(x => x != null && x > 0); return v.length ? Math.max(...v) : null; };
+
+  // Index offsets for time windows (approximate trading days)
+  const i1m  = Math.max(0, n - 21);   // ~1 month ago
+  const i3m  = Math.max(0, n - 63);   // ~3 months ago
+  const i6m  = Math.max(0, n - 126);  // ~6 months ago
+  // Full 1Y = entire series (already filtered to 1 year)
+
+  // ── 收市價 trend ──
+  const close     = lastVal(series.close);
+  const close1m   = lastVal(series.close.slice(i1m - 5, i1m + 5)); // ~1M ago value
+  const close3m   = lastVal(series.close.slice(i3m - 5, i3m + 5));
+  const close6m   = lastVal(series.close.slice(i6m - 5, i6m + 5));
+  const closeHi1Y = maxVal(series.close);
+  const closeLo1Y = minVal(series.close);
+  const closeHi3m = maxVal(series.close.slice(i3m));
+  const closeLo3m = minVal(series.close.slice(i3m));
+
+  // ── VWAP (latest only — daily value, trend not meaningful) ──
+  const vwap = lastVal(series.vwap);
+
+  // ── 換手率 trend ──
+  const turn      = lastVal(series.turn);
+  const turnAvg1m = avg(series.turn.slice(i1m));
+  const turnAvg3m = avg(series.turn.slice(i3m));
+  const turnAvg6m = avg(series.turn.slice(i6m));
+  const turnAvg1Y = avg(series.turn);
+  const turnHi1Y  = maxVal(series.turn);
+  const turnLo1Y  = minVal(series.turn.filter(v => v > 0.01)); // exclude near-zero
+
+  // ── Top10 機構持倉 trend (weekly SDW — sparse, use available points) ──
+  const top10vals  = series.top10.filter(v => v != null && v > 0);
+  const top10      = lastVal(series.top10);
+  const top10_1m   = avg(series.top10.slice(i1m));
+  const top10_3m   = avg(series.top10.slice(i3m));
+  const top10_6m   = avg(series.top10.slice(i6m));
+  const top10Hi1Y  = maxVal(series.top10);
+  const top10Lo1Y  = minVal(top10vals);
+
+  // ── SFC 賣空 trend (report dates — sparse) ──
+  const sfcvals  = series.sfc.filter(v => v != null && v > 0);
+  const sfc      = lastVal(series.sfc);
+  const sfc_1m   = avg(series.sfc.slice(i1m));
+  const sfc_3m   = avg(series.sfc.slice(i3m));
+  const sfc_6m   = avg(series.sfc.slice(i6m));
+  const sfcHi1Y  = maxVal(series.sfc);
+  const sfcLo1Y  = minVal(sfcvals);
+
+  // ── Signal history: full year summary ──
+  const allSignals = series.signal.filter(Boolean);
+  const sigCounts  = {};
+  allSignals.forEach(s => { sigCounts[s] = (sigCounts[s] || 0) + 1; });
+  const recentSignals = [...new Set(series.signal.slice(-10).filter(Boolean))];
+  // Top signals over the year
+  const topSignals = Object.entries(sigCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([sig, cnt]) => `${sig}×${cnt}`);
+
+  // ── Price position vs 1Y range ──
+  const pricePosition1Y = (close != null && closeHi1Y != null && closeLo1Y != null && closeHi1Y > closeLo1Y)
+    ? +((close - closeLo1Y) / (closeHi1Y - closeLo1Y) * 100).toFixed(1)
+    : null; // 0% = 1Y low, 100% = 1Y high
+
+  return {
+    // Latest values
+    close, vwap, turn, top10, sfc,
+    // Price trend
+    close1m, close3m, close6m,
+    closeHi1Y, closeLo1Y,
+    closeHi3m, closeLo3m,
+    pricePosition1Y,
+    // Turnover trend
+    turnAvg1m, turnAvg3m, turnAvg6m, turnAvg1Y,
+    turnHi1Y, turnLo1Y,
+    // Institution trend
+    top10_1m, top10_3m, top10_6m,
+    top10Hi1Y, top10Lo1Y,
+    // SFC short trend
+    sfc_1m, sfc_3m, sfc_6m,
+    sfcHi1Y, sfcLo1Y,
+    // Signals
+    recentSignals,
+    topSignals,
+    totalSignalDays: allSignals.length,
+  };
+}
+
+// ── Silently trigger data loads if not yet cached ────────────────────────────
+async function airEnsureData(code5) {
+  const status = document.getElementById('air-gen-status');
+  const setStatus = msg => { if (status) { status.style.display='block'; status.textContent=msg; }};
+
+  // 1. Ensure stk series
+  if (!airStkCache[code5]) {
+    setStatus('⏳ 載入個股綜合分析數據...');
+    try {
+      const toDs   = new Date().toISOString().slice(0, 10);
+      const fromDt = new Date(); fromDt.setFullYear(fromDt.getFullYear() - 1);
+      const fromDs = fromDt.toISOString().slice(0, 10);
+      const series = await stkBuildSeries(code5, fromDs, toDs);
+      if (series) airStkCache[code5] = series;
+    } catch(e) { console.warn('[AIR] stk fetch error:', e); }
+  }
+
+  // 2. Ensure cai / σ
+  if (!airCaiCache[code5]) {
+    setStatus('⏳ 載入波幅通道數據並計算σ...');
+    try {
+      // Temporarily set caiCurCode so drawCai uses our target stock
+      const prevCode = caiCurCode;
+      caiCurCode = allStocks.find(s => norm5(s.code) === code5)?.code || code5;
+      await drawCai(); // hook will populate airCaiCache
+      caiCurCode = prevCode;
+    } catch(e) { console.warn('[AIR] cai fetch error:', e); }
+  }
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+async function airAuth() {
+  const pw  = document.getElementById('air-password').value.trim();
+  const err = document.getElementById('air-auth-err');
+  if (!pw) return;
+  try {
+    const resp = await fetch(`${AIR_WORKER_URL}/api/auth`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ password: pw }),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.token) {
+      airToken = data.token;
+      sessionStorage.setItem('air_token', airToken);
+      err.style.display = 'none';
+      airShowUnlocked();
+    } else {
+      err.style.display = 'block';
+    }
+  } catch(e) {
+    err.textContent    = '連線失敗，請稍後重試';
+    err.style.display  = 'block';
+  }
+}
+
+function airShowUnlocked() {
+  document.getElementById('air-auth-gate').style.display   = 'none';
+  document.getElementById('air-search-wrap').style.display = 'block';
+}
+
+// ── Generate report ───────────────────────────────────────────────────────────
+async function airGenerate() {
+  const raw    = document.getElementById('air-code-input').value.trim();
+  const status = document.getElementById('air-gen-status');
+  const btn    = document.getElementById('air-gen-btn');
+  if (!raw) return;
+
+  const code5     = norm5(raw);
+  const stockRec  = allStocks.find(s => norm5(s.code) === code5);
+  const stockName = stockRec ? (stockRec.name_chi || stockRec.name || code5) : code5;
+
+  btn.disabled    = true;
+  btn.textContent = '生成中...';
+  status.style.display = 'block';
+  status.textContent   = `⏳ 正在準備 ${code5} ${stockName} 的數據...`;
+
+  try {
+    // Ensure both datasets are loaded/cached
+    await airEnsureData(code5);
+
+    // Extract pre-computed summaries
+    const stkData = airExtractStkSummary(code5);
+    if (!stkData) {
+      status.textContent = `❌ 無法取得 ${code5} 的個股數據，請確認股票代碼正確`;
+      return;
+    }
+
+    const caiData = airCaiCache[code5] || null;
+    if (!caiData) {
+      status.textContent = `⚠️ 波幅通道數據不足，將僅使用綜合分析數據生成報告...`;
+    }
+
+    status.textContent = `⏳ 正在生成 ${code5} ${stockName} 的AI分析報告（約15秒）...`;
+
+    const resp = await fetch(`${AIR_WORKER_URL}/api/report/generate`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Auth-Token': airToken },
+      body: JSON.stringify({ stockCode: code5, stockName, stkData, caiData }),
+    });
+    const data = await resp.json();
+
+    if (resp.ok && data.report) {
+      status.textContent = '✅ 報告已生成！';
+      document.getElementById('air-code-input').value = '';
+      airLoadReports();
+    } else if (resp.status === 401) {
+      // Token expired (new day) — clear and ask to re-login
+      airToken = null;
+      sessionStorage.removeItem('air_token');
+      document.getElementById('air-search-wrap').style.display = 'none';
+      document.getElementById('air-auth-gate').style.display   = 'block';
+      status.textContent = '⚠️ 登入已過期，請重新輸入密碼';
+    } else {
+      status.textContent = '❌ ' + (data.error || '生成失敗，請重試');
+    }
+  } catch(e) {
+    status.textContent = '❌ 連線失敗：' + e.message;
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '生成報告';
+    setTimeout(() => { if(status.textContent.startsWith('✅')) status.style.display='none'; }, 4000);
+  }
+}
+
+// ── Load & render report list (public) ───────────────────────────────────────
+async function airLoadReports() {
+  const loading = document.getElementById('air-loading');
+  const empty   = document.getElementById('air-empty');
+  const list    = document.getElementById('air-report-list');
+  loading.style.display = 'block';
+  empty.style.display   = 'none';
+  list.innerHTML        = '';
+
+  try {
+    const resp    = await fetch(`${AIR_WORKER_URL}/api/reports`);
+    const data    = await resp.json();
+    const reports = data.reports || [];
+    loading.style.display = 'none';
+
+    if (!reports.length) { empty.style.display = 'block'; return; }
+
+    list.innerHTML = reports.map(r => airRenderCard(r)).join('');
+
+    // Expand/collapse
+    list.querySelectorAll('.air-card-header').forEach(h => {
+      h.addEventListener('click', () => h.closest('.air-card').classList.toggle('air-expanded'));
+    });
+
+    // Delete (only rendered when token exists)
+    list.querySelectorAll('.air-del-btn').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        if (!confirm(`確定刪除 ${btn.dataset.name} 的報告？`)) return;
+        await fetch(`${AIR_WORKER_URL}/api/report/${btn.dataset.id}`, {
+          method: 'DELETE', headers: { 'X-Auth-Token': airToken },
+        });
+        airLoadReports();
+      });
+    });
+  } catch(e) {
+    loading.textContent = '載入失敗：' + e.message;
+  }
+}
+
+// ── Render one report card ────────────────────────────────────────────────────
+function airRenderCard(r) {
+  const s = r.summary || {};
+  const fmt = (v, dp, suf) => v != null ? Number(v).toFixed(dp) + suf : '--';
+
+  const chips = [
+    s.close != null ? `收市 HK$${fmt(s.close,3,'')}` : null,
+    s.turn  != null ? `換手率 ${fmt(s.turn,1,'%')}`   : null,
+    s.sfc   != null ? `沽空 ${fmt(s.sfc,1,'%')}`      : null,
+    s.top10 != null ? `Top10 ${fmt(s.top10,1,'%')}`   : null,
+  ].filter(Boolean).map(c =>
+    `<span style="font-size:11px;color:var(--muted);margin-right:10px">${c}</span>`
+  ).join('');
+
+  const tags = (r.strategies || []).map(s =>
+    `<span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;
+                  background:rgba(192,37,45,0.1);color:var(--red);margin:2px">${s}</span>`
+  ).join('');
+
+  const delBtn = airToken
+    ? `<button class="air-del-btn" data-id="${r.id}" data-name="${r.stockCode}"
+         style="padding:3px 10px;background:transparent;border:1px solid var(--border);
+                border-radius:4px;font-size:11px;color:var(--muted);cursor:pointer;
+                flex-shrink:0">刪除</button>`
+    : '';
+
+  return `
+<div class="air-card"
+     style="border:1px solid var(--border);border-radius:10px;
+            margin-bottom:16px;background:var(--card);overflow:hidden">
+  <div class="air-card-header"
+       style="padding:14px 16px;cursor:pointer;display:flex;
+              align-items:center;gap:12px;user-select:none">
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+        <span style="font-size:15px;font-weight:600;color:var(--text)">
+          ${r.stockCode} ${r.stockName}
+        </span>
+        <span style="font-size:11px;color:var(--muted)">${r.dateStr} ${r.timeStr}</span>
+      </div>
+      <div style="margin-top:4px">${chips}</div>
+      ${tags ? `<div style="margin-top:6px">${tags}</div>` : ''}
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+      ${delBtn}
+      <span class="air-chevron"
+            style="color:var(--muted);font-size:12px;transition:transform .2s">▼</span>
+    </div>
+  </div>
+  <div class="air-card-body"
+       style="display:none;padding:0 16px 16px;border-top:1px solid var(--border)">
+    <div style="padding-top:14px;font-size:13px;line-height:1.9;color:var(--text)">
+      ${airMdToHtml(r.content || '')}
+    </div>
+  </div>
+</div>`;
+}
+
+// ── Minimal markdown → HTML ───────────────────────────────────────────────────
+function airMdToHtml(md) {
+  return md
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/^## (.+)$/gm,
+      '<h3 style="font-size:14px;font-weight:600;color:var(--red);margin:16px 0 6px">$1</h3>')
+    .replace(/^---$/gm,
+      '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^\* (.+)$/gm,
+      '<li style="margin-left:16px;margin-bottom:4px">$1</li>')
+    .replace(/^- (.+)$/gm,
+      '<li style="margin-left:16px;margin-bottom:4px">$1</li>')
+    .replace(/\n\n/g, '</p><p style="margin:0 0 8px">')
+    .replace(/\n/g, '<br>')
+    .replace(/^/, '<p style="margin:0 0 8px">').replace(/$/, '</p>');
+}
+
+// ── CSS for expand/collapse ───────────────────────────────────────────────────
+document.head.insertAdjacentHTML('beforeend', `<style>
+  .air-card.air-expanded .air-card-body { display: block !important; }
+  .air-card.air-expanded .air-chevron   { transform: rotate(180deg); }
+</style>`);
+
+
+
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -1951,6 +2521,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'ccass') initSdwPanel();
     if (btn.dataset.tab === 'short') initSfcChart();
     if (btn.dataset.tab === 'stock') initStockPanel();
+    if (btn.dataset.tab === 'aireport') { airLoadReports(); if (airToken) airShowUnlocked(); }
   });
 });
 
@@ -6813,6 +7384,8 @@ function initStockPanel() {
   // Default to 2800
   stkSelectCode('2800');
 }
+
+
 
 
 </script>
