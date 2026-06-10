@@ -2273,16 +2273,83 @@ async function airEnsureData(code5) {
     } catch(e) { console.warn('[AIR] stk fetch error:', e); }
   }
 
-  // 2. Ensure cai / σ
+  // 2. Ensure cai / σ — compute directly from Yahoo data, no chart rendering needed
   if (!airCaiCache[code5]) {
     setStatus('⏳ 載入波幅通道數據並計算σ...');
     try {
-      // Temporarily set caiCurCode so drawCai uses our target stock
-      const prevCode = caiCurCode;
-      caiCurCode = allStocks.find(s => norm5(s.code) === code5)?.code || code5;
-      await drawCai(); // hook will populate airCaiCache
-      caiCurCode = prevCode;
-    } catch(e) { console.warn('[AIR] cai fetch error:', e); }
+      // Load Yahoo data directly (same cache drawCai uses)
+      const byDate = await loadYahooStock(code5);
+      if (!byDate || !Object.keys(byDate).length) {
+        console.warn('[AIR] no Yahoo data for', code5);
+      } else {
+        const allDates = Object.keys(byDate).sort().filter(d => byDate[d]?.close > 0);
+        const cutoff   = new Date();
+        cutoff.setFullYear(cutoff.getFullYear() - 1);
+        const cutoffDs = cutoff.toISOString().slice(0, 10);
+        const dates    = allDates.filter(d => d >= cutoffDs);
+
+        if (dates.length >= 30) {
+          const closeArr = dates.map(d => byDate[d].close);
+          const highArr  = dates.map(d => byDate[d].high  || byDate[d].close);
+          const lowArr   = dates.map(d => byDate[d].low   || byDate[d].close);
+          const volArr   = dates.map(d => byDate[d].vol   || 0);
+
+          // σ using 6-day smoothed logic (matches drawCai exactly)
+          const rawUp = [], rawDn = [];
+          for (let i = 1; i < closeArr.length; i++) {
+            rawUp.push(highArr[i] - closeArr[i-1]);
+            rawDn.push(closeArr[i-1] - lowArr[i]);
+          }
+          const upMoves = [], dnMoves = [];
+          for (let i = 1; i < closeArr.length; i++) {
+            const wStart  = Math.max(0, i - 6);
+            const upSlice = rawUp.slice(wStart, i).filter(v => v > 0);
+            const dnSlice = rawDn.slice(wStart, i).filter(v => v > 0);
+            if (upSlice.length) upMoves.push(upSlice.reduce((a,b)=>a+b,0)/upSlice.length);
+            if (dnSlice.length) dnMoves.push(dnSlice.reduce((a,b)=>a+b,0)/dnSlice.length);
+          }
+          const _mean = a => a.reduce((s,v)=>s+v,0)/a.length;
+          const _std  = a => {
+            if (a.length < 2) return 0;
+            const m = _mean(a);
+            return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/a.length);
+          };
+          const sigmaUp   = _std(upMoves);
+          const sigmaDown = _std(dnMoves);
+
+          const n    = closeArr.length;
+          const avg6 = _mean(volArr.slice(Math.max(0,n-6)).filter(v=>v>0));
+          const avg23= _mean(volArr.slice(Math.max(0,n-23)).filter(v=>v>0));
+          const vr   = avg6 > 0 && avg23 > 0 ? avg6/avg23 : 1;
+
+          const latestClose = closeArr[n-1];
+          const upper25     = +(latestClose + sigmaUp   * vr * 2.0).toFixed(3);
+          const lower25     = +(latestClose - sigmaDown * vr * 2.0).toFixed(3);
+          const tmrUpper    = +(latestClose + sigmaUp   * vr * 2.0).toFixed(3);
+          const tmrLower    = +(latestClose - sigmaDown * vr * 2.0).toFixed(3);
+
+          let bandPosition;
+          if      (latestClose >= upper25) bandPosition = '觸及/突破上軌（+2σ），統計超買區間';
+          else if (latestClose <= lower25) bandPosition = '觸及/突破下軌（−2σ），統計超賣區間';
+          else {
+            const mid = (latestClose - lower25) / (upper25 - lower25);
+            bandPosition = mid > 0.6 ? '通道上半部，偏強' : mid < 0.4 ? '通道下半部，偏弱' : '通道中間，方向未明';
+          }
+
+          // Histogram: high vs 5-day MA (last 20 bars)
+          const histArr = [];
+          for (let i = 4; i < closeArr.length; i++) {
+            const ma5 = _mean(closeArr.slice(i-4, i+1));
+            histArr.push(+(highArr[i] - ma5).toFixed(4));
+          }
+
+          airCaiCache[code5] = {
+            close: latestClose, upper25, lower25, tmrUpper, tmrLower,
+            bandPosition, histArr: histArr.slice(-20),
+          };
+        }
+      }
+    } catch(e) { console.warn('[AIR] cai compute error:', e); }
   }
 }
 
@@ -2485,6 +2552,10 @@ function airMdToHtml(md) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/^## (.+)$/gm,
       '<h3 style="font-size:14px;font-weight:600;color:var(--red);margin:16px 0 6px">$1</h3>')
+    .replace(/^### (.+)$/gm,
+      '<h4 style="font-size:13px;font-weight:600;color:var(--red);margin:14px 0 5px">$1</h4>')
+    .replace(/^#### (.+)$/gm,
+      '<h5 style="font-size:13px;font-weight:600;color:var(--text);margin:12px 0 4px">$1</h5>')
     .replace(/^---$/gm,
       '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
@@ -2492,6 +2563,8 @@ function airMdToHtml(md) {
       '<li style="margin-left:16px;margin-bottom:4px">$1</li>')
     .replace(/^- (.+)$/gm,
       '<li style="margin-left:16px;margin-bottom:4px">$1</li>')
+    .replace(/^(\d+)\. (.+)$/gm,
+      '<li style="margin-left:16px;margin-bottom:4px">$2</li>')
     .replace(/\n\n/g, '</p><p style="margin:0 0 8px">')
     .replace(/\n/g, '<br>')
     .replace(/^/, '<p style="margin:0 0 8px">').replace(/$/, '</p>');
