@@ -7058,6 +7058,14 @@ async function stkBuildSeries(code5, fromDs, toDs) {
   const sortedVolDates = tradingDays.filter(d => (tvByDate[d]?.vol || 0) > 0);
   const volDateIdx     = new Map(sortedVolDates.map((d, i) => [d, i]));
 
+  // Full vol history (includes dates before fromDs) — used ONLY for 換手率
+  // rolling 24-day warmup so the line starts at the correct value on day 1
+  // of the chart without a ramp-up artefact. Chart range/labels unchanged.
+  const allSortedVolDates = Object.keys(tvByDate)
+    .filter(d => d <= toDs && (tvByDate[d]?.vol || 0) > 0)
+    .sort();
+  const allVolDateIdx = new Map(allSortedVolDates.map((d, i) => [d, i]));
+
   const labels=[], closeArr=[], vwapArr=[], volArr=[],
         turnArr=[], top10Arr=[], sfcArr=[], signalArr=[];
 
@@ -7071,11 +7079,12 @@ async function stkBuildSeries(code5, fromDs, toDs) {
     volArr  .push(rec.vol   > 0 ? rec.vol   : null);
 
     // 換手率: rolling 24-day vol sum / SDW total_sh
-    // Falls back to data.json sdw_total_sh when the per-stock SDW file has no entry
-    // for this date — prevents null gaps in early history where sdw_code.json starts late.
-    const dsIdx = volDateIdx.has(ds) ? volDateIdx.get(ds) : -1;
+    // Uses allSortedVolDates (full history before fromDs) so the warmup window
+    // is always full on day 1 of the chart — no ramp-up artefact.
+    // Falls back to data.json sdw_total_sh when the per-stock SDW file has no entry.
+    const dsIdx = allVolDateIdx.has(ds) ? allVolDateIdx.get(ds) : -1;
     const vol24 = dsIdx >= 0
-      ? sortedVolDates.slice(Math.max(0, dsIdx - 23), dsIdx + 1)
+      ? allSortedVolDates.slice(Math.max(0, dsIdx - 23), dsIdx + 1)
           .reduce((s, d) => s + (tvByDate[d]?.vol || 0), 0)
       : 0;
     const nearestSdw = sdwDateKeys.filter(d => d <= ds).slice(-1)[0];

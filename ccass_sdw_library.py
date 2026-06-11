@@ -639,13 +639,18 @@ def export_charts(
       }
 
     Only stocks that have at least one holdings row are exported.
-    Only the most recent *weeks* Friday dates are included.
+    Includes all data from the oldest available date in the DB so that
+    the frontend 換手率 chart never shows a ramp-up artefact from missing
+    history. The *weeks* parameter is kept as a fallback only.
     Returns the number of files written.
     """
     os.makedirs(out_dir, exist_ok=True)
 
-    # Cutoff: oldest date to include
-    cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
+    # Cutoff: use oldest date in DB so full history is always exported.
+    # Falls back to rolling-weeks window only if the DB has no metadata rows.
+    with get_conn(path) as conn:
+        _oldest = conn.execute("SELECT MIN(date) FROM metadata").fetchone()[0]
+    cutoff = _oldest or (date.today() - timedelta(weeks=weeks)).isoformat()
 
     written = 0
     with get_conn(path) as conn:
