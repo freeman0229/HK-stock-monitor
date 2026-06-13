@@ -1355,7 +1355,75 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
   </div>
 
   <!-- Panel header: title + stock dropdown -->
-  <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:14px">
+  <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:14px">
+    <button onclick="sdwShowHelp()" title="如何運用大戶持倉" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--card);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg></button>
+    <script>
+    function sdwShowHelp() {
+      const w = window.open('', '_blank', 'width=700,height=750,scrollbars=yes,resizable=yes');
+      w.document.write(`<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><title>大戶持倉 說明</title>
+      <style>
+        body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:32px 40px;color:#222;line-height:1.7;max-width:640px;margin:0 auto;}
+        h1{font-size:20px;font-weight:700;margin-bottom:24px;color:#c0252d;border-bottom:2px solid #c0252d;padding-bottom:10px;}
+        h2{font-size:15px;font-weight:700;margin-top:28px;margin-bottom:8px;color:#333;}
+        p{font-size:14px;margin:6px 0;}
+        ul{padding-left:18px;margin:6px 0;}
+        li{margin:5px 0;font-size:14px;}
+        .arrow{color:#c0252d;font-weight:600;}
+        table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}
+        th{background:#f4f4f4;padding:8px 10px;text-align:left;border:1px solid #ddd;font-weight:600;}
+        td{padding:7px 10px;border:1px solid #ddd;vertical-align:top;}
+        tr:nth-child(even) td{background:#fafafa;}
+        .tip{background:#fff8f0;border-left:4px solid #c0252d;padding:12px 16px;margin-top:24px;border-radius:0 8px 8px 0;font-size:13px;}
+      </style></head><body>
+      <h1>大戶持倉 — 如何運用大戶持倉進行分析</h1>
+
+      <h2>一、圖表組成</h2>
+      <p><strong>持倉比例趨勢（週度）</strong></p>
+      <ul>
+        <li><span style="display:inline-block;width:12px;height:12px;background:#c0252d;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>紅色柱</strong> = 大戶持倉佔比</li>
+        <li><span style="display:inline-block;width:12px;height:12px;background:#b8960c;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>黃色柱</strong> = 散戶持倉佔比</li>
+        <li><span style="display:inline-block;width:12px;height:12px;background:#2a7a2a;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>綠色柱</strong> = 北水（內地資金）持倉佔比</li>
+      </ul>
+      <p><strong>持倉集中度趨勢</strong></p>
+      <ul>
+        <li><span style="display:inline-block;width:12px;height:4px;background:#c0252d;margin-right:6px;vertical-align:middle;border-radius:2px;"></span><strong>紅色曲線</strong> = 前5大機構合計持股%，反映籌碼集中程度</li>
+      </ul>
+
+      <h2>二、持倉比例趨勢解讀</h2>
+      <ul>
+        <li><strong>大戶佔比持續偏高</strong> <span class="arrow">→</span> 籌碼主要由大資金控制，股價走勢較受機構主導</li>
+        <li><strong>大戶佔比上升</strong> <span class="arrow">→</span> 機構增持，看好後市，偏多信號</li>
+        <li><strong>大戶佔比下降，散戶佔比上升</strong> <span class="arrow">→</span> 大戶派發予散戶，需警惕見頂風險</li>
+        <li><strong>北水佔比突然增加</strong> <span class="arrow">→</span> 內地資金介入，留意政策及跨境資金動向</li>
+      </ul>
+
+      <h2>三、持倉集中度趨勢解讀</h2>
+      <ul>
+        <li><strong>集中度維持高位</strong> <span class="arrow">→</span> 籌碼高度集中，大戶控盤能力強，股價波動相對受控</li>
+        <li><strong>集中度持續下降</strong> <span class="arrow">→</span> 大機構逐步減持，籌碼分散，潛在沽壓增加</li>
+        <li><strong>集中度突然急升</strong> <span class="arrow">→</span> 大資金迅速吸籌，可能預示行情啟動</li>
+      </ul>
+
+      <h2>四、大戶／散戶比例聯動判斷</h2>
+      <table>
+        <tr><th>大戶佔比</th><th>散戶佔比</th><th>集中度趨勢</th><th>研判結論</th></tr>
+        <tr><td>上升</td><td>下降</td><td>上升</td><td>大戶吸籌，強烈看多信號</td></tr>
+        <tr><td>穩定高位</td><td>穩定低位</td><td>平穩</td><td>籌碼穩定，趨勢延續</td></tr>
+        <tr><td>下降</td><td>上升</td><td>下降</td><td>大戶出貨，謹慎看淡</td></tr>
+        <tr><td>急跌</td><td>急升</td><td>急跌</td><td>大戶大幅派發，見頂風險高</td></tr>
+      </table>
+
+      <h2>五、實戰操作建議</h2>
+      <ul>
+        <li>大戶持倉與<strong>換手率</strong>配合：大戶佔比上升 + 換手率放大 <span class="arrow">→</span> 確認主力積極入市</li>
+        <li>大戶持倉與<strong>VWAP</strong>配合：大戶增持 + 股價高於VWAP <span class="arrow">→</span> 趨勢向上信號最強</li>
+        <li>集中度長期維持高位但股價不升 <span class="arrow">→</span> 大戶可能處於鎖倉觀望，留意突破方向</li>
+      </ul>
+      <div class="tip">大戶持倉數據為<strong>週度更新</strong>，適合中線部署參考，不宜單獨作短線買賣依據，建議結合<strong>個股綜合分析</strong>及<strong>波幅通道</strong>共同判斷。</div>
+      </body></html>`);
+      w.document.close();
+    }
+    </script>
     <div style="position:relative;display:inline-block">
       <input type="text" id="sdw-search" placeholder="輸入代號或名稱…" autocomplete="off"
         style="font-size:13px;padding:7px 28px 7px 12px;border-radius:8px;border:0.5px solid var(--border);background:var(--card);color:var(--text);min-width:200px">
