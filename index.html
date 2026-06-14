@@ -2214,7 +2214,7 @@ const airStkCache   = {};   // { code5: { series object from stkBuildSeries } }
 })();
 
 // ── Extract full 1-year trend summary from cached stk series ─────────────────
-function airExtractStkSummary(code5) {
+function airExtractStkSummary(code5, caiData) {
   const series = airStkCache[code5];
   if (!series || !series.labels.length) return null;
 
@@ -2249,10 +2249,61 @@ function airExtractStkSummary(code5) {
   const close1m   = lastVal(series.close.slice(i1m - 5, i1m + 5)); // ~1M ago value
   const close3m   = lastVal(series.close.slice(i3m - 5, i3m + 5));
   const close6m   = lastVal(series.close.slice(i6m - 5, i6m + 5));
-  const closeHi1Y = maxVal(series.close);
-  const closeLo1Y = minVal(series.close);
-  const closeHi3m = maxVal(series.close.slice(i3m));
-  const closeLo3m = minVal(series.close.slice(i3m));
+
+  // Use raw high/low from Yahoo cache for true 1Y/3M range
+  // (series.close is dividend-adjusted so its max ≠ actual chart high)
+  let closeHi1Y = maxVal(series.close);
+  let closeLo1Y = minVal(series.close);
+  let closeHi3m = maxVal(series.close.slice(i3m));
+  let closeLo3m = minVal(series.close.slice(i3m));
+  try {
+    const yCache = (typeof yahooStockCache !== 'undefined') ? yahooStockCache[code5] : null;
+    if (yCache) {
+      const cutoff    = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1);
+      const cutoffDs  = cutoff.toISOString().slice(0, 10);
+      const cutoff3m  = new Date(); cutoff3m.setMonth(cutoff3m.getMonth() - 3);
+      const cutoff3mDs= cutoff3m.toISOString().slice(0, 10);
+      const yDates    = Object.keys(yCache).sort().filter(d => yCache[d]?.close > 0);
+      const dates1Y   = yDates.filter(d => d >= cutoffDs);
+      const dates3m   = yDates.filter(d => d >= cutoff3mDs);
+      if (dates1Y.length) {
+        closeHi1Y = Math.max(...dates1Y.map(d => yCache[d].high  || yCache[d].close));
+        closeLo1Y = Math.min(...dates1Y.map(d => yCache[d].low   || yCache[d].close));
+      }
+      if (dates3m.length) {
+        closeHi3m = Math.max(...dates3m.map(d => yCache[d].high  || yCache[d].close));
+        closeLo3m = Math.min(...dates3m.map(d => yCache[d].low   || yCache[d].close));
+      }
+    }
+  } catch(_) {}
+
+  // ── Fibonacci + σ overbought/oversold signal ──────────────────────────────
+  // Only triggered when price is near a key Fib level AND confirmed by σ band
+  let fibSignal = null;
+  if (close != null && closeHi1Y != null && closeLo1Y != null && closeHi1Y > closeLo1Y) {
+    const range     = closeHi1Y - closeLo1Y;
+    const retrace   = (closeHi1Y - close) / range;          // 0=at year high, 1=at year low
+    const extension = close > closeHi1Y ? (close - closeHi1Y) / range : null; // above year high
+    const aboveUpper = caiData?.upper25 != null && close >= caiData.upper25;
+    const belowLower = caiData?.lower25 != null && close <= caiData.lower25;
+
+    // Retracement zones + below -2σ → 超賣
+    if (belowLower) {
+      if      (retrace >= 0.618 && retrace <= 0.667)        fibSignal = { signal: '超賣', level: '從年高回撤 61.8%–66.7%（深度回撤）',  sigma: '低於 −2σ 下軌' };
+      else if (Math.abs(retrace - 0.500) <= 0.01)           fibSignal = { signal: '超賣', level: '從年高回撤 50%（中度回撤）',            sigma: '低於 −2σ 下軌' };
+      else if (retrace >= 0.333 && retrace <= 0.382)        fibSignal = { signal: '超賣', level: '從年高回撤 33.3%–38.2%（正常回撤）',   sigma: '低於 −2σ 下軌' };
+      else if (Math.abs(retrace - 0.236) <= 0.01)           fibSignal = { signal: '超賣', level: '從年高回撤 23.6%（淺度回撤）',          sigma: '低於 −2σ 下軌' };
+    }
+    // Extension zones + above +2σ → 超買
+    if (aboveUpper && extension != null) {
+      if      (extension >= 0.618 && extension <= 0.667)    fibSignal = { signal: '超買', level: '突破年高至 1.618–1.667 延伸位',        sigma: '高於 +2σ 上軌' };
+      else if (Math.abs(extension - 0.500) <= 0.01)         fibSignal = { signal: '超買', level: '突破年高至 1.500 延伸位',               sigma: '高於 +2σ 上軌' };
+      else if (extension >= 0.333 && extension <= 0.382)    fibSignal = { signal: '超買', level: '突破年高至 1.333–1.382 延伸位',         sigma: '高於 +2σ 上軌' };
+      else if (Math.abs(extension - 0.236) <= 0.01)         fibSignal = { signal: '超買', level: '突破年高至 1.236 延伸位',               sigma: '高於 +2σ 上軌' };
+    }
+    // Price at year high + above +2σ → 超買
+    if (aboveUpper && retrace <= 0.05 && extension == null) fibSignal = { signal: '超買', level: '處於年高附近',                          sigma: '高於 +2σ 上軌' };
+  }
 
   // ── VWAP (latest only — daily value, trend not meaningful) ──
   const vwap = lastVal(series.vwap);
@@ -2321,6 +2372,8 @@ function airExtractStkSummary(code5) {
     recentSignals,
     topSignals,
     totalSignalDays: allSignals.length,
+    // Fib + σ signal (null = not triggered)
+    fibSignal,
   };
 }
 
@@ -2472,14 +2525,16 @@ async function airGenerate() {
     // Ensure both datasets are loaded/cached
     await airEnsureData(code5);
 
+    // Read caiData from cache (populated by airEnsureData)
+    const caiData = airCaiCache[code5] || null;
+
     // Extract pre-computed summaries
-    const stkData = airExtractStkSummary(code5);
+    const stkData = airExtractStkSummary(code5, caiData);
     if (!stkData) {
       status.textContent = `❌ 無法取得 ${code5} 的個股數據，請確認股票代碼正確`;
       return;
     }
 
-    const caiData = airCaiCache[code5] || null;
     if (!caiData) {
       status.textContent = `⚠️ 波幅通道數據不足，將僅使用綜合分析數據生成報告...`;
     }
