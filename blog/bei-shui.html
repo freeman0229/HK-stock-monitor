@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>什麼是北水？滬深港通完全指南 | 港股學堂 | Tardigrade Analytics</title>
+<meta name="description" content="北水是什麼意思？本文詳解滬深港通運作原理、北水如何影響港股走勢，及如何追蹤每日北水流向，助你掌握內地資金動態。">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://hk.tardigradeanalytics.com/blog/bei-shui.html">
+<link rel="alternate" hreflang="zh-HK" href="https://hk.tardigradeanalytics.com/blog/bei-shui.html">
+<link rel="alternate" hreflang="zh-TW" href="https://hk.tardigradeanalytics.com/blog/bei-shui.html">
+<link rel="alternate" hreflang="zh-Hans" href="https://hk.tardigradeanalytics.com/blog/bei-shui.html">
+<link rel="alternate" hreflang="x-default" href="https://hk.tardigradeanalytics.com/blog/bei-shui.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="什麼是北水？滬深港通完全指南">
+<meta property="og:description" content="北水是什麼意思？詳解滬深港通運作原理、北水如何影響港股走勢，及如何追蹤每日北水流向。">
+<meta property="og:url" content="https://hk.tardigradeanalytics.com/blog/bei-shui.html">
+<meta property="og:image" content="https://hk.tardigradeanalytics.com/og-image.png">
+<meta property="og:locale" content="zh_HK">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "什麼是北水？滬深港通完全指南",
+  "description": "北水是什麼意思？詳解滬深港通運作原理、北水如何影響港股走勢，及如何追蹤每日北水流向。",
+  "url": "https://hk.tardigradeanalytics.com/blog/bei-shui.html",
+  "publisher": { "@type": "Organization", "name": "Tardigrade Analytics", "url": "https://hk.tardigradeanalytics.com/" },
+  "inLanguage": "zh-HK",
+  "articleSection": "港股入門"
+}
+</script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root { --red: #C0252D; --bg: #f5f4f0; --card: #ffffff; --border: #e2dfd8; --text: #1a1a1a; --muted: #666; }
+body { font-family: 'Noto Sans TC', sans-serif; background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.8; }
+#header { background: #fff; border-bottom: 3px solid var(--red); padding: 0 24px; height: 52px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 6px rgba(0,0,0,.06); }
+.logo { font-family: 'Noto Serif TC', serif; font-size: 20px; font-weight: 700; color: var(--red); text-decoration: none; }
+.logo span { color: #222; font-size: 12px; font-family: 'Noto Sans TC', sans-serif; font-weight: 400; margin-left: 10px; border-left: 1px solid #ddd; padding-left: 10px; }
+.nav-links { margin-left: auto; display: flex; gap: 16px; font-size: 13px; }
+.nav-links a { color: var(--muted); text-decoration: none; }
+.nav-links a:hover { color: var(--red); }
+.wrap { max-width: 720px; margin: 0 auto; padding: 48px 24px 80px; }
+.article-tag { display: inline-block; background: #fde8e8; color: var(--red); font-size: 11px; padding: 3px 12px; border-radius: 20px; font-weight: 600; margin-bottom: 16px; }
+h1 { font-size: 30px; font-weight: 700; line-height: 1.35; margin-bottom: 14px; }
+.meta { font-size: 12px; color: var(--muted); margin-bottom: 32px; display: flex; gap: 20px; flex-wrap: wrap; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+.lead { font-size: 16px; line-height: 1.85; color: var(--muted); margin-bottom: 36px; }
+h2 { font-size: 20px; font-weight: 700; margin: 40px 0 14px; display: flex; align-items: center; gap: 10px; }
+h2::before { content: ''; display: block; width: 4px; height: 20px; background: var(--red); border-radius: 2px; flex-shrink: 0; }
+h3 { font-size: 16px; font-weight: 700; margin: 24px 0 10px; color: var(--text); }
+p { margin-bottom: 16px; }
+ul, ol { padding-left: 22px; margin-bottom: 16px; }
+li { margin-bottom: 8px; }
+.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 28px 0; }
+.stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
+.stat-val { font-size: 24px; font-weight: 700; color: var(--red); }
+.stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.callout { background: #fff8f0; border-left: 4px solid var(--red); padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 28px 0; }
+.callout strong { color: var(--red); }
+.callout p { margin: 0; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; background: var(--card); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+th { background: #f8f7f4; padding: 10px 14px; text-align: left; font-weight: 600; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--border); }
+td { padding: 10px 14px; border-bottom: 1px solid #f0ede8; }
+tr:last-child td { border-bottom: none; }
+.cta-box { background: #fde8e8; border-radius: 10px; padding: 24px 28px; margin: 40px 0; }
+.cta-box h3 { color: var(--red); margin: 0 0 8px; font-size: 17px; }
+.cta-box p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+.cta-btn { display: inline-block; background: var(--red); color: #fff; text-decoration: none; padding: 10px 24px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+.breadcrumb { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+.breadcrumb a { color: var(--muted); text-decoration: none; }
+.breadcrumb a:hover { color: var(--red); }
+.tag-list { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--border); }
+.tag-chip { font-size: 12px; color: var(--muted); background: #f0ede8; padding: 4px 14px; border-radius: 20px; }
+.related { margin-top: 48px; padding-top: 32px; border-top: 1px solid var(--border); }
+.related h3 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+.related-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.related-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-decoration: none; color: inherit; }
+.related-card:hover { border-color: var(--red); }
+.related-card .rtag { font-size: 11px; color: var(--red); font-weight: 600; margin-bottom: 6px; }
+.related-card h4 { font-size: 14px; font-weight: 600; line-height: 1.4; }
+footer { text-align: center; padding: 32px 24px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
+footer a { color: var(--muted); text-decoration: none; }
+footer a:hover { color: var(--red); }
+@media (max-width: 600px) { h1 { font-size: 22px; } .stat-row { grid-template-columns: 1fr 1fr; } .related-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header id="header">
+  <a href="/" class="logo">港股策略板<span>Tardigrade Analytics</span></a>
+  <nav class="nav-links">
+    <a href="/blog/">港股學堂</a>
+    <a href="/">策略板</a>
+  </nav>
+  <button id="lang-toggle" title="切换为简体中文" style="margin-left:12px;padding:3px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;font-family:'Noto Sans TC',sans-serif;">简</button>
+</header>
+
+<div class="wrap">
+  <div class="breadcrumb"><a href="/">首頁</a> › <a href="/blog/">港股學堂</a> › 什麼是北水？</div>
+
+  <div class="article-tag">港股入門</div>
+  <h1>什麼是北水？滬深港通完全指南</h1>
+  <div class="meta">
+    <span>📅 2026年6月</span>
+    <span>⏱ 閱讀約5分鐘</span>
+    <span>🏷 北水 · 滬深港通 · 港股入門</span>
+  </div>
+
+  <p class="lead">「北水」是香港投資者最常聽到的詞彙之一，但究竟什麼是北水？它如何影響港股走勢？本文從零開始，帶你了解滬深港通的運作原理、北水的實際影響，以及如何在投資決策中善用北水數據。</p>
+
+  <h2>北水是什麼？</h2>
+  <p>「北水」指透過滬深港通南下的內地資金。「北」代表中國大陸（地理上在香港之北），「水」代表資金流動。簡單來說，當大陸投資者透過港股通買入香港股票，這些資金就被稱為北水。</p>
+  <p>與之相對的是「南水」（香港投資者北上買入A股），但在港股市場討論中，「北水」更為常見，因為內地資金體量龐大，對港股影響更顯著。</p>
+
+  <div class="stat-row">
+    <div class="stat-card"><div class="stat-val">520億</div><div class="stat-label">每日南向額度（人民幣）</div></div>
+    <div class="stat-card"><div class="stat-val">2014</div><div class="stat-label">滬港通開通年份</div></div>
+    <div class="stat-card"><div class="stat-val">500+</div><div class="stat-label">港股通可買股票數目</div></div>
+  </div>
+
+  <h2>滬深港通如何運作？</h2>
+  <p>滬深港通（Stock Connect）是連接上海、深圳及香港股票市場的互聯互通機制，分為以下兩個方向：</p>
+  <table>
+    <tr><th>方向</th><th>名稱</th><th>開通時間</th><th>說明</th></tr>
+    <tr><td>南向</td><td>港股通（滬）/ 港股通（深）</td><td>2014 / 2016</td><td>內地投資者買港股（即北水）</td></tr>
+    <tr><td>北向</td><td>滬股通 / 深股通</td><td>2014 / 2016</td><td>香港投資者買A股（即南水）</td></tr>
+  </table>
+  <p>南向港股通每日有額度上限，當單日成交接近上限，代表內地資金需求極為旺盛，往往是強烈的市場信號。</p>
+
+  <h2>北水為何重要？</h2>
+  <p>內地投資者基數龐大，整體資金規模遠超香港本地散戶。北水的大規模流入能直接推動個股甚至整體大市上升；反之，北水持續流出則可能帶來持續的沽壓。</p>
+  <p>以下情況特別值得關注：</p>
+  <ul>
+    <li><strong>北水連續多日淨流入</strong>：代表內地資金持續看好港股，市場信心強</li>
+    <li><strong>北水集中買入某一板塊</strong>：可能反映政策預期或行業催化劑</li>
+    <li><strong>北水突然大規模流出</strong>：需警惕情緒逆轉，留意下行風險</li>
+    <li><strong>北水佔某股持倉急升</strong>：代表內地資金看好該個股，籌碼被鎖定</li>
+  </ul>
+
+  <div class="callout">
+    <p><strong>實戰提示：</strong>北水淨流入創新高，同時個股大戶持倉（CCASS）增加，是最強烈的多頭信號組合。反之，北水連續流出配合SFC沽空比率上升，需提高警惕，考慮降低倉位。</p>
+  </div>
+
+  <h2>北水與港股的關係</h2>
+  <p>以恒生指數為例，歷史數據顯示每當北水大規模南下，恒生指數往往在短期內出現可觀升幅。這是因為北水偏好大型藍籌股，而這些股票在指數中佔有重大比重。</p>
+  <p>常見的北水偏好股票類型包括：</p>
+  <ul>
+    <li>大型科技股（如騰訊、阿里巴巴、美團）</li>
+    <li>內銀股及保險股</li>
+    <li>能源及資源類股份</li>
+    <li>港股獨有而A股未有的標的</li>
+  </ul>
+
+  <h2>如何追蹤北水？</h2>
+  <p>港交所每日收市後公布當日南向資金流向數據，包括整體淨流入及個股買賣金額。然而，手動查閱多個來源費時失事。港股策略板整合了以下北水相關數據，方便一站式追蹤：</p>
+  <ul>
+    <li>每日北水整體淨流入金額</li>
+    <li>個股北水持倉佔比（透過CCASS數據）</li>
+    <li>北水持倉週度趨勢圖</li>
+    <li>北水與大戶持倉對比分析</li>
+  </ul>
+
+  <div class="cta-box">
+    <h3>立即追蹤北水動向</h3>
+    <p>港股策略板提供免費北水追蹤、CCASS大戶持倉及SFC沽空數據，幫助你掌握內地資金動態。</p>
+    <a href="/" class="cta-btn">開啟港股策略板 →</a>
+  </div>
+
+  <h2>常見問題</h2>
+  <h3>北水每日什麼時間公布？</h3>
+  <p>港交所一般在每個交易日收市後（下午4時後）公布當日南向資金流向數據。個股的詳細CCASS持倉數據則每週更新一次。</p>
+
+  <h3>北水流入一定代表股價會升嗎？</h3>
+  <p>不一定。北水是重要的參考指標，但並非唯一因素。建議結合SFC沽空數據、大戶持倉集中度及換手率等指標共同判斷，避免單一指標誤判。</p>
+
+  <h3>港股通有哪些限制？</h3>
+  <p>並非所有港股均可透過港股通買賣。一般而言，只有在恒生綜合指數成份股範圍內的股票，以及在上交所或深交所上市的A+H股，才納入港股通標的。</p>
+
+  <div class="tag-list">
+    <span class="tag-chip">北水</span>
+    <span class="tag-chip">滬深港通</span>
+    <span class="tag-chip">港股通</span>
+    <span class="tag-chip">南向資金</span>
+    <span class="tag-chip">港股入門</span>
+    <span class="tag-chip">資金流向</span>
+  </div>
+
+  <div class="related">
+    <h3>相關文章</h3>
+    <div class="related-grid">
+      <a href="/blog/ccass.html" class="related-card">
+        <div class="rtag">大戶持倉</div>
+        <h4>如何解讀CCASS大戶持倉數據？</h4>
+      </a>
+      <a href="/blog/short-selling.html" class="related-card">
+        <div class="rtag">沽空分析</div>
+        <h4>SFC沽空數據怎麼看？</h4>
+      </a>
+      <a href="/blog/short-squeeze.html" class="related-card">
+        <div class="rtag">進階策略</div>
+        <h4>挾倉風險是什麼？如何識別軋空機會</h4>
+      </a>
+      <a href="/blog/vwap.html" class="related-card">
+        <div class="rtag">技術分析</div>
+        <h4>VWAP是什麼？港股實戰應用指南</h4>
+      </a>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <p><a href="/">港股策略板</a> · <a href="/blog/">港股學堂</a> · © 2026 Tardigrade Analytics · <a href="mailto:tardigradeanalytics@gmail.com">聯絡我們</a></p>
+</footer>
+
+<script>
+(function(){
+  var TEXTS = {
+    // index.html
+    "港股投資教學": "港股投资教学",
+    "從基礎到進階，掌握北水、沽空、大戶持倉等核心港股分析方法": "从基础到进阶，掌握北水、沽空、大户持仓等核心港股分析方法",
+    "港股入門": "港股入门",
+    "什麼是北水？滬深港通完全指南": "什么是北水？沪深港通完全指南",
+    "北水如何影響港股走勢？從零開始了解滬深港通的運作原理及實戰應用。": "北水如何影响港股走势？从零开始了解沪深港通的运作原理及实战应用。",
+    "大戶持倉": "大户持仓",
+    "如何解讀CCASS大戶持倉數據？": "如何解读CCASS大户持仓数据？",
+    "CCASS持倉數據是追蹤機構資金動向的重要工具，學會解讀大戶、北水與散戶的持倉變化。": "CCASS持仓数据是追踪机构资金动向的重要工具，学会解读大户、北水与散户的持仓变化。",
+    "沽空分析": "沽空分析",
+    "SFC沽空數據怎麼看？累積空頭持倉解析": "SFC沽空数据怎么看？累积空头持仓解析",
+    "香港證監會每週公布累積沽空數據，掌握正確解讀方法，識別高沽空壓力股票。": "香港证监会每周公布累积沽空数据，掌握正确解读方法，识别高沽空压力股票。",
+    "進階策略": "进阶策略",
+    "挾倉風險是什麼？如何識別軋空機會": "挟仓风险是什么？如何识别轧空机会",
+    "當大量空頭遇上大戶控盤，可能觸發急速軋空行情。學會提前識別潛在挾倉機會。": "当大量空头遇上大户控盘，可能触发急速轧空行情。学会提前识别潜在挟仓机会。",
+    "技術分析": "技术分析",
+    "VWAP是什麼？港股實戰應用指南": "VWAP是什么？港股实战应用指南",
+    "成交量加權平均價（VWAP）是判斷買賣方強弱的核心指標，掌握正確使用方法。": "成交量加权平均价（VWAP）是判断买卖方强弱的核心指标，掌握正确使用方法。",
+    "換手率如何判斷主力吸籌與出貨？": "换手率如何判断主力吸筹与出货？",
+    "換手率是衡量市場參與度的重要指標，結合股價走勢可有效識別主力資金動向。": "换手率是衡量市场参与度的重要指标，结合股价走势可有效识别主力资金动向。",
+    "閱讀約5分鐘": "阅读约5分钟",
+    "閱讀約6分鐘": "阅读约6分钟",
+    "閱讀 →": "阅读 →",
+    "← 返回策略板": "← 返回策略板",
+    "港股學堂": "港股学堂",
+
+    // bei-shui
+    "什麼是北水？滬深港通完全指南": "什么是北水？沪深港通完全指南",
+    "北水是什麼意思？本文詳解滬深港通運作原理、北水如何影響港股走勢，及如何追蹤每日北水流向，助你掌握內地資金動態。": "北水是什么意思？本文详解沪深港通运作原理、北水如何影响港股走势，及如何追踪每日北水流向，助你掌握内地资金动态。",
+    "「北水」是香港投資者最常聽到的詞彙之一，但究竟什麼是北水？它如何影響港股走勢？本文從零開始，帶你了解滬深港通的運作原理、北水的實際影響，以及如何在投資決策中善用北水數據。": "「北水」是香港投资者最常听到的词汇之一，但究竟什么是北水？它如何影响港股走势？本文从零开始，带你了解沪深港通的运作原理、北水的实际影响，以及如何在投资决策中善用北水数据。",
+    "什麼是北水？": "什么是北水？",
+    "「北水」指透過滬深港通南下的內地資金。「北」代表中國大陸（地理上在香港之北），「水」代表資金流動。簡單來說，當大陸投資者透過港股通買入香港股票，這些資金就被稱為北水。": "「北水」指透过沪深港通南下的内地资金。「北」代表中国大陆（地理上在香港之北），「水」代表资金流动。简单来说，当大陆投资者透过港股通买入香港股票，这些资金就被称为北水。",
+    "與之相對的是「南水」（香港投資者北上買入A股），但在港股市場討論中，「北水」更為常見，因為內地資金體量龐大，對港股影響更顯著。": "与之相对的是「南水」（香港投资者北上买入A股），但在港股市场讨论中，「北水」更为常见，因为内地资金体量庞大，对港股影响更显著。",
+    "每日南向額度（人民幣）": "每日南向额度（人民币）",
+    "滬港通開通年份": "沪港通开通年份",
+    "港股通可買股票數目": "港股通可买股票数目",
+    "滬深港通如何運作？": "沪深港通如何运作？",
+    "滬深港通（Stock Connect）是連接上海、深圳及香港股票市場的互聯互通機制，分為以下兩個方向：": "沪深港通（Stock Connect）是连接上海、深圳及香港股票市场的互联互通机制，分为以下两个方向：",
+    "南向額度上限，當單日成交接近上限，代表內地資金需求極為旺盛，往往是強烈的市場信號。": "南向额度上限，当单日成交接近上限，代表内地资金需求极为旺盛，往往是强烈的市场信号。",
+    "北水為何重要？": "北水为何重要？",
+    "內地投資者基數龐大，整體資金規模遠超香港本地散戶。北水的大規模流入能直接推動個股甚至整體大市上升；反之，北水持續流出則可能帶來持續的沽壓。": "内地投资者基数庞大，整体资金规模远超香港本地散户。北水的大规模流入能直接推动个股甚至整体大市上升；反之，北水持续流出则可能带来持续的沽压。",
+    "如何追蹤北水？": "如何追踪北水？",
+    "立即追蹤北水動向": "立即追踪北水动向",
+    "港股策略板提供免費北水追蹤、CCASS大戶持倉及SFC沽空數據，幫助你掌握內地資金動態。": "港股策略板提供免费北水追踪、CCASS大户持仓及SFC沽空数据，帮助你掌握内地资金动态。",
+    "開啟港股策略板 →": "开启港股策略板 →",
+    "常見問題": "常见问题",
+
+    // shared nav
+    "← 返回主頁": "← 返回主页",
+    "策略板": "策略板",
+    "首頁": "首页",
+    "聯絡我們": "联系我们",
+    "相關文章": "相关文章",
+
+    // ccass
+    "CCASS持倉數據是香港股市最獨特的公開數據之一。透過分析機構持倉的週度變化，投資者可以追蹤「聰明錢」的動向，在大戶增持初期佈局，在出貨信號出現時提前離場。": "CCASS持仓数据是香港股市最独特的公开数据之一。透过分析机构持仓的周度变化，投资者可以追踪「聪明钱」的动向，在大户增持初期布局，在出货信号出现时提前离场。",
+    "什麼是CCASS？": "什么是CCASS？",
+    "持倉集中度是什麼？": "持仓集中度是什么？",
+    "如何解讀持倉變化信號？": "如何解读持仓变化信号？",
+    "四大情境聯動判斷": "四大情境联动判断",
+    "CCASS數據的局限性": "CCASS数据的局限性",
+    "實戰建議": "实战建议",
+    "即時查看CCASS大戶持倉": "即时查看CCASS大户持仓",
+    "港股策略板提供免費CCASS持倉趨勢圖，涵蓋大戶、北水及散戶三類持倉比例週度變化。": "港股策略板提供免费CCASS持仓趋势图，涵盖大户、北水及散户三类持仓比例周度变化。",
+
+    // short-selling
+    "SFC沽空數據怎麼看？累積空頭持倉解析": "SFC沽空数据怎么看？累积空头持仓解析",
+    "核心指標解析": "核心指标解析",
+    "如何判斷沽空壓力高低？": "如何判断沽空压力高低？",
+    "回補天數（Days to Cover）的意義": "回补天数（Days to Cover）的意义",
+    "沽空信號的五種情境": "沽空信号的五种情境",
+    "實戰應用建議": "实战应用建议",
+    "即時查看SFC累積沽空數據": "即时查看SFC累积沽空数据",
+    "港股策略板提供免費SFC沽空排行、賣空比率走勢及挾倉風險分析，每週更新。": "港股策略板提供免费SFC沽空排行、卖空比率走势及挟仓风险分析，每周更新。",
+
+    // short-squeeze
+    "挾倉的形成過程": "挟仓的形成过程",
+    "如何識別高挾倉風險股票？": "如何识别高挟仓风险股票？",
+    "挾倉風險評估矩陣": "挟仓风险评估矩阵",
+    "挾倉交易的風險管理": "挟仓交易的风险管理",
+    "即時查看挾倉風險排行": "即时查看挟仓风险排行",
+    "港股策略板提供免費挾倉風險泡泡圖及Top 15排行，結合SFC沽空及CCASS持倉數據，幫助你提前識別潛在軋空機會。": "港股策略板提供免费挟仓风险泡泡图及Top 15排行，结合SFC沽空及CCASS持仓数据，帮助你提前识别潜在轧空机会。",
+
+    // vwap
+    "什麼是VWAP？": "什么是VWAP？",
+    "VWAP與股價的關係": "VWAP与股价的关系",
+    "四大市場情境解讀": "四大市场情境解读",
+    "VWAP在港股的實戰應用": "VWAP在港股的实战应用",
+    "VWAP vs 移動平均線的分別": "VWAP vs 移动平均线的分别",
+    "在個股綜合分析中查看VWAP": "在个股综合分析中查看VWAP",
+    "港股策略板的個股綜合分析整合了VWAP、換手率、機構持倉及SFC賣空四大指標，幫助你全面評估個股強弱。": "港股策略板的个股综合分析整合了VWAP、换手率、机构持仓及SFC卖空四大指标，帮助你全面评估个股强弱。",
+
+    // turnover
+    "換手率如何判斷主力吸籌與出貨？": "换手率如何判断主力吸筹与出货？",
+    "什麼是換手率？": "什么是换手率？",
+    "換手率與股價的九大組合": "换手率与股价的九大组合",
+    "換手率識別主力行為": "换手率识别主力行为",
+    "港股換手率參考水平": "港股换手率参考水平",
+    "在個股綜合分析中追蹤換手率": "在个股综合分析中追踪换手率",
+    "港股策略板提供個股換手率趨勢圖，結合VWAP、機構持倉及SFC賣空四大指標，全面評估個股強弱。": "港股策略板提供个股换手率趋势图，结合VWAP、机构持仓及SFC卖空四大指标，全面评估个股强弱。",
+
+    // footer
+    "港股策略板": "港股策略板",
+  };
+
+  var LANG_KEY = 'blog_lang';
+
+  function getLang() {
+    return localStorage.getItem(LANG_KEY) || 'hant';
+  }
+
+  function setLang(lang) {
+    localStorage.setItem(LANG_KEY, lang);
+  }
+
+  function applyLang(lang) {
+    var btn = document.getElementById('lang-toggle');
+    if (!btn) return;
+    if (lang === 'hans') {
+      btn.textContent = '繁';
+      btn.title = '切換為繁體中文';
+      translatePage('hans');
+    } else {
+      btn.textContent = '简';
+      btn.title = '切换为简体中文';
+      translatePage('hant');
+    }
+  }
+
+  function translatePage(to) {
+    // Store original hant text on first run
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+    var nodes = [];
+    while (walker.nextNode()) {
+      var n = walker.currentNode;
+      if (n.parentNode && ['SCRIPT','STYLE','NOSCRIPT'].indexOf(n.parentNode.tagName) === -1 && n.nodeValue.trim()) {
+        nodes.push(n);
+      }
+    }
+    nodes.forEach(function(n) {
+      var val = n.nodeValue;
+      if (to === 'hans') {
+        Object.keys(TEXTS).forEach(function(hant) {
+          if (val.indexOf(hant) !== -1) {
+            val = val.split(hant).join(TEXTS[hant]);
+          }
+        });
+      } else {
+        // reverse lookup
+        Object.keys(TEXTS).forEach(function(hant) {
+          var hans = TEXTS[hant];
+          if (val.indexOf(hans) !== -1) {
+            val = val.split(hans).join(hant);
+          }
+        });
+      }
+      n.nodeValue = val;
+    });
+    // update html lang attr
+    document.documentElement.lang = to === 'hans' ? 'zh-Hans' : 'zh-Hant';
+  }
+
+  function toggleLang() {
+    var cur = getLang();
+    var next = cur === 'hant' ? 'hans' : 'hant';
+    setLang(next);
+    applyLang(next);
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    var btn = document.getElementById('lang-toggle');
+    if (btn) btn.addEventListener('click', toggleLang);
+    // apply saved preference
+    var saved = getLang();
+    if (saved === 'hans') applyLang('hans');
+    else applyLang('hant');
+  });
+})();
+</script>
+
+</body>
+</html>
