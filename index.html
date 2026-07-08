@@ -326,6 +326,24 @@ FIX LOG
   Location: stkBuildSeries() fallbackTotSh + totalSh fallback chain;
             stkDrawCharts() Panel 1 dataset spanGaps.
 
+[Fix 32 — 2026-07-08] 累積沽空 tab, 個股 view: 賣空比例 sub-panel only showed the
+  last ~2 dates, empty for the rest of the (up to 1-year) history.
+  Root cause: _sfcDrawStock() read only the raw r.pct field with no fallback
+  (`pct: r.pct || 0`). r.pct is only persisted going forward by save_pct_bulk()
+  (see Fix 7) — historical SFC records never had it written, so pct was 0 and
+  filtered out by `pctSeries = series.filter(s => s.pct > 0)` for almost the
+  whole chart.
+  Fix: mirror the two/three-path lookup already used by stkBuildSeries() /
+  Fix 30 — (1) use r.pct if present, else (2) derive r.sh / nearest per-stock
+  SDW total_sh (from sdwData, lazy-loaded via fetchSdwCodeHistory), else
+  (3) fall back to today's sdw_total_sh snapshot from allStocks when SDW
+  history doesn't reach that far back. _sfcDrawStock() is now async (awaits
+  fetchSdwCodeHistory before building the series); its one call site in
+  drawSfcChart() is now awaited too.
+  Caveat: dates covered only by the (3) fallback use today's total_sh as an
+  approximation, not the true historical CCASS total for that week.
+  Location: _sfcDrawStock() series-building block; drawSfcChart() call site.
+
 [Fix 31 — 2026-05-29] 恒生指數預測通道: x-axis dates missing on desktop (visible on mobile).
   Root cause: desktop renders the full-width chart with all data points spread across a
   wide canvas. Chart.js's internal overlap-detection suppresses ticks even with autoSkip:false
@@ -3964,7 +3982,7 @@ async function drawSfcChart() {
         ctx.fillText('請選擇股票', W/2, H/2);
         return;
       }
-      _sfcDrawStock(ctx, W, H, dates, sfcCurCode, canvas, subCanvas);
+      await _sfcDrawStock(ctx, W, H, dates, sfcCurCode, canvas, subCanvas);
     }
   } finally {
     _sfcDrawing = false;
@@ -4112,12 +4130,34 @@ function _sfcDrawTotal(ctx, W, H, dates, canvas) {
 }
 
 // ── Individual stock view ─────────────────────────────────────────────────────
-function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
+async function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
   const code5 = norm5(code);
   const sinfo = allStocks.find(s => s.code === code || s.code === code5) || {};
 
+  // Ensure per-stock SDW history (sdw_{code5}.json) is loaded so the 賣空比例
+  // fallback below has real historical total_sh to divide by, not just the
+  // single current snapshot seeded from data.json.
+  await fetchSdwCodeHistory(code5);
+
+  // 賣空比例 (pct): two-path lookup, mirrors stkBuildSeries() —
+  // (1) use the persisted r.pct if present (recent dates, saved by save_pct_bulk)
+  // (2) else derive it from r.sh / nearest CCASS total_sh for that date
+  // (3) else fall back to today's total_sh snapshot (allStocks) as an approximation
+  // NEVER divide by sfcData[ds].__total__.sh — that's the market-wide total, not this stock's.
+  const fallbackTotSh = sinfo?.sdw_total_sh || 0;
+  const sdwCodeDates  = Object.keys(sdwData).filter(d => sdwData[d]?.[code5]?.total_sh > 0).sort();
+
   const series = dates
-    .map(ds => { const r = (sfcData[ds] || {})[code5] || {}; return { ds, hkd: r.hkd || 0, sh: r.sh || 0, pct: r.pct || 0 }; })
+    .map(ds => {
+      const r = (sfcData[ds] || {})[code5] || {};
+      let pct = r.pct || 0;
+      if (!(pct > 0) && r.sh > 0) {
+        const nearestSdw = sdwCodeDates.filter(d => d <= ds).slice(-1)[0];
+        const totalSh    = (nearestSdw ? sdwData[nearestSdw][code5].total_sh : 0) || fallbackTotSh;
+        if (totalSh > 0) pct = +(r.sh / totalSh * 100).toFixed(2);
+      }
+      return { ds, hkd: r.hkd || 0, sh: r.sh || 0, pct };
+    })
     .filter(s => s.hkd > 0);
 
   if (!series.length) {
