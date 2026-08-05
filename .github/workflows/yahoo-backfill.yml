@@ -37,10 +37,35 @@ name: Yahoo Finance Backfill
 #           step. When code is set, only that stock is processed regardless of mode
 #           (today or historical). Completes in seconds. Useful for repairing a
 #           specific stock without running the full universe.
+#   [Fix 6] Split the daily fetch into two schedules instead of one:
+#             - 09:00 UTC / 17:00 HKT — PRIMARY run, ~1h after close. Measured
+#               actual runtime on 2026-08-04 was 41m35s (not the ~93min this file
+#               previously assumed), and 01810's Aug-4 OHLC on Yahoo's site was
+#               already stable ~40min post-close and unchanged 24h later. The old
+#               8h delay was based on an unverified assumption about API lag.
+#             - 16:00 UTC / 00:00 HKT+1 — kept as a VERIFICATION-ONLY run. It
+#               re-fetches today's bar and diffs it against what the 17:00 run
+#               already wrote to R2, logging any mismatch. It does NOT overwrite
+#               R2 data. This is a temporary safety net — run both slots for a
+#               few weeks and confirm zero mismatches before removing the 00:00
+#               slot and relying on 17:00 alone.
+#           NOTE: the verify step below calls `build_yahoo.py --verify-only`,
+#           which does not exist yet — it needs to be added to build_yahoo.py.
+#           It should: fetch today's OHLC in-memory (no upload), download the
+#           corresponding yahoo_{code5}.json from R2, diff the row for today's
+#           date per stock, log mismatches, and always exit 0 (observational
+#           only — must never fail the job).
+#   [Fix 7] "Daily update" step timeout-minutes: 180 -> 90. The 180min ceiling was
+#           safe at the old 00:00 HKT slot (nothing scheduled after it until next
+#           day). At the new 17:00 HKT slot it is NOT safe: 17:00 + 180min = 20:00,
+#           which collides with early-fetch (19:00) and daily (20:00) in the
+#           worst case. 90min keeps the ceiling at 17:00+90min=18:30, a 30min
+#           buffer before early-fetch. See Fix 6 for the schedule change itself.
 
 on:
   schedule:
-    - cron: '0 16 * * 1-5'   # 16:00 UTC / 00:00 HKT+1 (Mon–Fri) — after Yahoo HK API lag (~8h post-close)
+    - cron: '0 9 * * 1-5'    # 09:00 UTC / 17:00 HKT (Mon–Fri) — PRIMARY fetch, ~1h post-close
+    - cron: '0 16 * * 1-5'   # 16:00 UTC / 00:00 HKT+1 (Mon–Fri) — VERIFICATION ONLY, see Fix 6
   workflow_dispatch:
     inputs:
       mode:
@@ -79,7 +104,7 @@ on:
 jobs:
 
   yahoo-backfill:
-    name: Yahoo Finance Backfill (${{ github.event_name == 'schedule' && 'scheduled' || inputs.mode || 'today' }}${{ inputs.code != '' && format(' — {0}', inputs.code) || '' }})
+    name: Yahoo Finance Backfill (${{ github.event_name == 'schedule' && (github.event.schedule == '0 16 * * 1-5' && 'verify-only' || 'scheduled') || inputs.mode || 'today' }}${{ inputs.code != '' && format(' — {0}', inputs.code) || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 720
     # Fix 1: prevent simultaneous scheduled + manual runs from racing on R2 uploads.
@@ -168,14 +193,35 @@ jobs:
       #         or slow Yahoo responses. 180 min = ~2× measured worst-case, well within
       #         the 720 min job-level ceiling.
       - name: Daily update (last 7 days)
-        if: ${{ (github.event_name == 'schedule' || inputs.mode == 'today') && inputs.code == '' }}
-        timeout-minutes: 180
+        if: ${{ ((github.event_name == 'schedule' && github.event.schedule == '0 9 * * 1-5') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'today')) && inputs.code == '' }}
+        # timeout-minutes: 90. Measured runtime on 2026-08-04 was 41m35s. 90 min is
+        # ~2.2x that (same margin pattern as the old Fix 5), and 17:00 + 90min = 18:30,
+        # leaving a 30min buffer before early-fetch starts at 19:00 HKT. The previous
+        # 180min ceiling was a holdover from the 00:00 HKT slot, where there was no
+        # downstream job to collide with — it's unsafe to keep now that this step runs
+        # at 17:00 HKT, 2h before early-fetch/daily. If this step is ever observed
+        # trending toward 90min, investigate rather than just raising the ceiling again.
+        timeout-minutes: 90
         env:
           AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION   : auto
           R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
         run: python build_yahoo.py --today 2>&1 | tee /tmp/yahoo_today.log
+
+      # ── Verification-only run (00:00 HKT+1 slot, see Fix 6) ─────────────────
+      # Re-fetches today's OHLC and diffs it against what the 17:00 HKT primary
+      # run already wrote to R2. Never overwrites R2 — purely observational,
+      # so we can confirm the 17:00 slot is safe before retiring this one.
+      - name: Verify today's data against 17:00 HKT run (no overwrite)
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '0 16 * * 1-5' }}
+        timeout-minutes: 60
+        env:
+          AWS_ACCESS_KEY_ID    : ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION   : auto
+          R2_ENDPOINT_URL      : ${{ secrets.R2_ENDPOINT_URL }}
+        run: python build_yahoo.py --verify-only 2>&1 | tee /tmp/yahoo_verify.log
 
       # patch-2026: fix missing high/low in turnover_2026.json
       - name: Patch turnover_2026.json
@@ -264,5 +310,10 @@ jobs:
             echo "--- Last 30 lines of --today output ---"
             tail -30 /tmp/yahoo_today.log
           else
-            echo "(no today log — historical, patch-2026, or single-stock mode)"
+            echo "(no today log — historical, patch-2026, verify-only, or single-stock mode)"
+          fi
+          if [ -f /tmp/yahoo_verify.log ]; then
+            echo ""
+            echo "--- Last 30 lines of --verify-only output ---"
+            tail -30 /tmp/yahoo_verify.log
           fi
