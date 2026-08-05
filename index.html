@@ -326,24 +326,6 @@ FIX LOG
   Location: stkBuildSeries() fallbackTotSh + totalSh fallback chain;
             stkDrawCharts() Panel 1 dataset spanGaps.
 
-[Fix 32 — 2026-07-08] 累積沽空 tab, 個股 view: 賣空比例 sub-panel only showed the
-  last ~2 dates, empty for the rest of the (up to 1-year) history.
-  Root cause: _sfcDrawStock() read only the raw r.pct field with no fallback
-  (`pct: r.pct || 0`). r.pct is only persisted going forward by save_pct_bulk()
-  (see Fix 7) — historical SFC records never had it written, so pct was 0 and
-  filtered out by `pctSeries = series.filter(s => s.pct > 0)` for almost the
-  whole chart.
-  Fix: mirror the two/three-path lookup already used by stkBuildSeries() /
-  Fix 30 — (1) use r.pct if present, else (2) derive r.sh / nearest per-stock
-  SDW total_sh (from sdwData, lazy-loaded via fetchSdwCodeHistory), else
-  (3) fall back to today's sdw_total_sh snapshot from allStocks when SDW
-  history doesn't reach that far back. _sfcDrawStock() is now async (awaits
-  fetchSdwCodeHistory before building the series); its one call site in
-  drawSfcChart() is now awaited too.
-  Caveat: dates covered only by the (3) fallback use today's total_sh as an
-  approximation, not the true historical CCASS total for that week.
-  Location: _sfcDrawStock() series-building block; drawSfcChart() call site.
-
 [Fix 31 — 2026-05-29] 恒生指數預測通道: x-axis dates missing on desktop (visible on mobile).
   Root cause: desktop renders the full-width chart with all data points spread across a
   wide canvas. Chart.js's internal overlap-detection suppresses ticks even with autoSkip:false
@@ -407,158 +389,7 @@ FIX LOG
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<!-- ══ Primary SEO ═══════════════════════════════════════════════════════════ -->
-<title>港股策略板 | 北水追蹤・沽空分析・大戶持倉・AI報告 | Tardigrade Analytics</title>
-<meta name="description" content="港股策略板提供即時北水（滬深港通）追蹤、SFC累積沽空分析、CCASS大戶持倉趨勢、恒生指數預測通道、個股波幅通道及AI分析報告。免費港股數據工具，適合散戶及機構投資者。">
-<meta name="keywords" content="港股,北水追蹤,沽空分析,大戶持倉,CCASS,恒生指數,滬深港通,股票分析,挾倉風險,SFC賣空,港股通,北上資金,股票策略,香港股市,波幅通道,AI分析報告">
-<meta name="author" content="Tardigrade Analytics">
-<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
-<link rel="canonical" href="https://hk.tardigradeanalytics.com/">
-
-<!-- ══ hreflang: Multilingual SEO ════════════════════════════════════════ -->
-<link rel="alternate" hreflang="zh-HK" href="https://hk.tardigradeanalytics.com/">
-<link rel="alternate" hreflang="zh-TW" href="https://hk.tardigradeanalytics.com/">
-<link rel="alternate" hreflang="zh-Hans" href="https://hk.tardigradeanalytics.com/">
-<link rel="alternate" hreflang="en" href="https://hk.tardigradeanalytics.com/">
-<link rel="alternate" hreflang="x-default" href="https://hk.tardigradeanalytics.com/">
-
-<!-- ══ Open Graph (Facebook / LinkedIn / WhatsApp) ════════════════════════ -->
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="港股策略板 | Tardigrade Analytics">
-<meta property="og:title" content="港股策略板 — 北水追蹤・沽空分析・大戶持倉・AI報告">
-<meta property="og:description" content="即時北水（滬深港通）追蹤、SFC累積沽空分析、CCASS大戶持倉趨勢、恒生指數預測通道及AI分析報告。免費港股數據工具。">
-<meta property="og:url" content="https://hk.tardigradeanalytics.com/">
-<meta property="og:image" content="https://hk.tardigradeanalytics.com/og-image.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="港股策略板 — 北水追蹤及沽空分析儀表板">
-<meta property="og:locale" content="zh_HK">
-<meta property="og:locale:alternate" content="zh_TW">
-<meta property="og:locale:alternate" content="en_HK">
-
-<!-- ══ Twitter / X Card ══════════════════════════════════════════════════════ -->
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:site" content="@hkstockmonitor">
-<meta name="twitter:title" content="港股策略板 — 北水追蹤・沽空分析・大戶持倉">
-<meta name="twitter:description" content="即時北水追蹤、SFC沽空分析、CCASS大戶持倉趨勢及恒生指數預測通道。免費港股數據工具。">
-<meta name="twitter:image" content="https://hk.tardigradeanalytics.com/og-image.png">
-<meta name="twitter:image:alt" content="港股策略板儀表板截圖">
-
-<!-- ══ Structured Data: WebApplication ══════════════════════════════════════ -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "WebApplication",
-  "name": "港股策略板",
-  "alternateName": "HK Stock Strategy Dashboard",
-  "url": "https://hk.tardigradeanalytics.com/",
-  "description": "港股策略板提供即時北水（滬深港通）追蹤、SFC累積沽空分析、CCASS大戶持倉趨勢、恒生指數預測通道、個股波幅通道及AI分析報告。",
-  "applicationCategory": "FinanceApplication",
-  "operatingSystem": "All",
-  "offers": {
-    "@type": "Offer",
-    "price": "0",
-    "priceCurrency": "HKD"
-  },
-  "provider": {
-    "@type": "Organization",
-    "name": "Tardigrade Analytics",
-    "url": "https://hk.tardigradeanalytics.com/",
-    "contactPoint": {
-      "@type": "ContactPoint",
-      "email": "tardigradeanalytics@gmail.com",
-      "contactType": "customer support"
-    },
-    "sameAs": [
-      "https://t.me/hkstockmonitor"
-    ]
-  },
-  "featureList": [
-    "北水（滬深港通）實時追蹤",
-    "SFC累積沽空持倉分析",
-    "CCASS大戶持倉趨勢圖表",
-    "恒生指數波幅預測通道",
-    "個股波幅通道（Bollinger Channel）",
-    "個股綜合分析：換手率、VWAP、機構持倉",
-    "異常信號偵測（不尋常沽空、大戶增持、空頭平倉）",
-    "AI分析報告生成"
-  ],
-  "inLanguage": ["zh-HK", "zh-TW", "en"],
-  "audience": {
-    "@type": "Audience",
-    "audienceType": "Hong Kong stock investors and traders"
-  }
-}
-</script>
-
-<!-- ══ Structured Data: BreadcrumbList ══════════════════════════════════════ -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "BreadcrumbList",
-  "itemListElement": [
-    {
-      "@type": "ListItem",
-      "position": 1,
-      "name": "港股策略板",
-      "item": "https://hk.tardigradeanalytics.com/"
-    }
-  ]
-}
-</script>
-
-<!-- ══ Structured Data: FAQPage ════════════════════════════════════════════ -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "mainEntity": [
-    {
-      "@type": "Question",
-      "name": "什麼是北水追蹤？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "北水追蹤即追蹤滬深港通（Stock Connect）的南下資金流向，顯示每日內地投資者透過港股通買賣的淨流入數據，反映大陸資金對香港股票的興趣。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "SFC累積沽空分析是什麼？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "SFC（香港證監會）每週五公布上市公司的累積空頭持倉數據。港股策略板將這些數據視覺化，幫助投資者識別沽空壓力較大的股票及潛在挾倉風險。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "CCASS大戶持倉如何解讀？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "CCASS（中央結算及交收系統）每週公布各參與者的持股量。港股策略板將持倉人分為大戶、北水及散戶三類，並追蹤每週持倉變化趨勢，幫助識別機構資金動向。"
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "個股波幅通道如何使用？",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "個股波幅通道使用統計標準差（σ）界定股價的正常波動範圍。當股價觸及+2σ上軌時屬統計超買區間；觸及-2σ下軌時屬超賣區間，可配合換手率及機構持倉數據作出更全面的分析。"
-      }
-    }
-  ]
-}
-</script>
-
-<!-- ══ Performance: preconnect ════════════════════════════════════════════════ -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="preconnect" href="https://cdnjs.cloudflare.com">
-
-<!-- ══ Favicon hints ══════════════════════════════════════════════════════════ -->
-<link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-
+<title>港股策略板</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -614,7 +445,6 @@ body {
   color: var(--red);
   letter-spacing: -0.5px;
   white-space: nowrap;
-  margin: 0;
 }
 .logo span { color: #222; font-size: 13px; font-family: 'Noto Sans TC', sans-serif; font-weight: 400; margin-left: 10px; border-left: 1px solid #ddd; padding-left: 10px; }
 .header-meta {
@@ -1239,14 +1069,13 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 <body>
 
 <!-- Header -->
-<header id="header">
-  <h1 class="logo">港股策略板 <span>HK Stock Strategy Dashboard</span></h1>
+<div id="header">
+  <div class="logo">港股策略板 <span>HK Stock Strategy Dashboard</span></div>
   <div class="header-meta">
-    <a href="/blog/" style="font-size:12px;color:var(--label);text-decoration:none;margin-right:12px;opacity:0.8;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.8'">港股學堂</a>
     <span><span class="live-dot"></span><span id="live-label">數據更新中</span></span>
     <span id="hdr-time">--</span>
   </div>
-</header>
+</div>
 
 <!-- Ticker strip -->
 <div id="ticker">
@@ -1265,17 +1094,17 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 </div>
 
 <!-- Tab bar -->
-<nav id="tabbar" role="tablist" aria-label="港股策略板功能導航">
-  <button class="tab-btn active" data-tab="bshui" role="tab" aria-selected="true"  aria-controls="panel-bshui" title="北水追蹤 — 滬深港通南下資金流向">北水追蹤</button>
-  <button class="tab-btn" data-tab="short"  role="tab" aria-selected="false" aria-controls="panel-short"  title="累積沽空 — SFC沽空持倉及挾倉風險分析">累積沽空</button>
-  <button class="tab-btn" data-tab="ccass"  role="tab" aria-selected="false" aria-controls="panel-ccass"  title="大戶持倉 — CCASS機構持股趨勢">大戶持倉</button>
-  <button class="tab-btn" data-tab="signal" role="tab" aria-selected="false" aria-controls="panel-signal" title="異常信號 — 不尋常沽空、大戶增持及空頭平倉">異常信號</button>
-  <button class="tab-btn" data-tab="cai"    role="tab" aria-selected="false" aria-controls="panel-cai"    title="個股通道 — 波幅預測通道及統計超買超賣">個股通道</button>
-  <button class="tab-btn" data-tab="stock"  role="tab" aria-selected="false" aria-controls="panel-stock"  title="個股綜合分析 — 換手率、VWAP、機構持倉及SFC賣空">個股綜合分析</button>
-  <button class="tab-btn" data-tab="hsi"    role="tab" aria-selected="false" aria-controls="panel-hsi"    title="恒生指數預測通道 — Kan's Channel 週度預測">恒生指數預測通道</button>
-  <button class="tab-btn" data-tab="strategy" role="tab" aria-selected="false" aria-controls="panel-strategy" title="投資策略 — 空頭平倉、大戶增持及挾倉策略說明">投資策略</button>
-  <button class="tab-btn" data-tab="aireport" role="tab" aria-selected="false" aria-controls="panel-aireport" title="AI分析報告 — 自動生成個股AI分析">AI分析報告</button>
-</nav>
+<div id="tabbar">
+  <button class="tab-btn active" data-tab="bshui">北水追蹤</button>
+  <button class="tab-btn" data-tab="short">累積沽空</button>
+  <button class="tab-btn" data-tab="ccass">大戶持倉</button>
+  <button class="tab-btn" data-tab="signal">異常信號</button>
+  <button class="tab-btn" data-tab="cai">個股通道</button>
+  <button class="tab-btn" data-tab="stock">個股綜合分析</button>
+  <button class="tab-btn" data-tab="hsi">恒生指數預測通道</button>
+  <button class="tab-btn" data-tab="strategy">投資策略</button>
+  <button class="tab-btn" data-tab="aireport">AI分析報告</button>
+</div>
 
 <!-- Offline / stale data banner -->
 <div id="offline-banner" role="alert">
@@ -2128,15 +1957,15 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
     <div style="max-width:820px;margin-top:36px;padding:24px;background:var(--card);border:1px solid var(--border);border-radius:12px;text-align:center">
       <div style="font-size:18px;font-weight:600;color:var(--text);margin-bottom:4px">🙏 支持我們 / Support Us</div>
       <div style="margin:14px 0 6px">
-        <img src="hktg.png" alt="Tardigrade Analytics" loading="lazy" style="height:90px;object-fit:contain">
+        <img src="hktg.png" alt="Tardigrade Analytics" style="height:90px;object-fit:contain">
       </div>
       <p style="font-size:13px;color:var(--muted);margin:0 0 20px">如果本工具對您有幫助，歡迎掃碼支持 ❤️</p>
       <div style="display:flex;justify-content:center;align-items:center;gap:40px;flex-wrap:wrap">
         <a href="https://www.paypal.com/ncp/payment/2QH5PNJJH9ANJ" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none">
-          <img src="qrcode.png" alt="Support My Work QR Code" loading="lazy" style="height:140px;width:140px;object-fit:contain;border-radius:6px">
+          <img src="qrcode.png" alt="Support My Work QR Code" style="height:140px;width:140px;object-fit:contain;border-radius:6px">
         </a>
         <a href="https://www.paypal.com/ncp/payment/2QH5PNJJH9ANJ" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none">
-          <img src="pp.jpg" alt="PayPal" loading="lazy" style="height:80px;object-fit:contain">
+          <img src="pp.jpg" alt="PayPal" style="height:80px;object-fit:contain">
         </a>
       </div>
     </div>
@@ -2208,14 +2037,14 @@ tbody td { padding: 9px 12px; vertical-align: middle; }
 
 </div><!-- /panel-aireport -->
 
-<footer id="footer">
+<div id="footer">
   <span style="display:inline-flex;align-items:center;gap:8px;">
-    <a href="mailto:tardigradeanalytics@gmail.com" style="color:var(--label);text-decoration:none;" aria-label="聯絡我們">Email: tardigradeanalytics@gmail.com</a>
-    <a class="tg-footer-btn" href="https://t.me/hkstockmonitor" target="_blank" rel="noopener noreferrer" aria-label="加入 Telegram 頻道"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#229ED9"/><path fill="#fff" d="M17.9 7.2L15.5 18c-.2.8-.7 1-1.3.6l-3-2.2-1.4 1.4c-.2.2-.4.3-.7.3l.2-3 5.5-5c.2-.2 0-.3-.4-.1L6.1 14.4l-2.9-.9c-.6-.2-.6-.6.1-.9L17 6.3c.6-.2 1.1.1.9.9z"/></svg> Telegram</a>
+    <a href="mailto:tardigradeanalytics@gmail.com" style="color:var(--label);text-decoration:none;">Email: tardigradeanalytics@gmail.com</a>
+    <a class="tg-footer-btn" href="https://t.me/hkstockmonitor" target="_blank"><svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#229ED9"/><path fill="#fff" d="M17.9 7.2L15.5 18c-.2.8-.7 1-1.3.6l-3-2.2-1.4 1.4c-.2.2-.4.3-.7.3l.2-3 5.5-5c.2-.2 0-.3-.4-.1L6.1 14.4l-2.9-.9c-.6-.2-.6-.6.1-.9L17 6.3c.6-.2 1.1.1.9.9z"/></svg> Telegram</a>
   </span>
-  <span>港股策略板 ｜ 數據來源：<abbr title="Hong Kong Exchanges and Clearing">HKEX</abbr> · <abbr title="Securities and Futures Commission 香港證監會">SFC</abbr> ｜ 僅供參考，不構成投資建議</span>
-  <span>©2026 <a href="https://hk.tardigradeanalytics.com/" style="color:var(--label);text-decoration:none;">tardigradeanalytics.com</a> All rights reserved</span>
-</footer>
+  <span>港股策略板 ｜ 數據來源：HKEX · SFC ｜ 僅供參考，不構成投資建議</span>
+  <span>©2026 tardigradeanalytics.com All rights reserved</span>
+</div>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 let allStocks = [];
@@ -2250,6 +2079,8 @@ let airToken = sessionStorage.getItem('air_token') || null;
 const airSigmaCache = {};   // { code5: { sigmaUp, sigmaDown } }
 const airCaiCache   = {};   // { code5: { close, upper25, lower25, tmrUpper, tmrLower, bandPos, histArr } }
 const airStkCache   = {};   // { code5: { series object from stkBuildSeries } }
+const airSdwCache   = {};   // { code5: { weekly 大戶/北水/散戶 trend } }
+let   airHsiCache   = null; // HSI weekly closes for relative strength
 
 // ── Hook into drawCai to capture σ + band data after each render ──────────────
 // We wrap the existing drawCai function so σ is always available
@@ -2522,6 +2353,117 @@ function airExtractStkSummary(code5, caiData) {
     ? +((close - closeLo1Y) / (closeHi1Y - closeLo1Y) * 100).toFixed(1)
     : null; // 0% = 1Y low, 100% = 1Y high
 
+
+  // ── Item 1: Volume trend vs price direction (conviction analysis) ──────────
+  let volConviction = null;
+  try {
+    const yCache = (typeof yahooStockCache !== 'undefined') ? yahooStockCache[code5] : null;
+    if (yCache) {
+      const cutoff  = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1);
+      const yDates  = Object.keys(yCache).sort().filter(d => d >= cutoff.toISOString().slice(0,10) && yCache[d]?.close > 0);
+      const last20  = yDates.slice(-20);
+      let upVolSum = 0, upDays = 0, dnVolSum = 0, dnDays = 0;
+      for (let i = 1; i < last20.length; i++) {
+        const prev = yCache[last20[i-1]]; const cur = yCache[last20[i]];
+        if (!prev || !cur) continue;
+        if (cur.close > prev.close) { upVolSum += cur.vol || 0; upDays++; }
+        else if (cur.close < prev.close) { dnVolSum += cur.vol || 0; dnDays++; }
+      }
+      const avgUpVol = upDays > 0 ? upVolSum / upDays : 0;
+      const avgDnVol = dnDays > 0 ? dnVolSum / dnDays : 0;
+      const ratio    = avgDnVol > 0 ? +(avgUpVol / avgDnVol).toFixed(2) : null;
+      volConviction  = { avgUpVol: Math.round(avgUpVol), avgDnVol: Math.round(avgDnVol), ratio, upDays, dnDays };
+    }
+  } catch(_) {}
+
+  // ── Item 2: Turnover acceleration (last 5 days vs prior 15 days) ─────────
+  let turnAccel = null;
+  try {
+    const turnArr = series.turn.filter(v => v != null && v > 0);
+    if (turnArr.length >= 20) {
+      const last5   = turnArr.slice(-5);
+      const prior15 = turnArr.slice(-20, -5);
+      const avg5    = last5.reduce((a,b) => a+b, 0) / last5.length;
+      const avg15   = prior15.reduce((a,b) => a+b, 0) / prior15.length;
+      const accel   = avg15 > 0 ? +((avg5 - avg15) / avg15 * 100).toFixed(1) : null;
+      turnAccel = { avg5: +avg5.toFixed(2), avg15: +avg15.toFixed(2), accelPct: accel,
+        direction: accel > 15 ? '加速上升' : accel < -15 ? '加速下降' : '平穩' };
+    }
+  } catch(_) {}
+
+  // ── Item 3: VWAP trend direction (last 20 days) ───────────────────────────
+  let vwapTrend = null;
+  try {
+    const vwapArr = series.vwap.filter(v => v != null && v > 0);
+    if (vwapArr.length >= 20) {
+      const vFirst = vwapArr.slice(-20, -10).reduce((a,b)=>a+b,0) / 10;
+      const vLast  = vwapArr.slice(-10).reduce((a,b)=>a+b,0) / 10;
+      const chgPct = +((vLast - vFirst) / vFirst * 100).toFixed(2);
+      vwapTrend = { first10avg: +vFirst.toFixed(3), last10avg: +vLast.toFixed(3), chgPct,
+        direction: chgPct > 0.5 ? '上升（平均成本線走高，多方佔優）'
+                 : chgPct < -0.5 ? '下降（平均成本線走低，空方佔優）'
+                 : '橫盤（平均成本持平，方向未明）' };
+    }
+  } catch(_) {}
+
+  // ── Item 5: Signal frequency trend (recent 10 vs prior 10 trading days) ──
+  let signalFreq = null;
+  try {
+    const sigArr    = series.signal || [];
+    const recent10  = sigArr.slice(-10).filter(Boolean).length;
+    const prior10   = sigArr.slice(-20, -10).filter(Boolean).length;
+    const trend     = recent10 > prior10 + 1 ? '信號頻率上升（市場活動增加）'
+                    : recent10 < prior10 - 1 ? '信號頻率下降（市場趨於平靜）'
+                    : '信號頻率穩定';
+    signalFreq = { recent10, prior10, trend };
+  } catch(_) {}
+
+  // ── Item 6: SFC short vs turnover ratio ───────────────────────────────────
+  let sfcTurnRatio = null;
+  try {
+    if (sfc != null && turn != null && turn > 0) {
+      const ratio   = +(sfc / turn * 100).toFixed(1);
+      const context = ratio > 60 ? '沽空主導成交（空頭控盤）'
+                    : ratio > 30 ? '沽空比例偏高（空頭活躍）'
+                    : ratio > 15 ? '正常沽空水平'
+                    : '沽空比例偏低（多頭主導）';
+      sfcTurnRatio = { ratio, context };
+    }
+  } catch(_) {}
+
+  // ── Item 7: Confidence score ───────────────────────────────────────────────
+  let confidenceScore = 0;
+  let confidenceFactors = [];
+  try {
+    // Signal agreement adds confidence
+    if (close != null && vwap != null) {
+      const aboveVwap = close > vwap;
+      const turnUp    = turn != null && turnAvg3m != null && turn > turnAvg3m;
+      const top10Up   = top10 != null && top10_3m != null && top10 > top10_3m;
+      const sfcDown   = sfc != null && sfc_3m != null && sfc < sfc_3m;
+      const bullSignals = [aboveVwap, turnUp, top10Up, sfcDown].filter(Boolean).length;
+      const bearSignals = [!aboveVwap, !turnUp, !top10Up, !sfcDown].filter(Boolean).length;
+      const agreement = Math.abs(bullSignals - bearSignals);
+      confidenceScore += agreement * 20; // 0-80 from signal agreement
+      if (agreement === 4) confidenceFactors.push('四項核心指標方向一致');
+      else if (agreement >= 3) confidenceFactors.push('三項指標方向一致');
+      else if (agreement <= 1) confidenceFactors.push('指標方向分歧');
+    }
+    // fibSignal adds confidence
+    if (fibSignal) { confidenceScore += 20; confidenceFactors.push('Fibonacci+σ確認'); }
+    // Volume conviction adds confidence
+    if (volConviction?.ratio) {
+      if (volConviction.ratio > 1.3 || volConviction.ratio < 0.7) {
+        confidenceScore += 10; confidenceFactors.push('成交量方向確認');
+      }
+    }
+    confidenceScore = Math.min(100, confidenceScore);
+  } catch(_) {}
+
+  const confidenceLabel = confidenceScore >= 80 ? '高（信號高度一致）'
+                        : confidenceScore >= 50 ? '中（部分信號一致）'
+                        : '低（信號分歧，宜觀望）';
+
   return {
     // Latest values
     close, vwap, turn, top10, sfc,
@@ -2545,6 +2487,15 @@ function airExtractStkSummary(code5, caiData) {
     totalSignalDays: allSignals.length,
     // Fib + σ signal (null = not triggered)
     fibSignal,
+    // New items 1-7
+    volConviction,    // Item 1: volume vs price direction
+    turnAccel,        // Item 2: turnover acceleration
+    vwapTrend,        // Item 3: VWAP trend direction
+    signalFreq,       // Item 5: signal frequency trend
+    sfcTurnRatio,     // Item 6: SFC vs turnover ratio
+    confidenceScore,  // Item 7: confidence score
+    confidenceLabel,  // Item 7: confidence label
+    confidenceFactors,// Item 7: confidence factors
   };
 }
 
@@ -2553,96 +2504,147 @@ async function airEnsureData(code5) {
   const status = document.getElementById('air-gen-status');
   const setStatus = msg => { if (status) { status.style.display='block'; status.textContent=msg; }};
 
-  // 1. Ensure stk series
-  if (!airStkCache[code5]) {
-    setStatus('⏳ 載入個股綜合分析數據...');
+  setStatus('⏳ 載入數據中（並行獲取）...');
+
+  // ── Helper: compute σ bands from Yahoo data ───────────────────────────────
+  async function _ensureCai() {
+    if (airCaiCache[code5]) return;
+    try {
+      const byDate = await loadYahooStock(code5);
+      if (!byDate || !Object.keys(byDate).length) return;
+      const cutoff   = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1);
+      const allDates = Object.keys(byDate).sort().filter(d => byDate[d]?.close > 0);
+      const dates    = allDates.filter(d => d >= cutoff.toISOString().slice(0, 10));
+      if (dates.length < 30) return;
+
+      const closeArr = dates.map(d => byDate[d].close);
+      const highArr  = dates.map(d => byDate[d].high  || byDate[d].close);
+      const lowArr   = dates.map(d => byDate[d].low   || byDate[d].close);
+      const volArr   = dates.map(d => byDate[d].vol   || 0);
+
+      const rawUp = [], rawDn = [];
+      for (let i = 1; i < closeArr.length; i++) {
+        rawUp.push(highArr[i] - closeArr[i-1]);
+        rawDn.push(closeArr[i-1] - lowArr[i]);
+      }
+      const upMoves = [], dnMoves = [];
+      for (let i = 1; i < closeArr.length; i++) {
+        const wStart  = Math.max(0, i - 6);
+        const upSlice = rawUp.slice(wStart, i).filter(v => v > 0);
+        const dnSlice = rawDn.slice(wStart, i).filter(v => v > 0);
+        if (upSlice.length) upMoves.push(upSlice.reduce((a,b)=>a+b,0)/upSlice.length);
+        if (dnSlice.length) dnMoves.push(dnSlice.reduce((a,b)=>a+b,0)/dnSlice.length);
+      }
+      const _mean = a => a.reduce((s,v)=>s+v,0)/a.length;
+      const _std  = a => { if (a.length < 2) return 0; const m=_mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/a.length); };
+      const sigmaUp = _std(upMoves), sigmaDown = _std(dnMoves);
+
+      const n      = closeArr.length;
+      const avg6   = _mean(volArr.slice(Math.max(0,n-6)).filter(v=>v>0));
+      const avg23  = _mean(volArr.slice(Math.max(0,n-23)).filter(v=>v>0));
+      const vr     = avg6 > 0 && avg23 > 0 ? avg6/avg23 : 1;
+      const lc     = closeArr[n-1];
+      const upper25 = +(lc + sigmaUp   * vr * 2.0).toFixed(3);
+      const lower25 = +(lc - sigmaDown * vr * 2.0).toFixed(3);
+
+      let bandPosition;
+      if      (lc >= upper25) bandPosition = '觸及/突破上軌（+2σ），統計超買區間';
+      else if (lc <= lower25) bandPosition = '觸及/突破下軌（−2σ），統計超賣區間';
+      else {
+        const mid = (lc - lower25) / (upper25 - lower25);
+        bandPosition = mid > 0.6 ? '通道上半部，偏強' : mid < 0.4 ? '通道下半部，偏弱' : '通道中間，方向未明';
+      }
+      const histArr = [];
+      for (let i = 4; i < closeArr.length; i++) {
+        const ma5 = _mean(closeArr.slice(i-4, i+1));
+        histArr.push(+(highArr[i] - ma5).toFixed(4));
+      }
+      airCaiCache[code5] = { close: lc, upper25, lower25, tmrUpper: upper25, tmrLower: lower25, bandPosition, histArr: histArr.slice(-20) };
+    } catch(e) { console.warn('[AIR] cai error:', e); }
+  }
+
+  // ── Helper: load SDW 大戶/北水/散戶 ──────────────────────────────────────
+  async function _ensureSdw() {
+    if (airSdwCache[code5]) return;
+    try {
+      await stkEnsureSdw(code5);
+      const byDate   = (stkSdwCache[code5] || {}).by_date || {};
+      const cutoff   = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1);
+      const cutoffDs = cutoff.toISOString().slice(0, 10);
+      const dates    = Object.keys(byDate).sort().filter(d => d >= cutoffDs);
+      if (dates.length < 2) return;
+
+      const grouped = dates.map(ds => {
+        const entry   = byDate[ds] || {};
+        const holders = Array.isArray(entry) ? entry : (entry.p || []);
+        const totalSh = entry.total_sh || 1;
+        const g = { dahu: 0, beishui: 0, sanhu: 0 };
+        holders.forEach(h => {
+          const pid = h.pid || h.id || '';
+          const pct = (h.sh || 0) / totalSh * 100;
+          if (BEISHUI_IDS.has(pid))   g.beishui += pct;
+          else if (DAHU_IDS.has(pid)) g.dahu    += pct;
+          else                        g.sanhu   += pct;
+        });
+        return { ds, ...g };
+      });
+      const n = grouped.length;
+      const last = grouped[n-1];
+      const m1   = grouped[Math.max(0, n-4)];
+      const m3   = grouped[Math.max(0, n-13)];
+      const m6   = grouped[Math.max(0, n-26)];
+      airSdwCache[code5] = {
+        dahu:    last.dahu,    dahu_1m: m1.dahu,    dahu_3m: m3.dahu,    dahu_6m: m6.dahu,
+        beishui: last.beishui, bei_1m:  m1.beishui, bei_3m:  m3.beishui, bei_6m:  m6.beishui,
+        sanhu:   last.sanhu,   san_1m:  m1.sanhu,   san_3m:  m3.sanhu,   san_6m:  m6.sanhu,
+        weekCount: n,
+      };
+    } catch(e) { console.warn('[AIR] SDW error:', e); }
+  }
+
+  // ── Helper: load HSI weekly ───────────────────────────────────────────────
+  async function _ensureHsi() {
+    if (airHsiCache) return;
+    try {
+      if (!hsiData) await loadHsiData();
+      if (!hsiData?.weekly) return;
+      const cutoff   = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1);
+      const cutoffDs = cutoff.toISOString().slice(0, 10);
+      const weekly   = hsiData.weekly;
+      const dates    = Object.keys(weekly).sort().filter(d => d >= cutoffDs);
+      if (dates.length < 4) return;
+      const closes = dates.map(d => weekly[d].c);
+      const n      = closes.length;
+      airHsiCache  = {
+        latest: closes[n-1],
+        w4:     closes[Math.max(0, n-4)],
+        w13:    closes[Math.max(0, n-13)],
+        w26:    closes[Math.max(0, n-26)],
+        hi1Y:   Math.max(...closes),
+        lo1Y:   Math.min(...closes),
+      };
+    } catch(e) { console.warn('[AIR] HSI error:', e); }
+  }
+
+  // ── Helper: load stk series ───────────────────────────────────────────────
+  async function _ensureStk() {
+    if (airStkCache[code5]) return;
     try {
       const toDs   = new Date().toISOString().slice(0, 10);
       const fromDt = new Date(); fromDt.setFullYear(fromDt.getFullYear() - 1);
       const fromDs = fromDt.toISOString().slice(0, 10);
       const series = await stkBuildSeries(code5, fromDs, toDs);
       if (series) airStkCache[code5] = series;
-    } catch(e) { console.warn('[AIR] stk fetch error:', e); }
+    } catch(e) { console.warn('[AIR] stk error:', e); }
   }
 
-  // 2. Ensure cai / σ — compute directly from Yahoo data, no chart rendering needed
-  if (!airCaiCache[code5]) {
-    setStatus('⏳ 載入波幅通道數據並計算σ...');
-    try {
-      // Load Yahoo data directly (same cache drawCai uses)
-      const byDate = await loadYahooStock(code5);
-      if (!byDate || !Object.keys(byDate).length) {
-        console.warn('[AIR] no Yahoo data for', code5);
-      } else {
-        const allDates = Object.keys(byDate).sort().filter(d => byDate[d]?.close > 0);
-        const cutoff   = new Date();
-        cutoff.setFullYear(cutoff.getFullYear() - 1);
-        const cutoffDs = cutoff.toISOString().slice(0, 10);
-        const dates    = allDates.filter(d => d >= cutoffDs);
-
-        if (dates.length >= 30) {
-          const closeArr = dates.map(d => byDate[d].close);
-          const highArr  = dates.map(d => byDate[d].high  || byDate[d].close);
-          const lowArr   = dates.map(d => byDate[d].low   || byDate[d].close);
-          const volArr   = dates.map(d => byDate[d].vol   || 0);
-
-          // σ using 6-day smoothed logic (matches drawCai exactly)
-          const rawUp = [], rawDn = [];
-          for (let i = 1; i < closeArr.length; i++) {
-            rawUp.push(highArr[i] - closeArr[i-1]);
-            rawDn.push(closeArr[i-1] - lowArr[i]);
-          }
-          const upMoves = [], dnMoves = [];
-          for (let i = 1; i < closeArr.length; i++) {
-            const wStart  = Math.max(0, i - 6);
-            const upSlice = rawUp.slice(wStart, i).filter(v => v > 0);
-            const dnSlice = rawDn.slice(wStart, i).filter(v => v > 0);
-            if (upSlice.length) upMoves.push(upSlice.reduce((a,b)=>a+b,0)/upSlice.length);
-            if (dnSlice.length) dnMoves.push(dnSlice.reduce((a,b)=>a+b,0)/dnSlice.length);
-          }
-          const _mean = a => a.reduce((s,v)=>s+v,0)/a.length;
-          const _std  = a => {
-            if (a.length < 2) return 0;
-            const m = _mean(a);
-            return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/a.length);
-          };
-          const sigmaUp   = _std(upMoves);
-          const sigmaDown = _std(dnMoves);
-
-          const n    = closeArr.length;
-          const avg6 = _mean(volArr.slice(Math.max(0,n-6)).filter(v=>v>0));
-          const avg23= _mean(volArr.slice(Math.max(0,n-23)).filter(v=>v>0));
-          const vr   = avg6 > 0 && avg23 > 0 ? avg6/avg23 : 1;
-
-          const latestClose = closeArr[n-1];
-          const upper25     = +(latestClose + sigmaUp   * vr * 2.0).toFixed(3);
-          const lower25     = +(latestClose - sigmaDown * vr * 2.0).toFixed(3);
-          const tmrUpper    = +(latestClose + sigmaUp   * vr * 2.0).toFixed(3);
-          const tmrLower    = +(latestClose - sigmaDown * vr * 2.0).toFixed(3);
-
-          let bandPosition;
-          if      (latestClose >= upper25) bandPosition = '觸及/突破上軌（+2σ），統計超買區間';
-          else if (latestClose <= lower25) bandPosition = '觸及/突破下軌（−2σ），統計超賣區間';
-          else {
-            const mid = (latestClose - lower25) / (upper25 - lower25);
-            bandPosition = mid > 0.6 ? '通道上半部，偏強' : mid < 0.4 ? '通道下半部，偏弱' : '通道中間，方向未明';
-          }
-
-          // Histogram: high vs 5-day MA (last 20 bars)
-          const histArr = [];
-          for (let i = 4; i < closeArr.length; i++) {
-            const ma5 = _mean(closeArr.slice(i-4, i+1));
-            histArr.push(+(highArr[i] - ma5).toFixed(4));
-          }
-
-          airCaiCache[code5] = {
-            close: latestClose, upper25, lower25, tmrUpper, tmrLower,
-            bandPosition, histArr: histArr.slice(-20),
-          };
-        }
-      }
-    } catch(e) { console.warn('[AIR] cai compute error:', e); }
-  }
+  // ── Run all 4 in parallel ─────────────────────────────────────────────────
+  await Promise.all([
+    _ensureStk(),
+    _ensureCai(),
+    _ensureSdw(),
+    _ensureHsi(),
+  ]);
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -2715,7 +2717,14 @@ async function airGenerate() {
     const resp = await fetch(`${AIR_WORKER_URL}/api/report/generate`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'X-Auth-Token': airToken },
-      body: JSON.stringify({ stockCode: code5, stockName, stkData, caiData }),
+      body: JSON.stringify({
+        stockCode: code5,
+        stockName,
+        stkData,
+        caiData,
+        sdwData: airSdwCache[code5] || null,
+        hsiData: airHsiCache || null,
+      }),
     });
     const data = await resp.json();
 
@@ -3982,7 +3991,7 @@ async function drawSfcChart() {
         ctx.fillText('請選擇股票', W/2, H/2);
         return;
       }
-      await _sfcDrawStock(ctx, W, H, dates, sfcCurCode, canvas, subCanvas);
+      _sfcDrawStock(ctx, W, H, dates, sfcCurCode, canvas, subCanvas);
     }
   } finally {
     _sfcDrawing = false;
@@ -4130,34 +4139,12 @@ function _sfcDrawTotal(ctx, W, H, dates, canvas) {
 }
 
 // ── Individual stock view ─────────────────────────────────────────────────────
-async function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
+function _sfcDrawStock(ctx, W, H, dates, code, canvas, subCanvas) {
   const code5 = norm5(code);
   const sinfo = allStocks.find(s => s.code === code || s.code === code5) || {};
 
-  // Ensure per-stock SDW history (sdw_{code5}.json) is loaded so the 賣空比例
-  // fallback below has real historical total_sh to divide by, not just the
-  // single current snapshot seeded from data.json.
-  await fetchSdwCodeHistory(code5);
-
-  // 賣空比例 (pct): two-path lookup, mirrors stkBuildSeries() —
-  // (1) use the persisted r.pct if present (recent dates, saved by save_pct_bulk)
-  // (2) else derive it from r.sh / nearest CCASS total_sh for that date
-  // (3) else fall back to today's total_sh snapshot (allStocks) as an approximation
-  // NEVER divide by sfcData[ds].__total__.sh — that's the market-wide total, not this stock's.
-  const fallbackTotSh = sinfo?.sdw_total_sh || 0;
-  const sdwCodeDates  = Object.keys(sdwData).filter(d => sdwData[d]?.[code5]?.total_sh > 0).sort();
-
   const series = dates
-    .map(ds => {
-      const r = (sfcData[ds] || {})[code5] || {};
-      let pct = r.pct || 0;
-      if (!(pct > 0) && r.sh > 0) {
-        const nearestSdw = sdwCodeDates.filter(d => d <= ds).slice(-1)[0];
-        const totalSh    = (nearestSdw ? sdwData[nearestSdw][code5].total_sh : 0) || fallbackTotSh;
-        if (totalSh > 0) pct = +(r.sh / totalSh * 100).toFixed(2);
-      }
-      return { ds, hkd: r.hkd || 0, sh: r.sh || 0, pct };
-    })
+    .map(ds => { const r = (sfcData[ds] || {})[code5] || {}; return { ds, hkd: r.hkd || 0, sh: r.sh || 0, pct: r.pct || 0 }; })
     .filter(s => s.hkd > 0);
 
   if (!series.length) {
@@ -7787,88 +7774,5 @@ function initStockPanel() {
 
 
 </script>
-
-<!-- ══ SEO: Static crawlable content (hidden from UI) ════════════════════════
-     This section is intentionally hidden from users but readable by search
-     engines. Content is sourced from the in-app feature descriptions.
-══════════════════════════════════════════════════════════════════════════════ -->
-<div style="display:none" aria-hidden="true">
-
-  <section>
-    <h2>港股策略板 — 功能介紹</h2>
-    <p>港股策略板（HK Stock Strategy Dashboard）由 Tardigrade Analytics 提供，是一個專為香港股市投資者設計的免費數據分析平台，涵蓋北水追蹤、SFC累積沽空分析、CCASS大戶持倉趨勢、恒生指數預測通道、個股波幅通道、個股綜合分析及AI分析報告等功能。</p>
-  </section>
-
-  <section>
-    <h2>北水追蹤（滬深港通）</h2>
-    <p>北水追蹤即追蹤滬深港通（Stock Connect）的南下資金流向，顯示每日內地投資者透過港股通買賣的淨流入數據，反映大陸資金對香港股票的興趣。當北水佔比突然增加，代表內地資金介入，需留意政策及跨境資金動向。本平台提供每日北水流入數據，幫助投資者掌握資金動態。</p>
-  </section>
-
-  <section>
-    <h2>SFC累積沽空分析</h2>
-    <p>SFC（香港證監會）每週五公布上市公司的累積空頭持倉數據。港股策略板將這些數據視覺化，幫助投資者識別沽空壓力較大的股票及潛在挾倉風險。賣空比率上升同時股價下跌，確認沽空壓力；賣空急增但股價企穩，則可能出現軋空（Short Squeeze），需留意反彈風險。平台提供累積沽空排行、日沽空金額、日沽空股數及信號偵測。</p>
-  </section>
-
-  <section>
-    <h2>CCASS大戶持倉分析</h2>
-    <p>CCASS（中央結算及交收系統）每週公布各參與者的持股量。港股策略板將持倉人分為大戶、北水及散戶三類，並追蹤每週持倉變化趨勢，幫助識別機構資金動向。大戶佔比上升代表機構增持，看好後市；大戶佔比下降而散戶佔比上升，則需警惕大戶派發予散戶的見頂風險。持倉集中度趨勢反映籌碼集中程度，集中度突然急升可能預示行情啟動。</p>
-    <p>大戶持倉數據為週度更新，適合中線部署參考，建議結合個股綜合分析及波幅通道共同判斷。</p>
-  </section>
-
-  <section>
-    <h2>個股波幅通道（Bollinger Channel）</h2>
-    <p>個股波幅通道使用統計標準差（σ）界定股價的正常波動範圍。當股價觸及+2σ上軌時屬統計超買區間，出現概率低於5%；觸及-2σ下軌時屬超賣區間，技術性反彈機會上升。下方柱狀圖顯示當日高價或低價與5日移動平均線的偏離幅度，紅色柱向上代表短線買盤強勢，青色柱向下代表短線賣壓浮現。波幅通道亦提供明日預測範圍，以統計波幅推算次日高低區間。</p>
-    <p>建議與換手率及VWAP三者聯合確認——波幅通道界定統計位置，均線差值確認動能方向，換手率驗證資金參與度，三者一致時信號最為可靠。</p>
-  </section>
-
-  <section>
-    <h2>恒生指數預測通道（Kan's Channel）</h2>
-    <p>恒生指數波幅預測模型（Kan's Channel）以週度數據追蹤恒生指數的預測高位及低位，提供預測下週高位、預測下週低位及最新收市數據。圖表包含預測高/低通道、實際高/低及收市價走勢，幫助投資者判斷大市整體方向及支撐阻力位。</p>
-  </section>
-
-  <section>
-    <h2>個股綜合分析</h2>
-    <p>個股綜合分析整合四大指標，協助投資者全面評估個股走勢。換手率（%）反映每日股份易手的百分比，換手率持續上升代表市場參與度增加；突然急升則警示異常活動，可能是主力吸籌或派發。VWAP（成交量加權平均價）是判斷價格強弱的重要參考，股價高於VWAP代表買方主導，低於VWAP代表賣方主導。Top10持倉佔比反映前十大機構持倉集中度，SFC賣空比率則評估沽空風險。</p>
-    <p>當換手率上升、股價高於VWAP、機構持倉增加、賣空比率低，四項指標方向一致時，為最強烈的買入信號。四大指標方向一致時交易信號最為可靠，若指標互相矛盾則宜保持觀望。</p>
-  </section>
-
-  <section>
-    <h2>異常信號偵測</h2>
-    <p>港股策略板提供三類異常信號偵測：不尋常沽空（🚨）、大戶增持（🏦）及空頭平倉（📉）。不尋常沽空信號識別沽空比率異常上升的股票；大戶增持信號追蹤機構持倉集中度顯著上升的股票；空頭平倉信號則識別累積沽空持倉大幅下降、潛在軋空風險的股票。</p>
-  </section>
-
-  <section>
-    <h2>挾倉風險分析</h2>
-    <p>挾倉風險（Short Squeeze Risk）分析結合SFC累積沽空數據及CCASS持倉數據，識別同時具備高沽空比率及高機構持倉集中度的股票。當空頭大量持倉遇上大戶控盤，一旦利好消息出現，可能觸發短期急速軋空行情。平台提供挾倉風險泡泡圖及Top 15排行，幫助投資者提前識別潛在機會。</p>
-  </section>
-
-  <section>
-    <h2>AI分析報告</h2>
-    <p>港股策略板整合AI分析報告功能，根據北水流向、SFC沽空數據、CCASS大戶持倉及個股技術指標，自動生成綜合分析報告，協助投資者快速掌握市場動態及個股投資邏輯。</p>
-  </section>
-
-  <section>
-    <h2>投資策略指引</h2>
-    <p>空頭平倉（Short Covering）：原本看空並借券賣出的投資人，為了結清部位而從市場買回股票。當股價跌不下去且成交量縮小，代表空頭獲利了結；若伴隨利多消息，空頭平倉的買力會成為止跌回升的第一道推力。</p>
-    <p>大戶增持（Whale Accumulation）：主力、法人或內部大股東在低位持續買入，籌碼由散戶轉向少數大戶手中。若股價橫盤但大戶持股增加，表示有人在收貨；大戶收足籌碼後通常會發動拉升。</p>
-    <p>不尋常沽空（Unusual Short Selling）：沽空比率及沽空金額在短期內異常飆升，可能反映機構投資者對該股前景看淡，或有內幕消息流出，需密切留意後續發展。</p>
-  </section>
-
-  <section>
-    <h2>名詞解釋</h2>
-    <p><strong>北水</strong>：指透過滬深港通南下的內地資金，即大陸投資者買入香港股票的資金流向。</p>
-    <p><strong>滬深港通</strong>：連接上海、深圳及香港股票市場的互聯互通機制，允許兩地投資者跨境買賣股票。</p>
-    <p><strong>CCASS</strong>：香港中央結算及交收系統（Central Clearing and Settlement System），記錄香港上市股票的持倉資料。</p>
-    <p><strong>SFC</strong>：香港證券及期貨事務監察委員會（Securities and Futures Commission），每週公布上市公司的累積空頭持倉數據。</p>
-    <p><strong>挾倉風險</strong>：即軋空風險（Short Squeeze Risk），當大量空頭持倉遇上股價上升，空頭被迫回補，進一步推高股價。</p>
-    <p><strong>VWAP</strong>：成交量加權平均價（Volume Weighted Average Price），以成交量為權重計算的平均成交價格，是判斷買賣方強弱的重要參考指標。</p>
-    <p><strong>換手率</strong>：每日股份易手的百分比，反映市場流動性及參與度。換手率高代表成交活躍，低代表市場觀望情緒濃厚。</p>
-    <p><strong>持倉集中度</strong>：前5大機構合計持股佔總流通股的百分比，反映籌碼集中程度。集中度高代表大戶控盤能力強。</p>
-    <p><strong>回補天數（Days to Cover）</strong>：以當前日均成交量計算，空頭需要多少天才能完全平倉，數值越高代表軋空風險越大。</p>
-    <p><strong>標準差（σ）</strong>：衡量股價波動幅度的統計指標。波幅通道以2σ及2.6σ界定正常及極端波動範圍。</p>
-  </section>
-
-</div>
-
 </body>
 </html>
