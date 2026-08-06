@@ -2,7 +2,11 @@ name: Daily Sync
 
 on:
   schedule:
-    - cron: '0 11 * * 1-5'   # 11:00 UTC / 19:00 HKT (Mon–Fri) — early fetch
+    - cron: '30 10 * * 1-5'  # 10:30 UTC / 18:30 HKT (Mon–Fri) — early fetch. Moved from 19:00.
+                              # NOTE: Stock Connect top-10 / CCASS southbound publish ~18:xx HKT
+                              # (see comment below) — this trims that margin from ~1h to ~30min.
+                              # Watch for a few days to confirm data is consistently ready by 18:30
+                              # before trusting this long-term.
     - cron: '0 12 * * 1-5'   # 12:00 UTC / 20:00 HKT (Mon–Fri)
     - cron: '0 6 * * 6'    # 06:00 UTC / 14:00 HKT (Saturday) — SDW weekly (self-retries internally)
     - cron: '0 2 * * 6'       # 02:00 UTC / 10:00 HKT (Saturday)
@@ -69,7 +73,7 @@ jobs:
     permissions:
       contents: write
     if: |
-      (github.event_name == 'schedule' && github.event.schedule == '0 11 * * 1-5') ||
+      (github.event_name == 'schedule' && github.event.schedule == '30 10 * * 1-5') ||
       (github.event_name == 'workflow_dispatch' && inputs.job == 'early-fetch')
 
     steps:
@@ -96,18 +100,14 @@ jobs:
             (git commit -m "Early fetch: $(date +'%Y-%m-%d %H:%M')" && git push)
 
   # ── Daily analysis (Mon–Fri 20:00 HKT) ─────────────────────────────────────
-  # Depends on early-fetch (19:00) having already committed sc_top10 + ccass data.
-  # [Fix] timeout-minutes: 45 → 30. Tighter ceiling gives yahoo-backfill's
-  #       00:00 HKT+1 verify-only run (see yahoo-backfill.yml Fix 6/7) a guaranteed
-  #       3h30m gap instead of the previous 45-min gap, preventing simultaneous R2
-  #       access if daily ever ran close to its old timeout. Note: yahoo-backfill's
-  #       actual data-writing run moved to 17:00 HKT (2h before this job starts) —
-  #       the 00:00 HKT slot now only does a read-only diff, not an R2 write, so
-  #       this gap matters less than it used to but is kept as a safety margin.
+  # Depends on early-fetch (18:30 HKT) having already committed sc_top10 + ccass data.
+  # [Fix] timeout-minutes: 45 → 30. Originally sized to leave a gap before
+  #       yahoo-backfill's old 00:00 HKT run. yahoo-backfill now runs at 16:03 HKT
+  #       (see yahoo-backfill.yml Fix 6) — well before this job — so that gap no
+  #       longer matters, but 30 min remains a reasonable ceiling on its own merits.
   # [Fix] TV+Short per-stock build moved to daily-tv-build job (needs: daily) so it
   #       never competes with the 30-min budget here. daily-tv-build runs after this
-  #       job completes and has its own 90-min timeout, well before yahoo-backfill's
-  #       00:00 HKT+1 verify-only run.
+  #       job completes and has its own 90-min timeout.
   daily:
     name: Daily analysis
     runs-on: ubuntu-latest
@@ -200,9 +200,8 @@ jobs:
   # tv_{code5}.json per stock and uploads to R2.
   # timeout-minutes: 90 — 2280 stocks × ~1.6s ≈ 61 min + setup overhead.
   # Safe ceiling: daily starts 12:00 UTC, daily typically finishes ~12:27,
-  # so tv-build runs ~12:27–13:30 at most, well before yahoo-backfill's
-  # 16:00 UTC verify-only run (its data-writing run is now at 09:00 UTC / 17:00 HKT,
-  # see yahoo-backfill.yml Fix 6).
+  # so tv-build runs ~12:27–13:30 at most. yahoo-backfill runs earlier in the
+  # day (16:03 HKT, see yahoo-backfill.yml Fix 6) so there's no overlap either way.
   daily-tv-build:
     name: Daily TV+Short per-stock build
     needs: daily
