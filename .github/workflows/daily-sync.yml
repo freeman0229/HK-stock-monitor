@@ -77,8 +77,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.job == 'early-fetch')
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - run: playwright install chromium
@@ -122,8 +122,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.job == 'daily')
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
         # Note: playwright not needed here — sc_top10 + ccass run in early-fetch job at 19:00
@@ -217,8 +217,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.job == 'daily')
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
@@ -261,8 +261,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'ccass-build'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Build CCASS library
@@ -289,8 +289,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'sc-top10-build'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Restore SC top10 cache
@@ -333,8 +333,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-build'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - run: playwright install chromium
@@ -411,8 +411,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-weekly')
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - run: playwright install chromium
@@ -516,8 +516,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'sfc-weekly' || inputs.job == 'both-weekly'))
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Restore SFC cache
@@ -575,8 +575,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'turnover-build'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
@@ -613,8 +613,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'short-build'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
@@ -645,8 +645,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'sfc-build'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Restore SFC Excel cache
@@ -688,8 +688,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'di-weekly' || inputs.job == 'both-weekly'))
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Restore DI cache
@@ -728,8 +728,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'ccass-universe'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Build CCASS universe
@@ -757,8 +757,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-backfill'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - run: playwright install chromium
@@ -819,8 +819,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-backfill-3w'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - run: playwright install chromium
@@ -882,8 +882,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'sdw-migrate-json'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Download existing DB from R2
@@ -1028,8 +1028,8 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.job == 'hsi-build')
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: Update HSI weekly history
@@ -1061,8 +1061,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'rank-history-backfill'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
@@ -1154,8 +1154,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'tv-stock-build'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
@@ -1260,8 +1260,8 @@ jobs:
       github.event_name == 'workflow_dispatch' && inputs.job == 'turnover-from-yahoo'
 
     steps:
-      - uses: actions/checkout@v4.2.2
-      - uses: actions/setup-python@v5.6.0
+      - uses: actions/checkout@v5.0.0
+      - uses: actions/setup-python@v6.0.0
         with: { python-version: '3.11', cache: 'pip' }
       - run: pip install -r requirements.txt
 
